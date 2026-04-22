@@ -1,7 +1,9 @@
 package common
 
 import (
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,6 +106,31 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		req.Images = images
 	}
 
+	// 处理 input_references（多图 Multipart）
+	if mf, err := c.MultipartForm(); err == nil {
+		if files, exists := mf.File["input_references"]; exists && len(files) > 0 {
+			var images []string
+			for _, fileHeader := range files {
+				file, err := fileHeader.Open()
+				if err != nil {
+					continue
+				}
+				fileBytes, err := io.ReadAll(file)
+				file.Close()
+				if err != nil {
+					continue
+				}
+				// 检测 MIME 类型
+				mimeType := http.DetectContentType(fileBytes)
+				dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(fileBytes))
+				images = append(images, dataURI)
+			}
+			if len(images) > 0 {
+				req.Images = images
+			}
+		}
+	}
+
 	for key, values := range formData {
 		if len(values) > 0 && !isKnownTaskField(key) {
 			if intVal, err := strconv.Atoi(values[0]); err == nil {
@@ -137,7 +164,19 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	if seconds == 0 {
 		seconds = req.Duration
 	}
-	if req.InputReference != "" {
+	// 归一化 image_reference / image_references → Images[]
+	if len(req.ImageReferences) > 0 {
+		// 多图：提取每个 image_url
+		for _, ref := range req.ImageReferences {
+			if ref.ImageURL != "" {
+				req.Images = append(req.Images, ref.ImageURL)
+			}
+		}
+	} else if req.ImageReference != nil && req.ImageReference.ImageURL != "" {
+		// 单图：提取 image_url
+		req.Images = append(req.Images, req.ImageReference.ImageURL)
+	} else if req.InputReference != "" {
+		// 已有逻辑：Multipart 单图
 		req.Images = []string{req.InputReference}
 	}
 
@@ -190,7 +229,11 @@ func isKnownTaskField(field string) bool {
 		"images":          true,
 		"size":            true,
 		"duration":        true,
-		"input_reference": true, // Sora 特有字段
+		"input_reference":  true, // Sora 特有字段
+		"image_reference":  true,
+		"image_references": true,
+		"input_references": true,
+		"seconds":          true,
 	}
 	return knownFields[field]
 }

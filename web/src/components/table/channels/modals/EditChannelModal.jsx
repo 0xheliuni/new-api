@@ -156,7 +156,7 @@ function type2secretPrompt(type) {
     case 57:
       return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
     case 58:  // AIGC Video
-      return '按照如下格式输入：SubAppId|SecretId|SecretKey 或 SubAppId|SecretId|SecretKey|Region';
+      return '按照如下格式输入：SubAppId|SecretId|SecretKey[|Region]，或直接输入 API Key（如 sk-xxx）';
     default:
       return '请输入渠道对应的鉴权密钥';
   }

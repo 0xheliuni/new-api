@@ -552,27 +552,30 @@ func testAIGCVideoChannel(channel *model.Channel, testModel string) testResult {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Parse key and set HMAC-SHA256 signature headers
+	// Parse key and set auth headers
 	parts := strings.Split(channel.Key, "|")
-	if len(parts) < 3 {
-		return testResult{localErr: fmt.Errorf("invalid key format, expected SubAppId|SecretId|SecretKey[|Region]")}
-	}
-	subAppId := parts[0]
-	secretId := parts[1]
-	secretKey := parts[2]
+	if len(parts) >= 3 {
+		// HMAC-SHA256 signature mode
+		subAppId := parts[0]
+		secretId := parts[1]
+		secretKey := parts[2]
 
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	signStr := fmt.Sprintf("%s\n%s\n%s", secretId, timestamp, secretKey)
-	h := hmac.New(sha256.New, []byte(secretKey))
-	h.Write([]byte(signStr))
-	signature := hex.EncodeToString(h.Sum(nil))
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signStr := fmt.Sprintf("%s\n%s\n%s", secretId, timestamp, secretKey)
+		h := hmac.New(sha256.New, []byte(secretKey))
+		h.Write([]byte(signStr))
+		signature := hex.EncodeToString(h.Sum(nil))
 
-	req.Header.Set("X-SubAppId", subAppId)
-	req.Header.Set("X-SecretId", secretId)
-	req.Header.Set("X-Timestamp", timestamp)
-	req.Header.Set("X-Signature", signature)
-	if len(parts) >= 4 && parts[3] != "" {
-		req.Header.Set("X-Region", parts[3])
+		req.Header.Set("X-SubAppId", subAppId)
+		req.Header.Set("X-SecretId", secretId)
+		req.Header.Set("X-Timestamp", timestamp)
+		req.Header.Set("X-Signature", signature)
+		if len(parts) >= 4 && parts[3] != "" {
+			req.Header.Set("X-Region", parts[3])
+		}
+	} else {
+		// Bearer Token mode
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	}
 
 	// Send request
