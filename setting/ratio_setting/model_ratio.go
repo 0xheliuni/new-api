@@ -302,14 +302,14 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.0-fast-generate-001":      0.15,
 	"veo-3.1-generate-preview":       0.4,
 	"veo-3.1-fast-generate-preview":  0.15,
-	// AIGC Video - Vidu 系列（元/秒）
+	// OpenAI Video - Vidu 系列（元/秒）
 	"Vidu-q2":        0.32,
 	"Vidu-q2-pro":    0.35,
 	"Vidu-q2-turbo":  0.25,
 	"Vidu-q3-pro":    0.937,
 	"Vidu-q3-turbo":  0.38,
 	"Vidu-template":  0.40,
-	// AIGC Video - Kling 系列
+	// OpenAI Video - Kling 系列
 	"Kling-1.6":      0.40,
 	"Kling-2.0":      0.40,
 	"Kling-2.1":      0.40,
@@ -318,7 +318,7 @@ var defaultModelPrice = map[string]float64{
 	"Kling-3.0":      0.60,
 	"Kling-3.0-Omni": 0.60,
 	"Kling-O1":       0.90,
-	// AIGC Video - 其他
+	// OpenAI Video - 其他
 	"Hunyuan-1.5":      0.30,
 	"Mingmou-1.0":      0.30,
 	"OS-2.0":           0.75,

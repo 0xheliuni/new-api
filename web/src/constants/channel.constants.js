@@ -192,7 +192,7 @@ export const CHANNEL_OPTIONS = [
   {
     value: 58,
     color: 'violet',
-    label: 'AIGC Video',
+    label: 'OpenAI Video',
   },
 ];
 

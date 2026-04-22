@@ -607,7 +607,7 @@ func testAIGCVideoChannel(channel *model.Channel, testModel string) testResult {
 		}
 	}
 
-	common.SysLog(fmt.Sprintf("AIGC Video channel #%d test success, task_id: %s, model: %s", channel.Id, taskID, testModel))
+	common.SysLog(fmt.Sprintf("OpenAI Video channel #%d test success, task_id: %s, model: %s", channel.Id, taskID, testModel))
 	return testResult{}
 }
 
