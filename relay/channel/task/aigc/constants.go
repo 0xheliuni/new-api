@@ -15,4 +15,4 @@ var ModelList = []string{
 	"JV-3.0-pro",
 }
 
-var ChannelName = "aigc_video"
+var ChannelName = "openai-video"

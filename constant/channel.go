@@ -119,7 +119,7 @@ var ChannelBaseURLs = []string{
 	"https://api.openai.com",                    //55
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
-	"",                                          //58 - AIGCVideo
+	"",                                          //58 - OpenAI Video
 }
 
 var ChannelTypeNames = map[int]string{
@@ -177,7 +177,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSora:           "Sora",
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "Codex",
-	ChannelTypeAIGCVideo:      "AIGCVideo",
+	ChannelTypeAIGCVideo:      "OpenAI Video",
 }
 
 func GetChannelTypeName(channelType int) string {

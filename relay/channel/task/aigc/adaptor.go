@@ -38,6 +38,9 @@ type responseTask struct {
 	Progress  int    `json:"progress"`
 	CreatedAt int64  `json:"created_at"`
 	Size      string `json:"size,omitempty"`
+	Quality   string `json:"quality,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
+	Seconds   string `json:"seconds,omitempty"`
 }
 
 type fetchResponseTask struct {
@@ -50,6 +53,11 @@ type fetchResponseTask struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 	} `json:"error,omitempty"`
+	Quality string `json:"quality,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+	Seconds string `json:"seconds,omitempty"`
+	Size    string `json:"size,omitempty"`
+	Model   string `json:"model,omitempty"`
 }
 
 // ============================
@@ -60,6 +68,8 @@ type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	ChannelType int
 	baseURL     string
+	authMode    string // "hmac" or "bearer"
+	bearerToken string // Bearer Token mode
 	subAppId    string
 	secretId    string
 	secretKey   string
@@ -69,14 +79,20 @@ type TaskAdaptor struct {
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
+
+	// Detect API Key format: contains "|" with at least 3 segments -> HMAC mode, otherwise Bearer Token mode
 	parts := strings.Split(info.ApiKey, "|")
 	if len(parts) >= 3 {
+		a.authMode = "hmac"
 		a.subAppId = parts[0]
 		a.secretId = parts[1]
 		a.secretKey = parts[2]
-	}
-	if len(parts) >= 4 {
-		a.region = parts[3]
+		if len(parts) >= 4 {
+			a.region = parts[3]
+		}
+	} else {
+		a.authMode = "bearer"
+		a.bearerToken = info.ApiKey
 	}
 }
 
@@ -178,10 +194,14 @@ func (a *TaskAdaptor) setSignatureHeaders(req *http.Request) {
 	}
 }
 
-// BuildRequestHeader sets HMAC-SHA256 authentication headers.
+// BuildRequestHeader sets authentication headers based on the auth mode.
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
-	a.setSignatureHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
+	if a.authMode == "bearer" {
+		req.Header.Set("Authorization", "Bearer "+a.bearerToken)
+	} else {
+		a.setSignatureHeaders(req)
+	}
 	return nil
 }
 
@@ -251,7 +271,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, err
 	}
 
-	// Parse pipe-separated key and set auth headers
+	// Parse key and set auth headers based on format
 	parts := strings.Split(key, "|")
 	if len(parts) >= 3 {
 		subAppId := parts[0]
@@ -271,6 +291,9 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		if len(parts) >= 4 && parts[3] != "" {
 			req.Header.Set("X-Region", parts[3])
 		}
+	} else {
+		// Bearer Token mode
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
 	client, err := service.GetHttpClientWithProxy(proxy)
