@@ -41,6 +41,14 @@ const (
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
+// 媒体转存状态常量
+const (
+	StorageStatusPending   = "pending"
+	StorageStatusUploading = "uploading"
+	StorageStatusSuccess   = "success"
+	StorageStatusFailed    = "failed"
+)
+
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
@@ -105,6 +113,11 @@ type TaskPrivateData struct {
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	// 媒体转存相关字段
+	StorageURL        string `json:"storage_url,omitempty"`         // CloudPaste 转存后的访问 URL（下载链接）
+	StoragePreviewURL string `json:"storage_preview_url,omitempty"` // CloudPaste 预览 URL
+	StorageStatus     string `json:"storage_status,omitempty"`      // 转存状态：pending/uploading/success/failed
+	StorageError      string `json:"storage_error,omitempty"`       // 转存失败原因
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -133,6 +146,43 @@ func (t *Task) GetResultURL() string {
 		return t.PrivateData.ResultURL
 	}
 	return t.FailReason
+}
+
+// GetAccessURL 返回最终可访问的 URL，优先 StorageURL，兜底 ResultURL
+func (t *Task) GetAccessURL() string {
+	if t.PrivateData.StorageURL != "" {
+		return t.PrivateData.StorageURL
+	}
+	return t.GetResultURL()
+}
+
+// GetStorageURL 返回转存 URL（仅当状态为 success 时）
+func (t *Task) GetStorageURL() string {
+	if t.PrivateData.StorageStatus == StorageStatusSuccess && t.PrivateData.StorageURL != "" {
+		return t.PrivateData.StorageURL
+	}
+	return ""
+}
+
+// GetStoragePreviewURL 返回预览 URL
+func (t *Task) GetStoragePreviewURL() string {
+	if t.PrivateData.StoragePreviewURL != "" {
+		return t.PrivateData.StoragePreviewURL
+	}
+	return ""
+}
+
+// SetStorageResult 设置转存结果
+func (t *Task) SetStorageResult(downloadURL, previewURL, status, errMsg string) {
+	t.PrivateData.StorageURL = downloadURL
+	t.PrivateData.StoragePreviewURL = previewURL
+	t.PrivateData.StorageStatus = status
+	t.PrivateData.StorageError = errMsg
+}
+
+// UpdateStorageResult 更新转存结果到数据库（只更新 private_data 字段）
+func (t *Task) UpdateStorageResult() error {
+	return DB.Model(t).Select("private_data").Updates(t).Error
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
@@ -417,6 +467,15 @@ func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.
+func TaskGetByID(id int) (*Task, error) {
+	var task Task
+	err := DB.Where("id = ?", id).First(&task).Error
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 // WARNING: This function has NO CAS (Compare-And-Swap) guard — it will overwrite
 // any concurrent status changes. DO NOT use in billing/quota lifecycle flows
 // (e.g., timeout, success, failure transitions that trigger refunds or settlements).
@@ -503,6 +562,17 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.SetProgressStr(t.Progress)
 	openAIVideo.CreatedAt = t.CreatedAt
 	openAIVideo.CompletedAt = t.UpdatedAt
-	openAIVideo.SetMetadata("url", t.GetResultURL())
+	// 优先使用转存 URL，兜底 ResultURL
+	accessURL := t.GetAccessURL()
+	if accessURL != "" {
+		openAIVideo.SetMetadata("url", accessURL)
+	}
+	// 转存状态和预览 URL
+	if t.PrivateData.StorageStatus != "" {
+		openAIVideo.SetMetadata("storage_status", t.PrivateData.StorageStatus)
+	}
+	if previewURL := t.GetStoragePreviewURL(); previewURL != "" {
+		openAIVideo.SetMetadata("preview_url", previewURL)
+	}
 	return openAIVideo
 }

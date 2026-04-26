@@ -188,6 +188,14 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "CloudPasteEnabled":
+		if option.Value == "true" && setting.CloudPasteBaseURL == "" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无法启用 CloudPaste 转存，请先填入 CloudPaste 服务地址和 API Key！",
+			})
+			return
+		}
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {

@@ -48,6 +48,7 @@ type fetchResponseTask struct {
 	Status      string `json:"status"`
 	Progress    int    `json:"progress"`
 	VideoURL    string `json:"video_url"`
+	URL         string `json:"url"`
 	CompletedAt int64  `json:"completed_at"`
 	Error       *struct {
 		Message string `json:"message"`
@@ -163,6 +164,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	ratios := map[string]float64{
 		"seconds": float64(seconds),
 		"size":    1,
+	}
+	// Grok (bearer mode): bill by call × seconds only, no size ratio
+	if a.authMode == "bearer" {
+		return ratios
 	}
 	if size == "1792x1024" || size == "1024x1792" || size == "1080P" {
 		ratios["size"] = 1.666667
@@ -331,6 +336,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusSuccess
 		if resTask.VideoURL != "" {
 			taskResult.Url = resTask.VideoURL
+		} else if resTask.URL != "" {
+			taskResult.Url = resTask.URL
 		}
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
