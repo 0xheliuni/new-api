@@ -72,6 +72,14 @@ export const useTaskLogsData = () => {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
 
+  // 媒体预览弹窗状态（视频/图片，支持 CloudPaste 转存）
+  const [isMediaModalOpen, setIsMediaModalOpen] = useState(false);
+  const [mediaModalData, setMediaModalData] = useState({
+    url: '',
+    previewUrl: '',
+    mediaType: 'video',
+  });
+
   // Audio preview modal state
   const [isAudioModalOpen, setIsAudioModalOpen] = useState(false);
   const [audioClips, setAudioClips] = useState([]);
@@ -281,9 +289,34 @@ export const useTaskLogsData = () => {
     setIsVideoModalOpen(true);
   };
 
+  // 打开媒体预览弹窗（视频/图片，支持 metadata 中的 url / preview_url）
+  const openMediaModal = (record, mediaType = 'video') => {
+    const metadata = record.metadata || {};
+    const url = metadata.url || record.result_url || '';
+    const previewUrl = metadata.preview_url || '';
+    const storageStatus = metadata.storage_status || '';
+    const taskId = record.id;
+    setMediaModalData({ url, previewUrl, mediaType, storageStatus, taskId });
+    setIsMediaModalOpen(true);
+  };
+
   const openAudioModal = (clips) => {
     setAudioClips(clips);
     setIsAudioModalOpen(true);
+  };
+
+  const handleMediaTransfer = async (taskId) => {
+    try {
+      const res = await API.post(`/api/task/${taskId}/transfer`);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('转存请求已提交'));
+      } else {
+        showError(message);
+      }
+    } catch {
+      showError(t('转存请求失败'));
+    }
   };
 
   // User info function
@@ -328,6 +361,11 @@ export const useTaskLogsData = () => {
     setIsVideoModalOpen,
     videoUrl,
 
+    // 媒体预览弹窗状态
+    isMediaModalOpen,
+    setIsMediaModalOpen,
+    mediaModalData,
+
     // Audio preview modal
     isAudioModalOpen,
     setIsAudioModalOpen,
@@ -366,7 +404,9 @@ export const useTaskLogsData = () => {
     copyText,
     openContentModal,
     openVideoModal,
+    openMediaModal,
     openAudioModal,
+    handleMediaTransfer,
     enrichLogs,
     syncPageData,
 
