@@ -17,7 +17,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
 )
 
@@ -244,6 +246,11 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		err = task.Update()
 		if err != nil {
 			common.SysLog("UpdateSunoTask task error: " + err.Error())
+		}
+
+		// Suno 任务成功后异步触发 CloudPaste 转存
+		if responseItem.Status == model.TaskStatusSuccess {
+			triggerMediaTransfer(task)
 		}
 	}
 	return nil
@@ -498,6 +505,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 
+	// 任务成功后异步触发 CloudPaste 转存
+	if task.Status == model.TaskStatusSuccess {
+		triggerMediaTransfer(task)
+	}
+
 	return nil
 }
 
@@ -533,6 +545,38 @@ func truncateBase64(s string) string {
 		return s
 	}
 	return s[:maxKeep] + "..."
+}
+
+// triggerMediaTransfer 异步触发媒体转存到 CloudPaste
+func triggerMediaTransfer(task *model.Task) {
+	// 1. 检查是否启用
+	if !setting.CloudPasteEnabled {
+		common.SysLog(fmt.Sprintf("CloudPaste transfer skipped for task %s: CloudPaste is not enabled", task.TaskID))
+		return
+	}
+	if !setting.CloudPasteAutoTransfer {
+		common.SysLog(fmt.Sprintf("CloudPaste transfer skipped for task %s: auto transfer is disabled", task.TaskID))
+		return
+	}
+
+	// 2. 检查是否已经转存过
+	if task.PrivateData.StorageStatus == model.StorageStatusSuccess {
+		return
+	}
+
+	// 3. 设置初始转存状态
+	task.SetStorageResult("", "", model.StorageStatusPending, "")
+	if err := task.UpdateStorageResult(); err != nil {
+		common.SysLog(fmt.Sprintf("failed to persist pending storage status for task %s: %v", task.TaskID, err))
+	}
+
+	// 4. 异步提交转存任务
+	taskID := task.TaskID
+	gopool.Go(func() {
+		if err := TransferTaskMedia(task); err != nil {
+			logger.LogError(context.Background(), fmt.Sprintf("media transfer failed for task %s: %v", taskID, err))
+		}
+	})
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。

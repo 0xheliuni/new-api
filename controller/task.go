@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/bytedance/gopkg/util/gopool"
 
 	"github.com/gin-gonic/gin"
 )
@@ -91,4 +93,33 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 		result[i] = relay.TaskModel2Dto(task)
 	}
 	return result
+}
+
+func RetryMediaTransfer(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid task id"})
+		return
+	}
+
+	task, err := model.TaskGetByID(id)
+	if err != nil || task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "task not found"})
+		return
+	}
+
+	if task.Status != model.TaskStatusSuccess {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "task is not in SUCCESS status"})
+		return
+	}
+
+	task.SetStorageResult("", "", model.StorageStatusPending, "")
+	_ = task.UpdateStorageResult()
+
+	gopool.Go(func() {
+		_ = service.TransferTaskMedia(task)
+	})
+
+	common.ApiSuccess(c, nil)
 }
