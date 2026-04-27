@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import { Progress, Tag, Tooltip, Typography, Spin } from '@douyinfe/semi-ui';
 import {
   Music,
   FileText,
@@ -33,6 +33,10 @@ import {
   Hash,
   Video,
   Sparkles,
+  Upload,
+  CloudOff,
+  CircleCheck,
+  Image,
 } from 'lucide-react';
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
@@ -233,6 +237,41 @@ const renderStatus = (type, t) => {
   }
 };
 
+const VIDEO_ACTIONS = [
+  TASK_ACTION_GENERATE,
+  TASK_ACTION_TEXT_GENERATE,
+  TASK_ACTION_FIRST_TAIL_GENERATE,
+  TASK_ACTION_REFERENCE_GENERATE,
+  TASK_ACTION_REMIX_GENERATE,
+];
+
+const renderStorageStatus = (status, t) => {
+  if (!status) return null;
+  switch (status) {
+    case 'pending':
+    case 'uploading':
+      return (
+        <Tag color='yellow' shape='circle' prefixIcon={<Upload size={14} />}>
+          {t('转存中')}
+        </Tag>
+      );
+    case 'success':
+      return (
+        <Tag color='green' shape='circle' prefixIcon={<CircleCheck size={14} />}>
+          {t('已转存')}
+        </Tag>
+      );
+    case 'failed':
+      return (
+        <Tag color='red' shape='circle' prefixIcon={<CloudOff size={14} />}>
+          {t('转存失败')}
+        </Tag>
+      );
+    default:
+      return null;
+  }
+};
+
 export const getTaskLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -240,7 +279,9 @@ export const getTaskLogsColumns = ({
   openContentModal,
   isAdminUser,
   openVideoModal,
+  openMediaModal,
   openAudioModal,
+  onTransfer,
 }) => {
   return [
     {
@@ -407,29 +448,95 @@ export const getTaskLogsColumns = ({
           );
         }
 
-        // 视频预览：优先使用 result_url，兼容旧数据 fail_reason 中的 URL
-        const isVideoTask =
-          record.action === TASK_ACTION_GENERATE ||
-          record.action === TASK_ACTION_TEXT_GENERATE ||
-          record.action === TASK_ACTION_FIRST_TAIL_GENERATE ||
-          record.action === TASK_ACTION_REFERENCE_GENERATE ||
-          record.action === TASK_ACTION_REMIX_GENERATE;
+        const metadata = record.metadata || {};
+        const isVideoTask = VIDEO_ACTIONS.includes(record.action);
         const isSuccess = record.status === 'SUCCESS';
-        const resultUrl = record.result_url;
-        const hasResultUrl = typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
-        if (isSuccess && isVideoTask && hasResultUrl) {
+
+        // 媒体预览：优先使用 metadata.url，兆底 result_url
+        const mediaUrl = metadata.url || record.result_url;
+        const hasMediaUrl =
+          typeof mediaUrl === 'string' && /^https?:\/\//.test(mediaUrl);
+        const storageStatus = metadata.storage_status;
+
+        if (isSuccess && isVideoTask && hasMediaUrl) {
+          const showTransfer = onTransfer && storageStatus !== 'success' && storageStatus !== 'uploading';
           return (
-            <a
-              href='#'
-              onClick={(e) => {
-                e.preventDefault();
-                openVideoModal(resultUrl);
-              }}
-            >
-              {t('点击预览视频')}
-            </a>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <a
+                href='#'
+                onClick={(e) => {
+                  e.preventDefault();
+                  openMediaModal(record, 'video');
+                }}
+              >
+                {t('点击预览视频')}
+              </a>
+              {renderStorageStatus(storageStatus, t)}
+              {showTransfer && (
+                <Tag
+                  color='blue'
+                  shape='circle'
+                  prefixIcon={<Upload size={14} />}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onTransfer(record.id)}
+                >
+                  {t('转存')}
+                </Tag>
+              )}
+            </div>
           );
         }
+
+        // 图片预览：如果 metadata 中有 url 且不是视频任务，尝试作为图片预览
+        if (isSuccess && !isVideoTask && hasMediaUrl) {
+          const showTransfer = onTransfer && storageStatus !== 'success' && storageStatus !== 'uploading';
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <a
+                href='#'
+                onClick={(e) => {
+                  e.preventDefault();
+                  openMediaModal(record, 'image');
+                }}
+              >
+                {t('点击预览图片')}
+              </a>
+              {renderStorageStatus(storageStatus, t)}
+              {showTransfer && (
+                <Tag
+                  color='blue'
+                  shape='circle'
+                  prefixIcon={<Upload size={14} />}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onTransfer(record.id)}
+                >
+                  {t('转存')}
+                </Tag>
+              )}
+            </div>
+          );
+        }
+
+        // 未完成但有转存状态时显示转存状态
+        if (storageStatus && !isSuccess) {
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {text ? (
+                <Typography.Text
+                  ellipsis={{ showTooltip: true }}
+                  style={{ width: 80 }}
+                  onClick={() => openContentModal(text)}
+                >
+                  {text}
+                </Typography.Text>
+              ) : (
+                t('无')
+              )}
+              {renderStorageStatus(storageStatus, t)}
+            </div>
+          );
+        }
+
         if (!text) {
           return t('无');
         }

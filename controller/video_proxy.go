@@ -55,6 +55,12 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	// 优先使用 CloudPaste 转存 URL（已是持久化的公开访问地址）
+	if storageURL := task.GetStorageURL(); storageURL != "" {
+		c.Redirect(http.StatusFound, storageURL)
+		return
+	}
+
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get channel for task %s: %s", taskID, err.Error()))

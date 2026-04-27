@@ -667,17 +667,23 @@ type TaskRelayInfo struct {
 	LockedChannel any
 }
 
+type ImageURLRef struct {
+	ImageURL string `json:"image_url"`
+}
+
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt          string                 `json:"prompt"`
+	Model           string                 `json:"model,omitempty"`
+	Mode            string                 `json:"mode,omitempty"`
+	Image           string                 `json:"image,omitempty"`
+	Images          []string               `json:"images,omitempty"`
+	Size            string                 `json:"size,omitempty"`
+	Duration        int                    `json:"duration,omitempty"`
+	Seconds         string                 `json:"seconds,omitempty"`
+	InputReference  string                 `json:"input_reference,omitempty"`
+	ImageReference  *ImageURLRef           `json:"image_reference,omitempty"`
+	ImageReferences []ImageURLRef          `json:"image_references,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -685,14 +691,16 @@ func (t *TaskSubmitReq) GetPrompt() string {
 }
 
 func (t *TaskSubmitReq) HasImage() bool {
-	return len(t.Images) > 0
+	return len(t.Images) > 0 || t.ImageReference != nil || len(t.ImageReferences) > 0
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
-		Metadata json.RawMessage `json:"metadata,omitempty"`
-		Duration json.RawMessage `json:"duration,omitempty"`
+		Metadata        json.RawMessage `json:"metadata,omitempty"`
+		Duration        json.RawMessage `json:"duration,omitempty"`
+		ImageReference  *ImageURLRef    `json:"image_reference,omitempty"`
+		ImageReferences []ImageURLRef   `json:"image_references,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -701,6 +709,10 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+
+	// 赋值 ImageReference / ImageReferences
+	t.ImageReference = aux.ImageReference
+	t.ImageReferences = aux.ImageReferences
 
 	if len(aux.Duration) > 0 {
 		var durationInt int

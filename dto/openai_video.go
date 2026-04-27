@@ -25,6 +25,8 @@ type OpenAIVideo struct {
 	ExpiresAt          int64             `json:"expires_at,omitempty"`
 	Seconds            string            `json:"seconds,omitempty"`
 	Size               string            `json:"size,omitempty"`
+	Quality            string            `json:"quality,omitempty"`  // 分辨率质量 480p/720p
+	Prompt             string            `json:"prompt,omitempty"`   // 原始提示词
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`

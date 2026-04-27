@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 )
 
 type TaskSubmitResult struct {
@@ -397,7 +398,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
 			}
-			respBody = openAIVideoData
+			// 后置注入转存 URL 和状态，覆盖各 adaptor 设置的原始 URL
+			respBody = applyStorageOverrides(openAIVideoData, originTask)
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
@@ -413,6 +415,32 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+// applyStorageOverrides 在 adaptor 生成的 OpenAI Video JSON 上叠加转存 URL 和状态字段。
+// 优先使用 StorageURL 覆盖 metadata.url，并追加 storage_status、preview_url。
+// 当没有转存信息时，行为与之前完全一致（不修改原始 JSON）。
+func applyStorageOverrides(data []byte, task *model.Task) []byte {
+	// 优先使用转存 URL，兜底 ResultURL
+	accessURL := task.GetAccessURL()
+	if accessURL != "" {
+		if patched, err := sjson.SetBytes(data, "metadata.url", accessURL); err == nil {
+			data = patched
+		}
+	}
+	// 转存状态
+	if task.PrivateData.StorageStatus != "" {
+		if patched, err := sjson.SetBytes(data, "metadata.storage_status", task.PrivateData.StorageStatus); err == nil {
+			data = patched
+		}
+	}
+	// 预览 URL
+	if previewURL := task.GetStoragePreviewURL(); previewURL != "" {
+		if patched, err := sjson.SetBytes(data, "metadata.preview_url", previewURL); err == nil {
+			data = patched
+		}
+	}
+	return data
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

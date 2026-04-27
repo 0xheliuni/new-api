@@ -165,6 +165,11 @@ func InitOptionMap() {
 	common.OptionMap["MjModeClearEnabled"] = strconv.FormatBool(setting.MjModeClearEnabled)
 	common.OptionMap["MjForwardUrlEnabled"] = strconv.FormatBool(setting.MjForwardUrlEnabled)
 	common.OptionMap["MjActionCheckSuccessEnabled"] = strconv.FormatBool(setting.MjActionCheckSuccessEnabled)
+	common.OptionMap["CloudPasteEnabled"] = strconv.FormatBool(setting.CloudPasteEnabled)
+	common.OptionMap["CloudPasteBaseURL"] = setting.CloudPasteBaseURL
+	common.OptionMap["CloudPasteAPIKey"] = setting.CloudPasteAPIKey
+	common.OptionMap["CloudPasteStorageConfigID"] = setting.CloudPasteStorageConfigID
+	common.OptionMap["CloudPasteAutoTransfer"] = strconv.FormatBool(setting.CloudPasteAutoTransfer)
 	common.OptionMap["CheckSensitiveEnabled"] = strconv.FormatBool(setting.CheckSensitiveEnabled)
 	common.OptionMap["DemoSiteEnabled"] = strconv.FormatBool(operation_setting.DemoSiteEnabled)
 	common.OptionMap["SelfUseModeEnabled"] = strconv.FormatBool(operation_setting.SelfUseModeEnabled)
@@ -307,6 +312,10 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.MjForwardUrlEnabled = boolValue
 		case "MjActionCheckSuccessEnabled":
 			setting.MjActionCheckSuccessEnabled = boolValue
+		case "CloudPasteEnabled":
+			setting.CloudPasteEnabled = boolValue
+		case "CloudPasteAutoTransfer":
+			setting.CloudPasteAutoTransfer = boolValue
 		case "CheckSensitiveEnabled":
 			setting.CheckSensitiveEnabled = boolValue
 		case "DemoSiteEnabled":
@@ -543,6 +552,12 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StreamCacheQueueLength, _ = strconv.Atoi(value)
 	case "PayMethods":
 		err = operation_setting.UpdatePayMethodsByJsonString(value)
+	case "CloudPasteBaseURL":
+		setting.CloudPasteBaseURL = value
+	case "CloudPasteAPIKey":
+		setting.CloudPasteAPIKey = value
+	case "CloudPasteStorageConfigID":
+		setting.CloudPasteStorageConfigID = value
 	case "WaffoPayMethods":
 		// WaffoPayMethods is read directly from OptionMap via setting.GetWaffoPayMethods().
 		// The value is already stored in OptionMap at the top of this function (line: common.OptionMap[key] = value).
