@@ -78,6 +78,8 @@ type responseTask struct {
 	Ratio           string `json:"ratio"`
 	FramesPerSecond int    `json:"framespersecond"`
 	ServiceTier     string `json:"service_tier"`
+	GenerateAudio   bool   `json:"generate_audio"`
+	Draft           bool   `json:"draft"`
 	Tools           []struct {
 		Type string `json:"type"`
 	} `json:"tools"`
@@ -332,6 +334,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
+	case "expired":
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = "100%"
+		taskResult.Reason = "task expired"
 	default:
 		// Unknown status, treat as processing
 		taskResult.Status = model.TaskStatusInProgress
@@ -357,7 +363,34 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
-	if dResp.Status == "failed" {
+	if dResp.Seed != 0 {
+		openAIVideo.SetMetadata("seed", dResp.Seed)
+	}
+	if dResp.Duration > 0 {
+		openAIVideo.SetMetadata("duration", dResp.Duration)
+	}
+	if dResp.Ratio != "" {
+		openAIVideo.SetMetadata("ratio", dResp.Ratio)
+	}
+	if dResp.Resolution != "" {
+		openAIVideo.SetMetadata("resolution", dResp.Resolution)
+	}
+	if dResp.FramesPerSecond > 0 {
+		openAIVideo.SetMetadata("framespersecond", dResp.FramesPerSecond)
+	}
+	if dResp.ServiceTier != "" {
+		openAIVideo.SetMetadata("service_tier", dResp.ServiceTier)
+	}
+	openAIVideo.SetMetadata("generate_audio", dResp.GenerateAudio)
+	openAIVideo.SetMetadata("draft", dResp.Draft)
+	if dResp.Usage.CompletionTokens > 0 || dResp.Usage.TotalTokens > 0 {
+		openAIVideo.SetMetadata("usage", map[string]int{
+			"completion_tokens": dResp.Usage.CompletionTokens,
+			"total_tokens":      dResp.Usage.TotalTokens,
+		})
+	}
+
+	if dResp.Status == "failed" || dResp.Status == "expired" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: dResp.Error.Message,
 			Code:    dResp.Error.Code,
