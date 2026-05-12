@@ -54,11 +54,27 @@ type fetchResponseTask struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 	} `json:"error,omitempty"`
-	Quality string `json:"quality,omitempty"`
-	Prompt  string `json:"prompt,omitempty"`
-	Seconds string `json:"seconds,omitempty"`
-	Size    string `json:"size,omitempty"`
-	Model   string `json:"model,omitempty"`
+	Quality  string                 `json:"quality,omitempty"`
+	Prompt   string                 `json:"prompt,omitempty"`
+	Seconds  string                 `json:"seconds,omitempty"`
+	Size     string                 `json:"size,omitempty"`
+	Model    string                 `json:"model,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+func (r *fetchResponseTask) getVideoURL() string {
+	if r.VideoURL != "" {
+		return r.VideoURL
+	}
+	if r.URL != "" {
+		return r.URL
+	}
+	if r.Metadata != nil {
+		if u, ok := r.Metadata["url"].(string); ok && u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 // ============================
@@ -334,11 +350,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		if resTask.VideoURL != "" {
-			taskResult.Url = resTask.VideoURL
-		} else if resTask.URL != "" {
-			taskResult.Url = resTask.URL
-		}
+		taskResult.Url = resTask.getVideoURL()
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {

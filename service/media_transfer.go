@@ -60,14 +60,15 @@ func GetUpstreamMediaURL(task *model.Task, channel *model.Channel) (mediaURL str
 		headers["Authorization"] = "Bearer " + channel.Key
 
 	case constant.ChannelTypeAIGCVideo:
-		// AIGC Video (Grok): try unauthenticated endpoint first, fall back to authenticated
 		if baseURL == "" {
 			return "", nil, fmt.Errorf("AIGC Video channel %d has no base URL", channel.Id)
 		}
-		mediaURL = fmt.Sprintf("%s/v1/files/video?id=%s", baseURL, task.GetUpstreamTaskID())
-		// Add Bearer token for sk-xxx format keys (e.g., Grok)
-		// For HMAC format keys (SubAppId|SecretId|SecretKey), the unauthenticated endpoint should work
-		if !strings.Contains(channel.Key, "|") {
+		if strings.Contains(channel.Key, "|") {
+			// HMAC auth (SubAppId|SecretId|SecretKey): direct AIGC gateway
+			mediaURL = fmt.Sprintf("%s/v1/files/video?id=%s", baseURL, task.GetUpstreamTaskID())
+		} else {
+			// Bearer token (sk-xxx): upstream is likely another new-api instance
+			mediaURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 			headers["Authorization"] = "Bearer " + channel.Key
 		}
 
