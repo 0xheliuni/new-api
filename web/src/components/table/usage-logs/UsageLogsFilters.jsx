@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useContext } from 'react';
 import { Button, Form } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import { IconSearch, IconDownload } from '@douyinfe/semi-icons';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
+import { StatusContext } from '../../../context/Status';
 
 const LogsFilters = ({
   formInitValues,
@@ -32,8 +33,16 @@ const LogsFilters = ({
   setLogType,
   loading,
   isAdminUser,
+  handleExport,
+  exporting,
   t,
 }) => {
+  const [statusState] = useContext(StatusContext);
+  // Admin always sees the export button; regular users only see it when the
+  // admin-controlled LogExportEnabled toggle is on. Treat undefined as
+  // disabled so the button does not flash in before /api/status resolves.
+  const exportVisible =
+    isAdminUser || statusState?.status?.log_export_enabled === true;
   return (
     <Form
       initValues={formInitValues}
@@ -183,6 +192,18 @@ const LogsFilters = ({
             >
               {t('列设置')}
             </Button>
+            {exportVisible && (
+              <Button
+                type='primary'
+                theme='solid'
+                icon={<IconDownload />}
+                onClick={handleExport}
+                loading={exporting}
+                size='small'
+              >
+                {t('导出账单')}
+              </Button>
+            )}
           </div>
         </div>
       </div>

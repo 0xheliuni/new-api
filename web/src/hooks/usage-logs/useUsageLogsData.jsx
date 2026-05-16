@@ -38,6 +38,7 @@ import {
   renderModelPrice,
   renderTaskBillingProcess,
 } from '../../helpers';
+import { downloadBlobAsFile } from '../../helpers/utils';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
@@ -73,6 +74,7 @@ export const useLogsData = () => {
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
+  const [exporting, setExporting] = useState(false);
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -844,6 +846,82 @@ export const useLogsData = () => {
     setLoading(false);
   };
 
+  // Export current filter results as an xlsx bill. Only forwards columns the
+  // user has ticked in 列设置 — the backend then enforces its own allow-list,
+  // so any sensitive keys we send (channel/retry/ip/details) are dropped on
+  // the server side regardless.
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const {
+        username,
+        token_name,
+        model_name,
+        start_timestamp,
+        end_timestamp,
+        channel,
+        group,
+        request_id,
+        logType: formLogType,
+      } = getFormValues();
+      const currentLogType = formLogType !== undefined ? formLogType : logType;
+      const localStart = Date.parse(start_timestamp) / 1000;
+      const localEnd = Date.parse(end_timestamp) / 1000;
+      const selectedColumns = Object.entries(visibleColumns)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join(',');
+
+      const params = new URLSearchParams();
+      params.set('type', String(currentLogType));
+      params.set('start_timestamp', String(localStart));
+      params.set('end_timestamp', String(localEnd));
+      if (token_name) params.set('token_name', token_name);
+      if (model_name) params.set('model_name', model_name);
+      if (group) params.set('group', group);
+      if (request_id) params.set('request_id', request_id);
+      if (selectedColumns) params.set('columns', selectedColumns);
+      if (isAdminUser) {
+        if (username) params.set('username', username);
+        if (channel) params.set('channel', channel);
+      }
+      const path = isAdminUser ? '/api/log/export' : '/api/log/self/export';
+
+      const res = await API.get(`${path}?${params.toString()}`, {
+        responseType: 'blob',
+        skipErrorHandler: true,
+      });
+
+      const blob = res.data;
+      const truncated = res.headers['x-export-truncated'] === '1';
+      const filename = `bill-${timestamp2string(Date.now() / 1000).replace(/[: ]/g, '-')}.xlsx`;
+      downloadBlobAsFile(blob, filename);
+
+      if (truncated) {
+        showError(t('导出条数超出上限，请先收窄筛选条件'));
+      } else {
+        showSuccess(t('账单导出成功'));
+      }
+    } catch (e) {
+      // Backend signals "export disabled" with a JSON 403; axios still gives
+      // us a Blob because of responseType. Read it to surface the message.
+      let msg = t('导出账单失败');
+      if (e.response && e.response.data instanceof Blob) {
+        try {
+          const text = await e.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed && parsed.message) msg = parsed.message;
+        } catch (_) {}
+      } else if (e.message) {
+        msg = e.message;
+      }
+      showError(msg);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Page handlers
   const handlePageChange = (page) => {
     setActivePage(page);
@@ -965,6 +1043,8 @@ export const useLogsData = () => {
     hasExpandableRows,
     setLogType,
     openParamOverrideModal,
+    handleExport,
+    exporting,
 
     // Translation
     t,

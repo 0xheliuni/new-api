@@ -531,3 +531,154 @@ func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64,
 
 	return total, nil
 }
+
+// logExportMaxRows caps the number of rows a single export can produce, both to
+// protect the DB from runaway queries and to keep generated xlsx files
+// reasonable in size. Callers should treat any return >= this value as
+// "truncated" and surface that to the user so they can narrow filters.
+const logExportMaxRows = 100000
+
+// LogExportMaxRows exposes the cap to controller/UI layers without leaking the
+// internal constant.
+func LogExportMaxRows() int { return logExportMaxRows }
+
+// GetAllLogsForExport runs the same filter chain as GetAllLogs but without
+// pagination. It fetches up to logExportMaxRows+1 rows and reports whether the
+// extra row was present (truncated == true). Channel names are populated the
+// same way as GetAllLogs so callers can reuse the data shape, but exporters
+// are expected to drop channel information before writing the bill file.
+func GetAllLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, requestId string) (logs []*Log, truncated bool, err error) {
+	var tx *gorm.DB
+	if logType == LogTypeUnknown {
+		tx = LOG_DB
+	} else {
+		tx = LOG_DB.Where("logs.type = ?", logType)
+	}
+
+	if modelName != "" {
+		tx = tx.Where("logs.model_name like ?", modelName)
+	}
+	if username != "" {
+		tx = tx.Where("logs.username = ?", username)
+	}
+	if tokenName != "" {
+		tx = tx.Where("logs.token_name = ?", tokenName)
+	}
+	if requestId != "" {
+		tx = tx.Where("logs.request_id = ?", requestId)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	}
+	if channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", channel)
+	}
+	if group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+
+	err = tx.Order("logs.id desc").Limit(logExportMaxRows + 1).Find(&logs).Error
+	if err != nil {
+		return nil, false, err
+	}
+	if len(logs) > logExportMaxRows {
+		logs = logs[:logExportMaxRows]
+		truncated = true
+	}
+
+	populateLogChannelNames(logs)
+	return logs, truncated, nil
+}
+
+// GetUserLogsForExport mirrors GetUserLogs without pagination. It also strips
+// admin-only fields from Other via formatUserLogs, matching what the user
+// already sees on the log page.
+func GetUserLogsForExport(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, group string, requestId string) (logs []*Log, truncated bool, err error) {
+	var tx *gorm.DB
+	if logType == LogTypeUnknown {
+		tx = LOG_DB.Where("logs.user_id = ?", userId)
+	} else {
+		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
+	}
+
+	if modelName != "" {
+		modelNamePattern, err := sanitizeLikePattern(modelName)
+		if err != nil {
+			return nil, false, err
+		}
+		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	}
+	if tokenName != "" {
+		tx = tx.Where("logs.token_name = ?", tokenName)
+	}
+	if requestId != "" {
+		tx = tx.Where("logs.request_id = ?", requestId)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	}
+	if group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+
+	err = tx.Order("logs.id desc").Limit(logExportMaxRows + 1).Find(&logs).Error
+	if err != nil {
+		common.SysError("failed to search user logs for export: " + err.Error())
+		return nil, false, errors.New("查询日志失败")
+	}
+	if len(logs) > logExportMaxRows {
+		logs = logs[:logExportMaxRows]
+		truncated = true
+	}
+
+	formatUserLogs(logs, 0)
+	return logs, truncated, nil
+}
+
+// populateLogChannelNames mirrors the channel-name backfill GetAllLogs performs
+// after its main query, so admin exports stay consistent with the list view.
+// Bill exports drop the channel column entirely, but keeping the backfill here
+// lets future callers reuse this function without surprises.
+func populateLogChannelNames(logs []*Log) {
+	channelIds := types.NewSet[int]()
+	for _, log := range logs {
+		if log.ChannelId != 0 {
+			channelIds.Add(log.ChannelId)
+		}
+	}
+	if channelIds.Len() == 0 {
+		return
+	}
+
+	var channels []struct {
+		Id   int    `gorm:"column:id"`
+		Name string `gorm:"column:name"`
+	}
+	if common.MemoryCacheEnabled {
+		for _, channelId := range channelIds.Items() {
+			if cacheChannel, err := CacheGetChannel(channelId); err == nil {
+				channels = append(channels, struct {
+					Id   int    `gorm:"column:id"`
+					Name string `gorm:"column:name"`
+				}{Id: channelId, Name: cacheChannel.Name})
+			}
+		}
+	} else {
+		if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
+			return
+		}
+	}
+	channelMap := make(map[int]string, len(channels))
+	for _, c := range channels {
+		channelMap[c.Id] = c.Name
+	}
+	for i := range logs {
+		logs[i].ChannelName = channelMap[logs[i].ChannelId]
+	}
+}
