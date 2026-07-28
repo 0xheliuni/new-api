@@ -1,6 +1,7 @@
 package seedance3rd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,11 +122,36 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
-// BuildRequestBody 占位实现:完整逻辑由 Task 10 提供。仅为满足
-// channel.TaskAdaptor 接口(DoRequest 依赖的 channel.DoTaskApiRequest
-// 要求参数完整实现该接口),使本包在 Task 4 阶段可编译、可测试。
-func (a *TaskAdaptor) BuildRequestBody(_ *gin.Context, _ *relaycommon.RelayInfo) (io.Reader, error) {
-	return nil, errors.New("seedance3rd: BuildRequestBody not implemented yet")
+// BuildRequestBody 从网关缓存的任务请求构造上游请求体:转换 payload →
+// 应用模型映射(上游收到带 -hc/-ep 后缀名;计费仍按 OriginModelName)→
+// 素材预上传(开关关闭时零行为)→ marshal 并缓存到 info.UpstreamRequestBody。
+func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	body, err := a.convertToRequestPayload(&req)
+	if err != nil {
+		return nil, errors.Wrap(err, "convert request payload failed")
+	}
+	// 模型映射:上游收到带 -hc/-ep 后缀名;计费仍按 OriginModelName。
+	if info.IsModelMapped {
+		body.Model = info.UpstreamModelName
+	} else {
+		info.UpstreamModelName = body.Model
+	}
+	// 素材预上传(按上游名后缀选流程),开关关闭时零行为。
+	if err := a.preuploadAssets(c, body); err != nil {
+		return nil, err
+	}
+	data, err := common.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	if info != nil {
+		info.UpstreamRequestBody = data
+	}
+	return bytes.NewReader(data), nil
 }
 
 // FetchTask 查询第三方任务状态:GET /v1/video/tasks/{task_id}。

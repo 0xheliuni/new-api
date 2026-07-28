@@ -1,12 +1,14 @@
 package seedance3rd
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -307,5 +309,48 @@ func TestConvertToOpenAIVideo(t *testing.T) {
 	}
 	if !strings.Contains(s, "completion_tokens") {
 		t.Fatalf("output missing usage: %s", s)
+	}
+}
+
+// TestBuildRequestBody_UsesMappedModel 验证模型映射生效时,上游请求体里的 model
+// 字段用 info.UpstreamModelName(带 -hc/-ep 后缀),而非客户端原始传入的模型名。
+//
+// 注意:brief 原始测试字面量把 IsModelMapped/UpstreamModelName/ChannelOtherSettings
+// 直接写在 &relaycommon.RelayInfo{} 顶层——这三个字段实际定义在 RelayInfo 匿名嵌入的
+// *ChannelMeta 里(指针嵌入的字段不能在外层结构体字面量里直接赋值,会编译失败:
+// "unknown field ... in struct literal"),因此这里改为嵌套在
+// ChannelMeta: &relaycommon.ChannelMeta{...} 下,语义与 brief 描述一致(字段值不变)。
+func TestBuildRequestBody_UsesMappedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	reqBody := `{"model":"dreamina-seedance-2-0-260128","prompt":"hi"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(reqBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	a := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			IsModelMapped:        true,
+			UpstreamModelName:    "dreamina-seedance-2-0-260128-hc",
+			ChannelOtherSettings: dto.ChannelOtherSettings{Seedance3rdAssetEnabled: false},
+		},
+		// TaskRelayInfo 必须非 nil:ValidateBasicTaskRequest -> storeTaskRequest 会写
+		// info.Action(定义在嵌入的 *TaskRelayInfo 里),否则运行时对 nil 指针写字段会 panic
+		// (RED 阶段实测复现,非编译错误)。
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	// 先让网关把 body 缓存进上下文(ValidateBasicTaskRequest 会 storeTaskRequest)
+	if taskErr := a.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validate: %+v", taskErr)
+	}
+
+	r, err := a.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r)
+	if !strings.Contains(buf.String(), `"dreamina-seedance-2-0-260128-hc"`) {
+		t.Fatalf("upstream body missing mapped model: %s", buf.String())
 	}
 }
