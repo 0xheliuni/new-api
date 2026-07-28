@@ -284,3 +284,28 @@ func TestDoResponse_EmptyIDErrors(t *testing.T) {
 		t.Fatalf("expected taskErr for empty id")
 	}
 }
+
+func TestConvertToOpenAIVideo(t *testing.T) {
+	a := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID:    "task_public_123",
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		CreatedAt: 1000,
+		UpdatedAt: 2000,
+	}
+	task.Properties.OriginModelName = "dreamina-seedance-2-0-260128"
+	task.Data = []byte(`{"task":{"status":"completed","outputs":["https://v/1.mp4"],"usage":{"completion_tokens":40594,"total_tokens":40594}}}`)
+
+	out, err := a.ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "https://v/1.mp4") {
+		t.Fatalf("output missing video url: %s", s)
+	}
+	if !strings.Contains(s, "completion_tokens") {
+		t.Fatalf("output missing usage: %s", s)
+	}
+}

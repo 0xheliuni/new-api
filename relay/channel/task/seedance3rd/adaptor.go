@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/seedance"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -127,9 +128,74 @@ func (a *TaskAdaptor) BuildRequestBody(_ *gin.Context, _ *relaycommon.RelayInfo)
 	return nil, errors.New("seedance3rd: BuildRequestBody not implemented yet")
 }
 
-// FetchTask 占位实现:完整逻辑由 Task 5 提供。理由同上。
-func (a *TaskAdaptor) FetchTask(_, _ string, _ map[string]any, _ string) (*http.Response, error) {
-	return nil, errors.New("seedance3rd: FetchTask not implemented yet")
+// FetchTask 查询第三方任务状态:GET /v1/video/tasks/{task_id}。
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+	taskID, ok := body["task_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid task_id")
+	}
+	uri := fmt.Sprintf("%s/v1/video/tasks/%s", baseUrl, taskID)
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	return client.Do(req)
+}
+
+// EstimateBilling 复用共享 seedance 计费包(按 OriginModelName 查同一矩阵)。
+// 非 Seedance 2.0 模型返回 nil(按基础 modelRatio 计费)。
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if seedance.IsSeedance2(info.OriginModelName) {
+		return seedance.EstimateBilling(c, info)
+	}
+	return nil
+}
+
+// ConvertToOpenAIVideo 把落库的第三方任务查询响应({"task":{...}})转换为
+// OpenAI Video API 风格的对外响应(状态/进度/URL/last_frame_url/duration/usage/error)。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	var resp fetchResponse
+	if err := common.Unmarshal(originTask.Data, &resp); err != nil {
+		return nil, errors.Wrap(err, "unmarshal seedance3rd task data failed")
+	}
+	tk := resp.Task
+
+	ov := dto.NewOpenAIVideo()
+	ov.ID = originTask.TaskID
+	ov.TaskID = originTask.TaskID
+	ov.Status = originTask.Status.ToVideoStatus()
+	ov.SetProgressStr(originTask.Progress)
+	if len(tk.Outputs) > 0 && tk.Outputs[0] != "" {
+		ov.SetMetadata("url", tk.Outputs[0])
+	}
+	if tk.LastFrameURL != "" {
+		ov.SetMetadata("last_frame_url", tk.LastFrameURL)
+	}
+	ov.CreatedAt = originTask.CreatedAt
+	if ov.IsTerminal() {
+		ov.CompletedAt = originTask.UpdatedAt
+	}
+	ov.Model = originTask.Properties.OriginModelName
+	if tk.DurationSeconds > 0 {
+		ov.SetMetadata("duration", tk.DurationSeconds)
+	}
+	if tk.Usage.CompletionTokens > 0 || tk.Usage.TotalTokens > 0 {
+		ov.SetMetadata("usage", map[string]int{
+			"completion_tokens": tk.Usage.CompletionTokens,
+			"total_tokens":      tk.Usage.TotalTokens,
+		})
+	}
+	if (tk.Status == "failed" || tk.Status == "expired") && tk.Error != nil {
+		ov.Error = &dto.OpenAIVideoError{Message: tk.Error.Message, Code: tk.Error.Code}
+	}
+	return common.Marshal(ov)
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
