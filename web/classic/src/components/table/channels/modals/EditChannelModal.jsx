@@ -224,6 +224,8 @@ const EditChannelModal = (props) => {
     byteplus_project_name: 'default',
     byteplus_region: 'ap-southeast-1',
     byteplus_moderation_skip: true,
+    // 第三方 Seedance 渠道（渠道类型 59）素材库预上传总开关
+    seedance3rd_asset_enabled: false,
   };
   const [batch, setBatch] = useState(false);
   const [multiToSingle, setMultiToSingle] = useState(false);
@@ -686,6 +688,13 @@ const EditChannelModal = (props) => {
             'JV-3.0-pro',
           ];
           break;
+        case 59:
+          localModels = [
+            'dreamina-seedance-2-0-260128',
+            'dreamina-seedance-2-0-fast-260128',
+            'dreamina-seedance-2-0-mini-260615',
+          ];
+          break;
         case 45:
           localModels = getChannelModels(value);
           setInputs((prevInputs) => ({
@@ -959,6 +968,9 @@ const EditChannelModal = (props) => {
             parsedSettings.byteplus_region || 'ap-southeast-1';
           data.byteplus_moderation_skip =
             parsedSettings.byteplus_moderation_skip !== false;
+          // 读取第三方 Seedance 素材库预上传设置
+          data.seedance3rd_asset_enabled =
+            parsedSettings.seedance3rd_asset_enabled === true;
         } catch (error) {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
@@ -985,6 +997,7 @@ const EditChannelModal = (props) => {
           data.byteplus_project_name = 'default';
           data.byteplus_region = 'ap-southeast-1';
           data.byteplus_moderation_skip = true;
+          data.seedance3rd_asset_enabled = false;
         }
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
@@ -1010,6 +1023,7 @@ const EditChannelModal = (props) => {
         data.byteplus_project_name = 'default';
         data.byteplus_region = 'ap-southeast-1';
         data.byteplus_moderation_skip = true;
+        data.seedance3rd_asset_enabled = false;
       }
 
       if (
@@ -1851,6 +1865,14 @@ const EditChannelModal = (props) => {
       bytePlusKeys.forEach((k) => {
         if (k in settings) delete settings[k];
       });
+    }
+
+    // type === 59 (Seedance 第三方): 保存素材库预上传总开关到 settings
+    if (localInputs.type === 59) {
+      settings.seedance3rd_asset_enabled =
+        localInputs.seedance3rd_asset_enabled === true;
+    } else if ('seedance3rd_asset_enabled' in settings) {
+      delete settings.seedance3rd_asset_enabled;
     }
 
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
@@ -2881,6 +2903,26 @@ const EditChannelModal = (props) => {
                           </>
                         )}
                       </>
+                    )}
+
+                    {/* Seedance(第三方) 素材库预上传（渠道类型 59） */}
+                    {[59].includes(inputs.type) && (
+                      <Form.Switch
+                        field='seedance3rd_asset_enabled'
+                        label={t('Seedance第三方素材预上传')}
+                        checkedText={t('开')}
+                        uncheckedText={t('关')}
+                        value={inputs.seedance3rd_asset_enabled === true}
+                        onChange={(value) =>
+                          handleChannelOtherSettingsChange(
+                            'seedance3rd_asset_enabled',
+                            value,
+                          )
+                        }
+                        extraText={t(
+                          '提交视频生成前，先把参考媒体上传到素材库并替换为 asset://id，鉴权复用渠道 Bearer key',
+                        )}
+                      />
                     )}
 
                     {inputs.type === 41 && (
