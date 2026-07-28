@@ -172,8 +172,8 @@ var ChannelName = "seedance-3rd"
   - 轮询 `GET /v1/sd/assets/{id}` 到 `data.Status == "Active"`
   - 引用 `asset://<Id>`
 - **其余(260128 族 / `-ep` 等)→ 组模式**:
-  - 确保有素材组:`POST /v1/asset-groups` `{name,description}` → `{id}`(组 id 可缓存/配置;文档述"会轮转素材组,找不到则重建")
-  - `POST /v1/assets` `{group_id,url,asset_type,name}` → `{id,task_id,status}`
+  - 确保有素材组:组 id 缓存于 `HybridCache`(key 含 channelId,组名 `newapi-ch<channelId>`);miss 则 `POST /v1/asset-groups` `{name,description}` → `{id}` 并缓存。
+  - `POST /v1/assets` `{group_id,url,asset_type,name}` → `{id,task_id,status}`;若因组不存在报错 → 清缓存、重建组、重试一次(文档:"会轮转素材组,找不到则重建")。
   - 轮询 `POST /v1/assets/get` `{asset_id,task_id}` 到 `status == "completed"`
   - 引用 `asset://<id>`
 
@@ -212,7 +212,11 @@ var ChannelName = "seedance-3rd"
 
 1. **重名模型共享定价**:`modelRatio` 全局按模型名查,第三方渠道的 `dreamina-seedance-2-0-260128` 与 doubao 渠道**共用同一单价**。这是"沿用上游同名模型"的既定结果。若将来要给第三方单独定价,用渠道级模型映射(映射到差异化计费别名)绕过 —— 本次不做。
 2. **`-hc`/`-ep` 后缀靠管理员配置 `model_mapping`**:代码不硬编码后缀规则,不同模型可配不同后缀,由管理员在渠道后台维护。计费始终按客户端原名。素材流程按上游名后缀(`-hc` → `/v1/sd/assets`;其余 → 组模式)自动选。
-3. **素材组 id 复用**:组模式下素材组的创建/复用策略先用"配置固定组名 + 找不到则重建";上游"轮转素材组"细节以文档为准,若上游返回组失效错误则重建。
+3. **素材组 id:缓存 + 失效重建**(依据 sd2_real.md)。组是显式创建的、有 id(`POST /v1/asset-groups` → `{id}`),创建素材必须带 `group_id`;但文档明示"会轮转素材组,找不到则需重建"。`groupAssetClient` 逻辑:
+   - 组名固定按渠道隔离(如 `newapi-ch<channelId>`),组 id 缓存于 `HybridCache`(key 含 channelId)。
+   - 首次或缓存 miss → `POST /v1/asset-groups` 建组并缓存 id。
+   - `POST /v1/assets` 若因组不存在报错 → 清缓存 → 重建组 → 重试一次。
+   - asset_id 每次新建:`POST /v1/assets` 返回 `{id,task_id,status:"processing"}`,轮询 `POST /v1/assets/get {asset_id,task_id}` 到 `completed`,引用 `asset://<asset_id>`。
 4. **`controller/task_video.go` 是死代码**(无 CAS,无调用者),不参照它;轮询逻辑以 `service/task_polling.go` 为准。
 
 ---
@@ -223,7 +227,7 @@ var ChannelName = "seedance-3rd"
    - `ParseTaskResult`:覆盖 `pending/processing/completed/failed/未知` → 断言 status/progress/url/tokens。
    - `convertToRequestPayload`:文生视频、单图首帧、首尾帧、多图参考、多模态(图+视频+音频)→ 断言 content 结构与 duration 优先级。
    - `DoResponse`:嵌套 `{task:{id}}` 正确取 id;id 为空报错。
-   - `asset.go`:上游名 `-hc` 结尾 → 走 `/v1/sd/assets` 并轮询 Active;其余 → 走组模式并轮询 completed;`asset://` 幂等跳过;缓存命中不重复上传(用 httptest 计数)。
+   - `asset.go`:上游名 `-hc` 结尾 → 走 `/v1/sd/assets` 并轮询 Active;其余 → 走组模式并轮询 completed;组失效时清缓存重建组并重试一次;`asset://` 幂等跳过;缓存命中不重复上传(用 httptest 计数)。
 2. **模型映射测试**(Go):`IsModelMapped` 时 `body.Model = UpstreamModelName`(带后缀);`EstimateBilling` 仍用 `OriginModelName`(原名)查矩阵得出正确 `video_pricing`。
 3. **构建**:`go build ./...` 通过;`go vet ./relay/channel/task/seedance3rd/...` 无新增告警。
 4. **端到端**(手动):建渠道类型 59、填 Bearer key,配三个原模型 modelRatio,并配 `model_mapping` 追加 `-hc`/`-ep`;分别提交文生/图生/首尾帧/含视频输入任务,轮询完成后核对:
