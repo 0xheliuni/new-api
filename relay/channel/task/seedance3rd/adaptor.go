@@ -3,13 +3,17 @@ package seedance3rd
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
+	"github.com/samber/lo"
 )
 
 // ============================
@@ -110,3 +114,52 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
+
+func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+	r := requestPayload{
+		Model:   req.Model,
+		Content: []ContentItem{},
+	}
+
+	// 先抽 metadata.content 再反序列化,避免 Go slice 整体替换冲掉 req.Images。
+	var metaContent []ContentItem
+	metadata := req.Metadata
+	if metadata != nil {
+		if raw, ok := metadata["content"]; ok {
+			if b, err := common.Marshal(raw); err == nil {
+				_ = common.Unmarshal(b, &metaContent)
+			}
+			delete(metadata, "content")
+		}
+	}
+
+	if req.HasImage() {
+		for _, imgURL := range req.Images {
+			r.Content = append(r.Content, ContentItem{
+				Type:     "image_url",
+				ImageURL: &MediaURL{URL: imgURL},
+			})
+		}
+	}
+
+	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
+		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+
+	if len(metaContent) > 0 {
+		r.Content = append(r.Content, metaContent...)
+	}
+
+	// duration 优先级:req.Seconds > metadata.duration(已入 r.Duration) > req.Duration
+	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	} else if r.Duration == nil && req.Duration > 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+	}
+
+	// 第三方只用顶层 prompt 作文本输入:剔除 content 中 text 项,用 req.Prompt 重建末尾 text。
+	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
+	r.Content = append(r.Content, ContentItem{Type: "text", Text: req.Prompt})
+
+	return &r, nil
+}
