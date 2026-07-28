@@ -149,5 +149,108 @@ func pickMedia(item *ContentItem) (*MediaURL, string) {
 	}
 }
 
+// ---- groupAssetClient: /v1/asset-groups + /v1/assets(260128 等变体) ----
+
+type groupAssetClient struct {
+	baseURL      string
+	apiKey       string
+	groupName    string
+	httpClient   *http.Client
+	pollInterval time.Duration
+	pollTimeout  time.Duration
+	groupID      string // 缓存的组 id;失效时清空重建
+}
+
+func (cl *groupAssetClient) interval() time.Duration {
+	if cl.pollInterval > 0 {
+		return cl.pollInterval
+	}
+	return assetPollInterval
+}
+
+func (cl *groupAssetClient) timeoutDur() time.Duration {
+	if cl.pollTimeout > 0 {
+		return cl.pollTimeout
+	}
+	return assetPollTimeout
+}
+
+func (cl *groupAssetClient) ensureGroup(ctx context.Context) (string, error) {
+	if cl.groupID != "" {
+		return cl.groupID, nil
+	}
+	body, _ := common.Marshal(map[string]string{"name": cl.groupName, "description": "new-api auto group"})
+	var gr struct {
+		ID string `json:"id"`
+	}
+	if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/asset-groups", cl.apiKey, body, &gr); err != nil {
+		return "", errors.Wrap(err, "create asset group failed")
+	}
+	if gr.ID == "" {
+		return "", errors.New("create asset group returned empty id")
+	}
+	cl.groupID = gr.ID
+	return cl.groupID, nil
+}
+
+type groupCreateAssetResp struct {
+	ID     string `json:"id"`
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+func (cl *groupAssetClient) CreateAndWait(ctx context.Context, mediaURL, assetType string) (string, error) {
+	created, err := cl.createAssetWithGroup(ctx, mediaURL, assetType)
+	if err != nil {
+		// 组可能被上游轮转失效:清空缓存组、重建、重试一次。
+		cl.groupID = ""
+		created, err = cl.createAssetWithGroup(ctx, mediaURL, assetType)
+		if err != nil {
+			return "", err
+		}
+	}
+	if created.ID == "" {
+		return "", errors.New("create asset returned empty id")
+	}
+
+	deadline := time.Now().Add(cl.timeoutDur())
+	for {
+		var gr groupCreateAssetResp
+		getBody, _ := common.Marshal(map[string]string{"asset_id": created.ID, "task_id": created.TaskID})
+		if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets/get", cl.apiKey, getBody, &gr); err != nil {
+			return "", errors.Wrap(err, "get asset failed")
+		}
+		switch gr.Status {
+		case "completed":
+			return created.ID, nil
+		case "failed":
+			return "", errors.Errorf("group asset %s failed", created.ID)
+		}
+		if time.Now().After(deadline) {
+			return "", errors.Errorf("group asset %s not completed within %s (last: %s)", created.ID, cl.timeoutDur(), gr.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(cl.interval()):
+		}
+	}
+}
+
+func (cl *groupAssetClient) createAssetWithGroup(ctx context.Context, mediaURL, assetType string) (groupCreateAssetResp, error) {
+	groupID, err := cl.ensureGroup(ctx)
+	if err != nil {
+		return groupCreateAssetResp{}, err
+	}
+	body, _ := common.Marshal(map[string]string{
+		"group_id": groupID, "url": mediaURL, "asset_type": assetType, "name": "newapi",
+	})
+	var cr groupCreateAssetResp
+	if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets", cl.apiKey, body, &cr); err != nil {
+		return groupCreateAssetResp{}, errors.Wrap(err, "create asset failed")
+	}
+	return cr, nil
+}
+
 var _ = fmt.Sprintf // 占位:后续 group client 使用 fmt
 var _ = strings.HasSuffix

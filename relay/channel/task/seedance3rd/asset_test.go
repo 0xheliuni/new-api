@@ -48,3 +48,87 @@ func TestSDAssetClient_CreateAndWait(t *testing.T) {
 		t.Fatalf("createHits=%d getHits=%d, want 1/2", createHits, getHits)
 	}
 }
+
+func TestGroupAssetClient_CreateAndWait(t *testing.T) {
+	var groupCreates, assetCreates, getHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/asset-groups":
+			groupCreates++
+			w.Write([]byte(`{"id":"group-abc"}`))
+		case "/v1/assets":
+			assetCreates++
+			w.Write([]byte(`{"id":"asset-xyz","task_id":"t-1","status":"processing"}`))
+		case "/v1/assets/get":
+			getHits++
+			if getHits == 1 {
+				w.Write([]byte(`{"id":"asset-xyz","status":"processing"}`))
+			} else {
+				w.Write([]byte(`{"id":"asset-xyz","status":"completed"}`))
+			}
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	cl := &groupAssetClient{
+		baseURL:      srv.URL,
+		apiKey:       "sk-x",
+		groupName:    "newapi-ch7",
+		httpClient:   srv.Client(),
+		pollInterval: time.Millisecond,
+		pollTimeout:  time.Second,
+	}
+	id, err := cl.CreateAndWait(context.Background(), "https://x/a.png", "Image")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if id != "asset-xyz" {
+		t.Fatalf("id = %q", id)
+	}
+	if groupCreates != 1 || assetCreates != 1 || getHits != 2 {
+		t.Fatalf("groupCreates=%d assetCreates=%d getHits=%d", groupCreates, assetCreates, getHits)
+	}
+}
+
+func TestGroupAssetClient_RecreatesGroupOnFailure(t *testing.T) {
+	var groupCreates, assetCreates int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/asset-groups":
+			groupCreates++
+			w.Write([]byte(`{"id":"group-new"}`))
+		case "/v1/assets":
+			assetCreates++
+			if assetCreates == 1 {
+				// 首次:组失效
+				w.WriteHeader(400)
+				w.Write([]byte(`{"error":"asset group not found"}`))
+				return
+			}
+			w.Write([]byte(`{"id":"asset-ok","task_id":"t","status":"processing"}`))
+		case "/v1/assets/get":
+			w.Write([]byte(`{"id":"asset-ok","status":"completed"}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	cl := &groupAssetClient{
+		baseURL: srv.URL, apiKey: "sk-x", groupName: "newapi-ch7",
+		httpClient: srv.Client(), pollInterval: time.Millisecond, pollTimeout: time.Second,
+		groupID: "group-stale", // 预置一个失效组,验证清空重建
+	}
+	id, err := cl.CreateAndWait(context.Background(), "https://x/a.png", "Image")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if id != "asset-ok" {
+		t.Fatalf("id = %q", id)
+	}
+	if groupCreates != 1 || assetCreates != 2 {
+		t.Fatalf("groupCreates=%d assetCreates=%d, want 1/2 (recreate+retry)", groupCreates, assetCreates)
+	}
+}
