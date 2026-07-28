@@ -14,12 +14,6 @@
   "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.": "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.",
   "Skip content pre-filter": "Skip content pre-filter",
   "e.g., group-20260318033332-xxxxx": "e.g., group-20260318033332-xxxxx",
-  "Video Pricing": "Video Pricing",
-  "Resolution Tier": "Resolution Tier",
-  "Video Input": "Video Input",
-  "Unit Price": "Unit Price",
-  "Billed Tokens": "Billed Tokens",
-  "Billing Formula": "Billing Formula",
   "Multiple groups selected: cross-group retry is enabled automatically.": "Multiple groups selected: cross-group retry is enabled automatically.",
   "Select groups": "Select groups",
   "Auto Create": "Auto Create",
@@ -53,9 +47,5 @@
   "Add copy item": "Add copy item",
   "Placeholders: {{username}}, {{password}}, {{site}}": "Placeholders: {{username}}, {{password}}, {{site}}",
   "Move up": "Move up",
-  "Move down": "Move down",
-  "Prompt Tokens": "输入tokens",
-  "Completion Tokens": "输出tokens",
-  "Cache Read Tokens": "缓存读取tokens",
-  "Cache Creation Tokens": "缓存创建tokens"
+  "Move down": "Move down"
 }
