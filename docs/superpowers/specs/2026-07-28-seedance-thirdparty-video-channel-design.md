@@ -21,7 +21,7 @@
 - 状态值:`pending / processing / completed / failed`(与 doubao 的 `succeeded/expired` 不同)。
 - 鉴权:`Authorization: Bearer <key>`(无 AK/SK 签名)。
 - 素材库:两套接口(见 §3),需先上传拿 `asset://<id>` 再提交。
-- 模型:`dreamina-seedance-2-0-260128 / -fast-260128 / -mini-260615`(与 doubao 适配器 `ModelList` 重名)+ 新增 `dreamina-seedance-2-0-hc`。
+- 模型:客户端用原名 `dreamina-seedance-2-0-260128 / -fast-260128 / -mini-260615`;上游按变体可能要求 `-hc`(高一致)/`-ep` 等后缀名,由渠道模型映射在反代时补上。
 
 **目标产出**:一个独立渠道类型 + 独立适配器包,speak 第三方协议;计费复用共享 `seedance` 包,不重复造矩阵;素材预上传按模型自动选流程;两个前端主题可配置该渠道。
 
@@ -35,7 +35,8 @@
 |---|---|
 | 渠道类型 | 新增 `ChannelTypeSeedance3rd = 59`(插在 `ChannelTypeDummy` 前),`ChannelTypeNames[59]` UI 显示 `seedance(第三方)`,独立 BaseURL `https://model.service-inference.ai` |
 | Go 适配器包 | 新建 `relay/channel/task/seedance3rd/`(**不能叫 `seedance`,该标识符已被共享计费包占用**),与 doubao/sora 包零共享 wire 代码 |
-| 计费 | 复用共享 `seedance` 包(`IsSeedance2`/`EstimateBilling`)。重名模型天然走同一矩阵;`-hc` 在矩阵中作为 `dreamina-seedance-2-0-260128` 的同值别名 |
+| 计费 | 复用共享 `seedance` 包(`IsSeedance2`/`EstimateBilling`),**零改动**。客户端用原模型名 → 计费按原名查同一矩阵。`-hc`/`-ep` 是上游 wire 名,不参与计费 |
+| 模型名后缀 | 客户端用原名(`dreamina-seedance-2-0-260128` 等),上游需要的 `-hc`/`-ep` 后缀由**内置渠道模型映射(`model_mapping`)**产生,零新代码(见 §2) |
 | 客户端入口 | 沿用现有 `POST /v1/video/generations` 任务入口与请求体(`prompt`/`content[]`/`resolution`/`ratio`/`duration`/...),适配器内部转第三方格式 |
 | 轮询 | 零改动 —— `service/task_polling.go: DispatchPlatformUpdate` 的 `default:` 分支覆盖所有数字型 platform,新渠道走通用视频轮询 |
 
@@ -131,11 +132,12 @@ default(未知)        → TaskStatusInProgress "30%"
 #### `constants.go`
 
 ```go
+// 客户端可见模型 = 原名(无后缀)。-hc/-ep 是上游 wire 名,不放这里,
+// 由管理员用渠道 model_mapping 映射产生。
 var ModelList = []string{
     "dreamina-seedance-2-0-260128",
     "dreamina-seedance-2-0-fast-260128",
     "dreamina-seedance-2-0-mini-260615",
-    "dreamina-seedance-2-0-hc",
 }
 var ChannelName = "seedance-3rd"
 ```
@@ -144,39 +146,38 @@ var ChannelName = "seedance-3rd"
 
 #### `adaptor_test.go` / `asset_test.go` —— 表驱动测试(见验证方案)
 
-### 2. 计费矩阵扩展 `relay/channel/task/seedance/pricing.go`
+### 2. 模型名后缀映射(内置 `model_mapping`,零新代码)
 
-- `dreamina-seedance-2-0-260128 / -fast / -mini` 已在 `unitPrice` 矩阵中 → 直接复用,零改动。
-- 新增 `dreamina-seedance-2-0-hc`,单价格子**与 `dreamina-seedance-2-0-260128` 完全一致**(base/1080p/4k × 含视频):
+客户端用原名,上游 `-hc`/`-ep` 后缀由渠道内置模型映射产生:
 
-```go
-"dreamina-seedance-2-0-hc": {
-    "base":  {false: 7.0, true: 4.3},
-    "1080p": {false: 7.7, true: 4.7},
-    "4k":    {false: 4.0, true: 2.4},
-},
-```
+- 管理员在渠道 `model_mapping` 填 `{"dreamina-seedance-2-0-260128":"dreamina-seedance-2-0-260128-hc", ...}`(不同模型可配不同后缀)。
+- `helper.ModelMappedHelper` 置 `info.IsModelMapped=true`、`info.UpstreamModelName=<带后缀名>`。
+- 适配器 `BuildRequestBody` 已按 doubao 同款写法处理:
+  ```go
+  if info.IsModelMapped { body.Model = info.UpstreamModelName } else { info.UpstreamModelName = body.Model }
+  ```
+  → 上游收到带后缀名。
+- **计费按 `info.OriginModelName`(原名)**:`seedance.EstimateBilling` 用原名查矩阵,原三名已在矩阵中,**`pricing.go` 零改动**。有效单价仍 = `modelRatio × 2 × video_pricing`,`modelRatio` 由管理员按原模型名配置。
 
-管理员在后台按模型名给 `-hc` 配 `modelRatio`(与不带后缀的 `dreamina-seedance-2-0-260128` 一致,推荐 `3.5`)。有效单价 = `modelRatio × 2 × video_pricing`。计费公式(不变):
-`quota = completion_tokens × modelRatio × groupRatio × video_pricing`(其中 `video_pricing = 单元格单价 ÷ base 不含视频单价`)。
+> 若管理员选择把某个带后缀名直接作为**客户可见模型**(而非映射目标),需另加一行同值矩阵 + `modelRatio` —— 属边缘用法,不在本次默认范围。
 
-### 3. 素材预上传 `asset.go`(网关内部自动,按模型选流程)
+### 3. 素材预上传 `asset.go`(网关内部自动,按上游模型名选流程)
 
 用 channel 开关 `seedance3rd_asset_enabled` 控制;关闭时零行为。开启时遍历 `payload.Content`,把公网 `image_url/video_url/audio_url` 上传素材库、替换为 `asset://<id>` 再提交。`asset://` 前缀幂等跳过;`data:`/base64 拒绝。鉴权直接用渠道 Bearer key。
 
-按模型族选流程(`assetFlowForModel(model)`):
+按**上游(带后缀)模型名**选流程(`assetFlowForModel(body.Model)` —— 此时 `body.Model` 已是映射后的带后缀名):
 
-- **hc 族(`-hc`)→ 简单流程**:
+- **hc 变体(上游名以 `-hc` 结尾)→ 简单流程**(sd_real_max.md 明确:`/v1/sd/assets` 接口只支持 hc 模型):
   - `POST /v1/sd/assets` `{URL,Name,AssetType}` → `{data:{Id}}`
   - 轮询 `GET /v1/sd/assets/{id}` 到 `data.Status == "Active"`
   - 引用 `asset://<Id>`
-- **260128 族(其余三个)→ 组模式**:
+- **其余(260128 族 / `-ep` 等)→ 组模式**:
   - 确保有素材组:`POST /v1/asset-groups` `{name,description}` → `{id}`(组 id 可缓存/配置;文档述"会轮转素材组,找不到则重建")
   - `POST /v1/assets` `{group_id,url,asset_type,name}` → `{id,task_id,status}`
   - 轮询 `POST /v1/assets/get` `{asset_id,task_id}` 到 `status == "completed"`
   - 引用 `asset://<id>`
 
-抽象:`assetClient` 接口(`CreateAndWait(ctx, url, assetType) (assetID string, err error)`)+ 两个实现(`sdAssetClient` / `groupAssetClient`),由模型族选择。缓存复刻 doubao `byteplus_asset.go`:`cachex.HybridCache[string]`,key = `sha256(channelId|groupId|url)`,TTL 6h,Redis 命中优先、内存回退。轮询 interval/timeout 可注入(测试用小值)。
+抽象:`assetClient` 接口(`CreateAndWait(ctx, url, assetType) (assetID string, err error)`)+ 两个实现(`sdAssetClient` / `groupAssetClient`),由上游模型名后缀选择。缓存复刻 doubao `byteplus_asset.go`:`cachex.HybridCache[string]`,key = `sha256(channelId|groupId|url)`,TTL 6h,Redis 命中优先、内存回退。轮询 interval/timeout 可注入(测试用小值)。
 
 接线点:`adaptor.go: BuildRequestBody` 在 `convertToRequestPayload` 后调用 `a.preuploadAssets(c, body)`。
 
@@ -190,7 +191,7 @@ var ChannelName = "seedance-3rd"
 | 2 | `relay/relay_adaptor.go` | import `taskSeedance3rd "…/relay/channel/task/seedance3rd"`;`GetTaskAdaptor` 加 `case constant.ChannelTypeSeedance3rd: return &taskSeedance3rd.TaskAdaptor{}` |
 | 3 | `common/endpoint_type.go` | `GetEndpointTypesByChannelType` 加 `case constant.ChannelTypeSeedance3rd: EndpointTypeOpenAIVideo`(与 Sora/AIGCVideo 对齐) |
 | 4 | `controller/channel-test.go` | 59 加入 `unsupportedTestChannelTypes` |
-| 5 | `setting/ratio_setting/model_ratio.go` | `defaultModelRatio` 加 `"dreamina-seedance-2-0-hc": 3.5`(其余三个已存在) |
+| 5 | `setting/ratio_setting/model_ratio.go` | 无需改动(三个原模型 `dreamina-*` 已有 `defaultModelRatio`;`modelRatio` 由管理员按原名配置) |
 | 6 | `dto/channel_settings.go` | `ChannelOtherSettings` 加 `Seedance3rdAssetEnabled bool` 等字段 + resolve 默认值 |
 
 前端(两个主题都改;系统默认主题 classic):
@@ -209,8 +210,8 @@ var ChannelName = "seedance-3rd"
 
 ## 已知取舍与限制
 
-1. **重名模型共享定价**:`modelRatio` 全局按模型名查,第三方渠道的 `dreamina-seedance-2-0-260128` 与 doubao 渠道**共用同一单价**。这是"沿用上游同名模型"的既定结果。若将来要给第三方单独定价,用**渠道级模型映射**(映射到差异化计费别名)绕过 —— 本次不做。
-2. **`-hc` 定价与 260128 一致**:矩阵同值;`modelRatio` 由管理员在后台按模型名配置,与不带后缀的 `dreamina-seedance-2-0-260128` 一致。
+1. **重名模型共享定价**:`modelRatio` 全局按模型名查,第三方渠道的 `dreamina-seedance-2-0-260128` 与 doubao 渠道**共用同一单价**。这是"沿用上游同名模型"的既定结果。若将来要给第三方单独定价,用渠道级模型映射(映射到差异化计费别名)绕过 —— 本次不做。
+2. **`-hc`/`-ep` 后缀靠管理员配置 `model_mapping`**:代码不硬编码后缀规则,不同模型可配不同后缀,由管理员在渠道后台维护。计费始终按客户端原名。素材流程按上游名后缀(`-hc` → `/v1/sd/assets`;其余 → 组模式)自动选。
 3. **素材组 id 复用**:组模式下素材组的创建/复用策略先用"配置固定组名 + 找不到则重建";上游"轮转素材组"细节以文档为准,若上游返回组失效错误则重建。
 4. **`controller/task_video.go` 是死代码**(无 CAS,无调用者),不参照它;轮询逻辑以 `service/task_polling.go` 为准。
 
@@ -222,12 +223,12 @@ var ChannelName = "seedance-3rd"
    - `ParseTaskResult`:覆盖 `pending/processing/completed/failed/未知` → 断言 status/progress/url/tokens。
    - `convertToRequestPayload`:文生视频、单图首帧、首尾帧、多图参考、多模态(图+视频+音频)→ 断言 content 结构与 duration 优先级。
    - `DoResponse`:嵌套 `{task:{id}}` 正确取 id;id 为空报错。
-   - `asset.go`:hc → 走 `/v1/sd/assets` 并轮询 Active;260128 → 走组模式并轮询 completed;`asset://` 幂等跳过;缓存命中不重复上传(用 httptest 计数)。
-2. **计费测试**(`relay/channel/task/seedance/pricing_test.go` 扩展):`dreamina-seedance-2-0-hc` 各档位 × 含/不含视频的 `video_pricing` 与有效单价等于 260128 对应值。
+   - `asset.go`:上游名 `-hc` 结尾 → 走 `/v1/sd/assets` 并轮询 Active;其余 → 走组模式并轮询 completed;`asset://` 幂等跳过;缓存命中不重复上传(用 httptest 计数)。
+2. **模型映射测试**(Go):`IsModelMapped` 时 `body.Model = UpstreamModelName`(带后缀);`EstimateBilling` 仍用 `OriginModelName`(原名)查矩阵得出正确 `video_pricing`。
 3. **构建**:`go build ./...` 通过;`go vet ./relay/channel/task/seedance3rd/...` 无新增告警。
-4. **端到端**(手动):建渠道类型 59、填 Bearer key,配四个模型 modelRatio;分别提交文生/图生/首尾帧/含视频输入任务,轮询完成后核对:
-   - 扣费 `quota ≈ completion_tokens × modelRatio × groupRatio × video_pricing ÷ 500000`;
+4. **端到端**(手动):建渠道类型 59、填 Bearer key,配三个原模型 modelRatio,并配 `model_mapping` 追加 `-hc`/`-ep`;分别提交文生/图生/首尾帧/含视频输入任务,轮询完成后核对:
+   - 上游实际收到带后缀模型名;扣费按原名 `quota ≈ completion_tokens × modelRatio × groupRatio × video_pricing ÷ 500000`;
    - 使用记录详情弹窗「视频计费」区块单价/token/分组倍率/公式/实际扣费一致;
-   - 含公网媒体且开启素材开关时,上游收到 `asset://<id>`。
+   - 含公网媒体且开启素材开关时,上游收到 `asset://<id>`(hc 走 sd/assets,其余走组模式)。
 5. **前端**:`cd web/default && bun run build` 通过;两主题都能选到 `seedance(第三方)` 渠道并配置素材开关。
-6. **回归**:doubao(45/54)与 sora(55/1)的 Seedance 计费与日志行为完全不变(共享 `seedance` 包仅新增一行矩阵,不改现有键)。
+6. **回归**:doubao(45/54)与 sora(55/1)的 Seedance 计费与日志行为完全不变(共享 `seedance` 包**零改动**)。
