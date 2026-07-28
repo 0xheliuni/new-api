@@ -262,7 +262,7 @@ func newTestGinCtx() (*gin.Context, *httptest.ResponseRecorder) {
 
 func TestDoResponse_ExtractsTaskID(t *testing.T) {
 	a := &TaskAdaptor{}
-	c, _ := newTestGinCtx()
+	c, w := newTestGinCtx()
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"}, OriginModelName: "dreamina-seedance-2-0-260128"}
 	body := `{"task":{"id":"mvt-179197ccca01401a","status":"pending"}}`
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
@@ -273,6 +273,13 @@ func TestDoResponse_ExtractsTaskID(t *testing.T) {
 	}
 	if taskID != "mvt-179197ccca01401a" {
 		t.Fatalf("taskID = %q, want upstream id", taskID)
+	}
+	// 客户端响应体只能看到公开任务 id,绝不能泄露上游 id(内部存储才用上游 id)。
+	if !strings.Contains(w.Body.String(), info.PublicTaskID) {
+		t.Fatalf("client response missing public task id: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "mvt-179197ccca01401a") {
+		t.Fatalf("client response leaked upstream task id: %s", w.Body.String())
 	}
 }
 

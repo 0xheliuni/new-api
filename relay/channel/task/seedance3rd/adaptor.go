@@ -148,9 +148,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	if info != nil {
-		info.UpstreamRequestBody = data
-	}
+	info.UpstreamRequestBody = data
 	return bytes.NewReader(data), nil
 }
 
