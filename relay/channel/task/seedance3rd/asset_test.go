@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/dto"
 )
 
 func TestSDAssetClient_CreateAndWait(t *testing.T) {
@@ -130,5 +132,29 @@ func TestGroupAssetClient_RecreatesGroupOnFailure(t *testing.T) {
 	}
 	if groupCreates != 1 || assetCreates != 2 {
 		t.Fatalf("groupCreates=%d assetCreates=%d, want 1/2 (recreate+retry)", groupCreates, assetCreates)
+	}
+}
+
+func TestPreuploadAssets_DisabledIsNoop(t *testing.T) {
+	a := &TaskAdaptor{}
+	a.otherSettings = dto.ChannelOtherSettings{Seedance3rdAssetEnabled: false}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://x/a.png"}},
+	}}
+	if err := a.preuploadAssets(nil, payload); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if payload.Content[0].ImageURL.URL != "https://x/a.png" {
+		t.Fatalf("url mutated while disabled: %q", payload.Content[0].ImageURL.URL)
+	}
+}
+
+func TestNewAssetClient_SelectsByHCSuffix(t *testing.T) {
+	a := &TaskAdaptor{baseURL: "https://x", apiKey: "sk"}
+	if _, ok := a.newAssetClient("dreamina-seedance-2-0-260128-hc", nil).(*sdAssetClient); !ok {
+		t.Fatalf("-hc should select sdAssetClient")
+	}
+	if _, ok := a.newAssetClient("dreamina-seedance-2-0-260128", nil).(*groupAssetClient); !ok {
+		t.Fatalf("non-hc should select groupAssetClient")
 	}
 }

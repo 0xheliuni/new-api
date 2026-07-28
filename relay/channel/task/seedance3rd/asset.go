@@ -3,15 +3,23 @@ package seedance3rd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/service"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/samber/hot"
 )
 
 const (
@@ -252,5 +260,107 @@ func (cl *groupAssetClient) createAssetWithGroup(ctx context.Context, mediaURL, 
 	return cr, nil
 }
 
-var _ = fmt.Sprintf // 占位:后续 group client 使用 fmt
-var _ = strings.HasSuffix
+const assetCacheTTL = 6 * time.Hour
+
+// newAssetClient 按上游(带后缀)模型名选流程:-hc → sd/assets;其余 → 组模式。
+func (a *TaskAdaptor) newAssetClient(model string, httpClient *http.Client) assetClient {
+	base := a.baseURL
+	if a.endpointOverride != "" {
+		base = a.endpointOverride
+	}
+	if strings.HasSuffix(model, "-hc") {
+		return &sdAssetClient{baseURL: base, apiKey: a.apiKey, httpClient: httpClient}
+	}
+	return &groupAssetClient{
+		baseURL:    base,
+		apiKey:     a.apiKey,
+		groupName:  fmt.Sprintf("newapi-ch%d", a.channelId),
+		httpClient: httpClient,
+	}
+}
+
+// preuploadAssets 开关开启时,把 payload.Content 中每个公网媒体 URL 预上传素材库,
+// 就地替换为 asset://<id>。开关关闭时零行为。
+func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) error {
+	if !a.otherSettings.Seedance3rdAssetEnabled {
+		return nil
+	}
+	httpClient, err := service.GetHttpClientWithProxy(a.proxy)
+	if err != nil {
+		return errors.Wrap(err, "create http client for seedance3rd asset upload failed")
+	}
+	cl := a.newAssetClient(payload.Model, httpClient)
+
+	ctx := context.Background()
+	if c != nil {
+		ctx = c.Request.Context()
+	}
+	for i := range payload.Content {
+		item := &payload.Content[i]
+		media, assetType := pickMedia(item)
+		if media == nil {
+			continue
+		}
+		url := strings.TrimSpace(media.URL)
+		if url == "" || strings.HasPrefix(url, "asset://") {
+			continue
+		}
+		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+			return errors.Errorf("seedance3rd asset upload requires a public http(s) URL for %s (base64/data URIs unsupported)", item.Type)
+		}
+		key := assetCacheKey(a.channelId, payload.Model, url)
+		if id, ok := getCachedAssetID(key); ok {
+			media.URL = "asset://" + id
+			continue
+		}
+		id, err := cl.CreateAndWait(ctx, url, assetType)
+		if err != nil {
+			return errors.Wrapf(err, "preupload %s to seedance3rd asset library failed", item.Type)
+		}
+		setCachedAssetID(key, id)
+		media.URL = "asset://" + id
+	}
+	return nil
+}
+
+func assetCacheKey(channelId int, model, url string) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s", channelId, model, url)))
+	return hex.EncodeToString(h[:])
+}
+
+var (
+	assetIDCache     *cachex.HybridCache[string]
+	assetIDCacheOnce sync.Once
+)
+
+func getAssetIDCache() *cachex.HybridCache[string] {
+	assetIDCacheOnce.Do(func() {
+		assetIDCache = cachex.NewHybridCache[string](cachex.HybridCacheConfig[string]{
+			Namespace:    cachex.Namespace("seedance3rd_asset"),
+			Redis:        common.RDB,
+			RedisEnabled: func() bool { return common.RedisEnabled && common.RDB != nil },
+			RedisCodec:   cachex.StringCodec{},
+			Memory: func() *hot.HotCache[string, string] {
+				return hot.NewHotCache[string, string](hot.LRU, 10_000).
+					WithTTL(assetCacheTTL).
+					WithJanitor().
+					Build()
+			},
+		})
+	})
+	return assetIDCache
+}
+
+func getCachedAssetID(key string) (string, bool) {
+	v, found, err := getAssetIDCache().Get(key)
+	if err != nil || !found {
+		return "", false
+	}
+	return v, true
+}
+
+func setCachedAssetID(key, id string) {
+	if err := getAssetIDCache().SetWithTTL(key, id, assetCacheTTL); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("cache seedance3rd asset id failed: %s", err.Error()))
+	}
+}
