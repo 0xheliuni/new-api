@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -162,4 +163,40 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	r.Content = append(r.Content, ContentItem{Type: "text", Text: req.Prompt})
 
 	return &r, nil
+}
+
+// ParseTaskResult 把第三方查询响应 { "task": {...} } 映射为内部 TaskInfo(状态/进度/URL/tokens)。
+func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	var resp fetchResponse
+	if err := common.Unmarshal(respBody, &resp); err != nil {
+		return nil, errors.Wrap(err, "unmarshal task result failed")
+	}
+	tk := resp.Task
+	info := relaycommon.TaskInfo{Code: 0}
+	switch tk.Status {
+	case "pending", "queued":
+		info.Status = model.TaskStatusQueued
+		info.Progress = "10%"
+	case "processing", "running":
+		info.Status = model.TaskStatusInProgress
+		info.Progress = "50%"
+	case "completed", "succeeded":
+		info.Status = model.TaskStatusSuccess
+		info.Progress = "100%"
+		if len(tk.Outputs) > 0 {
+			info.Url = tk.Outputs[0]
+		}
+		info.CompletionTokens = tk.Usage.CompletionTokens
+		info.TotalTokens = tk.Usage.TotalTokens
+	case "failed", "expired":
+		info.Status = model.TaskStatusFailure
+		info.Progress = "100%"
+		if tk.Error != nil {
+			info.Reason = tk.Error.Message
+		}
+	default:
+		info.Status = model.TaskStatusInProgress
+		info.Progress = "30%"
+	}
+	return &info, nil
 }

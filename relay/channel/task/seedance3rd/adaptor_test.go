@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -200,5 +201,46 @@ func TestConvertToRequestPayload_StripsStaleTextFromMetadataContent(t *testing.T
 	}
 	if textCount != 1 {
 		t.Fatalf("text item count = %d, want 1 (%+v)", textCount, got.Content)
+	}
+}
+
+// TestParseTaskResult 验证第三方查询响应 { "task": {...} } 到内部 TaskInfo 的状态/进度/URL/tokens 映射。
+//
+// wantStatus 声明为 string(而非 model.TaskStatus): relaycommon.TaskInfo.Status 字段本身是
+// string 类型,model.TaskStatusQueued 等常量是未显式声明类型的字符串常量(仅 TaskStatusNotStart
+// 显式标了 model.TaskStatus 类型),直接拿 model.TaskStatus 类型变量与 got.Status(string)比较会
+// 编译失败("mismatched types string and model.TaskStatus")。用 string 字段类型规避该问题,
+// 常量赋值本身不受影响。
+func TestParseTaskResult(t *testing.T) {
+	a := &TaskAdaptor{}
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus string
+		wantURL    string
+		wantTokens int
+	}{
+		{"pending", `{"task":{"status":"pending"}}`, model.TaskStatusQueued, "", 0},
+		{"processing", `{"task":{"status":"processing"}}`, model.TaskStatusInProgress, "", 0},
+		{"completed", `{"task":{"status":"completed","outputs":["https://v/1.mp4"],"usage":{"completion_tokens":40594,"total_tokens":40594}}}`, model.TaskStatusSuccess, "https://v/1.mp4", 40594},
+		{"failed", `{"task":{"status":"failed","error":{"message":"boom"}}}`, model.TaskStatusFailure, "", 0},
+		{"unknown", `{"task":{"status":"weird"}}`, model.TaskStatusInProgress, "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := a.ParseTaskResult([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if got.Status != tc.wantStatus {
+				t.Fatalf("status = %v, want %v", got.Status, tc.wantStatus)
+			}
+			if got.Url != tc.wantURL {
+				t.Fatalf("url = %q, want %q", got.Url, tc.wantURL)
+			}
+			if got.CompletionTokens != tc.wantTokens {
+				t.Fatalf("tokens = %d, want %d", got.CompletionTokens, tc.wantTokens)
+			}
+		})
 	}
 }
