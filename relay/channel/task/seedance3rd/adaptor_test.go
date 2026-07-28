@@ -72,3 +72,133 @@ func TestConvertToRequestPayload_ImagesAndDuration(t *testing.T) {
 		t.Fatalf("duration = %v, want 5", got.Duration)
 	}
 }
+
+// TestConvertToRequestPayload_NoClobberImagesAndMetadataContent 验证 req.Images
+// 与 req.Metadata["content"] 同时存在时互不覆盖:两者的 image_url 都要出现在结果里,
+// 证明"先抽 metadata.content 再反序列化"逻辑生效(否则 UnmarshalMetadata 整体替换
+// []ContentItem slice 会冲掉 req.Images 追加的条目)。
+func TestConvertToRequestPayload_NoClobberImagesAndMetadataContent(t *testing.T) {
+	a := &TaskAdaptor{}
+	req := &relaycommon.TaskSubmitReq{
+		Model:  "dreamina-seedance-2-0-260128",
+		Prompt: "a girl dancing",
+		Images: []string{"https://x/a.png"},
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "image_url",
+					"image_url": map[string]interface{}{
+						"url": "https://x/b.png",
+					},
+					"role": "reference_image",
+				},
+			},
+		},
+	}
+	got, err := a.convertToRequestPayload(req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	// 期望:req.Images 的 a.png + metadata.content 的 b.png + 末尾 text,共 3 项。
+	if len(got.Content) != 3 {
+		t.Fatalf("content len = %d, want 3 (%+v)", len(got.Content), got.Content)
+	}
+	var sawA, sawB bool
+	for _, c := range got.Content {
+		if c.Type == "image_url" && c.ImageURL != nil {
+			switch c.ImageURL.URL {
+			case "https://x/a.png":
+				sawA = true
+			case "https://x/b.png":
+				sawB = true
+			}
+		}
+	}
+	if !sawA {
+		t.Fatalf("req.Images entry (a.png) missing from content: %+v", got.Content)
+	}
+	if !sawB {
+		t.Fatalf("metadata.content entry (b.png) missing from content: %+v", got.Content)
+	}
+	last := got.Content[len(got.Content)-1]
+	if last.Type != "text" || last.Text != "a girl dancing" {
+		t.Fatalf("last item not expected text: %+v", last)
+	}
+}
+
+// TestConvertToRequestPayload_DurationPrecedence_SecondsWinsOverAll 验证优先级最高的
+// req.Seconds 覆盖 req.Duration 与 metadata.duration。
+func TestConvertToRequestPayload_DurationPrecedence_SecondsWinsOverAll(t *testing.T) {
+	a := &TaskAdaptor{}
+	req := &relaycommon.TaskSubmitReq{
+		Model:    "dreamina-seedance-2-0-260128",
+		Prompt:   "blink",
+		Seconds:  "7",
+		Duration: 5,
+		Metadata: map[string]interface{}{
+			"duration": 3,
+		},
+	}
+	got, err := a.convertToRequestPayload(req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Duration == nil || int(*got.Duration) != 7 {
+		t.Fatalf("duration = %v, want 7 (req.Seconds must win)", got.Duration)
+	}
+}
+
+// TestConvertToRequestPayload_DurationPrecedence_MetadataBeatsReqDuration 验证
+// metadata.duration 优先于 req.Duration(当 req.Seconds 为空时)。
+func TestConvertToRequestPayload_DurationPrecedence_MetadataBeatsReqDuration(t *testing.T) {
+	a := &TaskAdaptor{}
+	req := &relaycommon.TaskSubmitReq{
+		Model:    "dreamina-seedance-2-0-260128",
+		Prompt:   "blink",
+		Duration: 5,
+		Metadata: map[string]interface{}{
+			"duration": 4,
+		},
+	}
+	got, err := a.convertToRequestPayload(req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Duration == nil || int(*got.Duration) != 4 {
+		t.Fatalf("duration = %v, want 4 (metadata.duration must beat req.Duration)", got.Duration)
+	}
+}
+
+// TestConvertToRequestPayload_StripsStaleTextFromMetadataContent 验证 metadata.content
+// 中预置的 text 项会被剔除,最终只保留由 req.Prompt 重建的唯一 text 项。
+func TestConvertToRequestPayload_StripsStaleTextFromMetadataContent(t *testing.T) {
+	a := &TaskAdaptor{}
+	req := &relaycommon.TaskSubmitReq{
+		Model:  "dreamina-seedance-2-0-260128",
+		Prompt: "fresh prompt",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "text",
+					"text": "stale",
+				},
+			},
+		},
+	}
+	got, err := a.convertToRequestPayload(req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	textCount := 0
+	for _, c := range got.Content {
+		if c.Type == "text" {
+			textCount++
+			if c.Text != "fresh prompt" {
+				t.Fatalf("text item = %q, want %q (stale text should be stripped)", c.Text, "fresh prompt")
+			}
+		}
+	}
+	if textCount != 1 {
+		t.Fatalf("text item count = %d, want 1 (%+v)", textCount, got.Content)
+	}
+}
