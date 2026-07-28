@@ -1,11 +1,16 @@
 package seedance3rd
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestBuildRequestURL(t *testing.T) {
@@ -242,5 +247,40 @@ func TestParseTaskResult(t *testing.T) {
 				t.Fatalf("tokens = %d, want %d", got.CompletionTokens, tc.wantTokens)
 			}
 		})
+	}
+}
+
+func newTestGinCtx() (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+	return c, w
+}
+
+func TestDoResponse_ExtractsTaskID(t *testing.T) {
+	a := &TaskAdaptor{}
+	c, _ := newTestGinCtx()
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"}, OriginModelName: "dreamina-seedance-2-0-260128"}
+	body := `{"task":{"id":"mvt-179197ccca01401a","status":"pending"}}`
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
+
+	taskID, _, taskErr := a.DoResponse(c, resp, info)
+	if taskErr != nil {
+		t.Fatalf("taskErr: %+v", taskErr)
+	}
+	if taskID != "mvt-179197ccca01401a" {
+		t.Fatalf("taskID = %q, want upstream id", taskID)
+	}
+}
+
+func TestDoResponse_EmptyIDErrors(t *testing.T) {
+	a := &TaskAdaptor{}
+	c, _ := newTestGinCtx()
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"}}
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"task":{"id":""}}`))}
+	_, _, taskErr := a.DoResponse(c, resp, info)
+	if taskErr == nil {
+		t.Fatalf("expected taskErr for empty id")
 	}
 }
