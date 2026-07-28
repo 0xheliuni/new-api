@@ -1569,6 +1569,40 @@ export function ChannelMutateDrawer({
                       </div>
                     )}
 
+                    {/* Seedance(第三方) asset pre-upload (type 59) */}
+                    {[59].includes(currentType) && (
+                      <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
+                        <SubHeading
+                          title={t('Seedance(第三方) Asset Library')}
+                          icon={<SlidersHorizontal className='h-3.5 w-3.5' />}
+                        />
+                        <FormField
+                          control={form.control}
+                          name='seedance3rd_asset_enabled'
+                          render={({ field }) => (
+                            <FormItem className='flex items-center justify-between gap-3 px-1 py-2'>
+                              <div className='space-y-0.5'>
+                                <FormLabel className='text-sm'>
+                                  {t('Seedance 3rd-party asset preupload')}
+                                </FormLabel>
+                                <FormDescription>
+                                  {t(
+                                    'Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.'
+                                  )}
+                                </FormDescription>
+                              </div>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+
                     {/* AI Proxy Library (type 21) */}
                     {currentType === 21 && (
                       <FormField

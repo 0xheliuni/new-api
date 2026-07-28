@@ -113,6 +113,8 @@ export interface ChannelOtherSettings {
   byteplus_project_name?: string
   byteplus_region?: string
   byteplus_moderation_skip?: boolean
+  // Seedance(第三方) asset pre-upload (channel type 59)
+  seedance3rd_asset_enabled?: boolean
 }
 
 // ============================================================================

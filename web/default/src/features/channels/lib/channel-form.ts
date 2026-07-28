@@ -207,6 +207,8 @@ export const channelFormSchema = z
     byteplus_project_name: z.string().optional(),
     byteplus_region: z.string().optional(),
     byteplus_moderation_skip: z.boolean().optional(),
+    // Seedance(第三方) asset pre-upload (stored in settings JSON; channel type 59)
+    seedance3rd_asset_enabled: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     if ([3, 8, 36, 45].includes(data.type) && !data.base_url?.trim()) {
@@ -358,6 +360,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   byteplus_project_name: 'default',
   byteplus_region: 'ap-southeast-1',
   byteplus_moderation_skip: true,
+  // Seedance(第三方) asset pre-upload
+  seedance3rd_asset_enabled: false,
 }
 
 // ============================================================================
@@ -419,6 +423,7 @@ export function transformChannelToFormDefaults(
   let bytePlusProjectName = 'default'
   let bytePlusRegion = 'ap-southeast-1'
   let bytePlusModerationSkip = true
+  let seedance3rdAssetEnabled = false
 
   if (channel.settings) {
     try {
@@ -450,6 +455,7 @@ export function transformChannelToFormDefaults(
       bytePlusProjectName = parsed.byteplus_project_name || 'default'
       bytePlusRegion = parsed.byteplus_region || 'ap-southeast-1'
       bytePlusModerationSkip = parsed.byteplus_moderation_skip !== false
+      seedance3rdAssetEnabled = parsed.seedance3rd_asset_enabled === true
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to parse channel settings:', error)
@@ -507,6 +513,8 @@ export function transformChannelToFormDefaults(
     byteplus_project_name: bytePlusProjectName,
     byteplus_region: bytePlusRegion,
     byteplus_moderation_skip: bytePlusModerationSkip,
+    // Seedance(第三方) asset pre-upload
+    seedance3rd_asset_enabled: seedance3rdAssetEnabled,
   }
 }
 
@@ -596,6 +604,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     for (const k of bytePlusKeys) {
       if (k in settingsObj) delete settingsObj[k]
     }
+  }
+
+  // Seedance(第三方) asset pre-upload for channel type 59.
+  if (formData.type === 59) {
+    settingsObj.seedance3rd_asset_enabled =
+      formData.seedance3rd_asset_enabled === true
+  } else if ('seedance3rd_asset_enabled' in settingsObj) {
+    delete settingsObj.seedance3rd_asset_enabled
   }
 
   // Field passthrough controls:
