@@ -28,6 +28,8 @@ export interface BillExportParams {
   group?: string
   with_detail?: 0 | 1
   detail_split_model?: 0 | 1
+  bill_mode?: 'internal' | 'external'
+  granularity?: 'day' | 'week' | 'month'
   exchange_rate?: number
 }
 

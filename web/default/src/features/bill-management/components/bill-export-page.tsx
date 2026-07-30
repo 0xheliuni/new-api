@@ -24,6 +24,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+} from '@/components/ui/select'
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
 import { exportBillSummary, getBillSummary, type BillExportParams, type BillSummaryResponse } from '../api'
@@ -45,6 +53,8 @@ export function BillExportPage() {
   const [tokenName, setTokenName] = useState('')
   const [modelName, setModelName] = useState('')
   const [rate, setRate] = useState('')
+  const [billMode, setBillMode] = useState<'internal' | 'external'>('internal')
+  const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('day')
   const [withDetail, setWithDetail] = useState(false)
   const [splitModel, setSplitModel] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -62,6 +72,7 @@ export function BillExportPage() {
         token_name: tokenName || undefined,
         model_name: modelName || undefined,
         exchange_rate: rate ? Number(rate) : undefined,
+        granularity,
         ...(isAdmin
           ? { username: username || undefined, channel: channel ? Number(channel) : undefined }
           : {}),
@@ -86,6 +97,8 @@ export function BillExportPage() {
         model_name: modelName || undefined,
         with_detail: withDetail ? 1 : 0,
         detail_split_model: withDetail && splitModel ? 1 : 0,
+        bill_mode: billMode,
+        granularity,
         exchange_rate: rate ? Number(rate) : undefined,
       }
       if (isAdmin) {
@@ -112,6 +125,34 @@ export function BillExportPage() {
         <div className='flex h-full min-h-0 flex-col gap-4 overflow-auto pt-2'>
           {/* 筛选工具栏区（标题之下、表格之上） */}
           <div className='space-y-4 rounded-lg border p-4'>
+            {/* 汇总粒度：天/周/月，作用于查询表格与导出的明细对账单 */}
+            <div className='flex items-center gap-2'>
+              <Label>{t('Granularity')}</Label>
+              <Select
+                items={[
+                  { value: 'day', label: t('By day') },
+                  { value: 'week', label: t('By week') },
+                  { value: 'month', label: t('By month') },
+                ]}
+                value={granularity}
+                onValueChange={(value) =>
+                  setGranularity(
+                    value === 'week' || value === 'month' ? value : 'day'
+                  )
+                }
+              >
+                <SelectTrigger className='w-32'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value='day'>{t('By day')}</SelectItem>
+                    <SelectItem value='week'>{t('By week')}</SelectItem>
+                    <SelectItem value='month'>{t('By month')}</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
             <div className='grid grid-cols-2 gap-4'>
               <div className='space-y-1'>
                 <Label>{t('Start Time')}</Label>
@@ -170,6 +211,41 @@ export function BillExportPage() {
                   onChange={(e) => setRate(e.target.value)}
                   placeholder='7.3'
                 />
+              </div>
+              <div className='space-y-1'>
+                <Label>{t('Bill mode')}</Label>
+                <div>
+                  <Select
+                    items={[
+                      {
+                        value: 'internal',
+                        label: t('Internal (split by channel & model)'),
+                      },
+                      {
+                        value: 'external',
+                        label: t('External customer (merged channels)'),
+                      },
+                    ]}
+                    value={billMode}
+                    onValueChange={(value) =>
+                      setBillMode(value === 'external' ? 'external' : 'internal')
+                    }
+                  >
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        <SelectItem value='internal'>
+                          {t('Internal (split by channel & model)')}
+                        </SelectItem>
+                        <SelectItem value='external'>
+                          {t('External customer (merged channels)')}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 

@@ -101,7 +101,6 @@ func TestBillDetailWriter_ModelHeaderReEmittedOnRoll(t *testing.T) {
 	}
 }
 
-
 func TestBillDetailWriter_IncludesRefundRowWithTypeColumn(t *testing.T) {
 	f := excelize.NewFile()
 	defer f.Close()
@@ -146,5 +145,65 @@ func TestBillDetailWriter_IncludesRefundRowWithTypeColumn(t *testing.T) {
 	}
 	if !foundRefund {
 		t.Fatalf("no 退款 row found in detail: %v", rows)
+	}
+}
+
+// TestBillDetailWriter_AlignsTaskRowsAndNegativeRefundCost verifies that rows
+// sharing a request_id (pre-consume + refund of one async task) are emitted
+// adjacently in chronological order, and that refund cost cells are negative.
+func TestBillDetailWriter_AlignsTaskRowsAndNegativeRefundCost(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	w, err := newBillDetailWriter(f, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Arrival order is created_at DESC (streaming order).
+	if err := w.addBatch([]*model.Log{
+		{Type: model.LogTypeRefund, CreatedAt: tsOn("2026-06-01", 11), Username: "a", ModelName: "seedance-1", Quota: 300, RequestId: "req-A",
+			Other: `{"billing_stage":"refund","task_id":"t1","pre_consumed_quota":1000,"actual_quota":700}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10) + 1800, Username: "a", ModelName: "gpt-4o", Quota: 100, RequestId: "req-B"},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), Username: "a", ModelName: "seedance-1", Quota: 1000, RequestId: "req-A",
+			Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"t1"}`},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.finish(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := f.GetRows("2026-06-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected header + 3 data rows, got %d: %v", len(rows), rows)
+	}
+	typeIdx := -1
+	for i, h := range rows[0] {
+		if h == "类型" {
+			typeIdx = i
+		}
+	}
+	if typeIdx == -1 {
+		t.Fatalf("header missing 类型 column: %v", rows[0])
+	}
+	// req-A's pair anchors at the refund's slot, chronological inside:
+	// row2 = pre-consume(10:00), row3 = refund(11:00), row4 = req-B(10:30).
+	if rows[1][typeIdx] != "消费" || rows[2][typeIdx] != "退款" || rows[3][typeIdx] != "消费" {
+		t.Fatalf("aligned type order wrong: %v / %v / %v", rows[1][typeIdx], rows[2][typeIdx], rows[3][typeIdx])
+	}
+	if !strings.Contains(rows[1][0], "10:00") || !strings.Contains(rows[2][0], "11:00") || !strings.Contains(rows[3][0], "10:30") {
+		t.Fatalf("aligned time order wrong: %v / %v / %v", rows[1][0], rows[2][0], rows[3][0])
+	}
+
+	// cost column: consume positive, refund negative (net = sum of the column)
+	cost2, _ := f.GetCellValue("2026-06-01", "K2")
+	cost3, _ := f.GetCellValue("2026-06-01", "K3")
+	if cost2 != "$0.002000" {
+		t.Fatalf("K2 (pre-consume cost) = %q, want $0.002000", cost2)
+	}
+	if cost3 != "-$0.000600" {
+		t.Fatalf("K3 (refund cost) = %q, want -$0.000600", cost3)
 	}
 }

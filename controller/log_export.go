@@ -77,6 +77,20 @@ type logPricingInfo struct {
 	CacheCreationRatio5m  float64 `json:"cache_creation_ratio_5m"`
 	CacheCreationTokens1h int     `json:"cache_creation_tokens_1h"`
 	CacheCreationRatio1h  float64 `json:"cache_creation_ratio_1h"`
+
+	// Async-task billing keys (seedance-style pre-consume → settle/refund),
+	// written by LogTaskConsumption / RecalculateTaskQuota / RefundTaskQuota.
+	IsTask           bool    `json:"is_task"`
+	BillingStage     string  `json:"billing_stage"` // pre_consume | settle | refund
+	TaskId           string  `json:"task_id"`
+	PreConsumedQuota float64 `json:"pre_consumed_quota"`
+	ActualQuota      float64 `json:"actual_quota"`
+	Reason           string  `json:"reason"`
+	VideoUnitPrice   float64 `json:"video_unit_price"`
+	VideoTokens      float64 `json:"video_tokens"`
+	VideoInput       float64 `json:"video_input"` // video-input discount ratio, shown only when present
+	VideoResolution  string  `json:"video_resolution_tier"`
+	VideoHasInput    bool    `json:"video_has_input"`
 }
 
 const billingDisclaimer = "仅供参考，以实际扣费为准"
@@ -96,6 +110,12 @@ func buildBillingText(log *model.Log) string {
 	var info logPricingInfo
 	if err := common.UnmarshalJsonStr(log.Other, &info); err != nil {
 		return billingMissingPlaceholder
+	}
+
+	// Async-task rows (pre-consume / settle / refund) carry their own stage
+	// formulas — the token-ratio reconstruction below would be meaningless.
+	if text, ok := buildTaskBillingText(log, &info); ok {
+		return text
 	}
 
 	totalUSD := float64(log.Quota) / common.QuotaPerUnit
@@ -177,6 +197,89 @@ func isValidGroupRatio(r float64) bool {
 		return false
 	}
 	return r != -1
+}
+
+// buildTaskBillingText renders the stage-specific billing breakdown for async
+// task rows (pre-consume → settle/refund, e.g. seedance video tasks). Wording
+// mirrors the frontend renderTaskBillingProcess so exports match the log page.
+// ok=false means the row is not a task row and the ratio-based path applies.
+func buildTaskBillingText(log *model.Log, info *logPricingInfo) (string, bool) {
+	isPre := info.BillingStage == "pre_consume" || (info.BillingStage == "" && info.IsTask)
+	isSettle := !isPre && (info.BillingStage == "settle" || info.BillingStage == "refund" || info.TaskId != "")
+	if !isPre && !isSettle {
+		return "", false
+	}
+
+	ratioLabel := "分组倍率"
+	groupRatio := info.GroupRatio
+	if isValidGroupRatio(info.UserGroupRatio) && info.UserGroupRatio > 0 {
+		ratioLabel = "专属倍率"
+		groupRatio = info.UserGroupRatio
+	}
+	unitUSD := info.VideoUnitPrice
+	if unitUSD == 0 {
+		unitUSD = info.ModelRatio * 2.0
+	}
+	vpart := ""
+	if info.VideoInput > 0 && info.VideoInput != 1 {
+		vpart = " × 视频折扣 " + formatRatio(info.VideoInput)
+	}
+	quotaUSD := func(q float64) string { return "$" + formatPrice(q/common.QuotaPerUnit) }
+
+	var lines []string
+	if isSettle {
+		pre, actual := info.PreConsumedQuota, info.ActualQuota
+		if pre == 0 && actual == 0 {
+			// 失败全额退款(RefundTaskQuota)：无差额字段，退还整行金额。
+			lines = append(lines, "任务退款：退还预扣 "+quotaUSD(float64(log.Quota)))
+			reason := info.Reason
+			if reason == "" {
+				reason = log.Content
+			}
+			if reason != "" {
+				lines = append(lines, "原因 "+reason)
+			}
+		} else {
+			if info.VideoTokens > 0 && unitUSD > 0 {
+				lines = append(lines, fmt.Sprintf("实际结算 = %d tokens × 单价 $%s / 1M tokens × %s %s%s = 应扣 %s",
+					int(info.VideoTokens), formatPrice(unitUSD), ratioLabel, formatRatio(groupRatio), vpart, quotaUSD(actual)))
+			}
+			delta, label := actual-pre, "补扣"
+			if delta < 0 {
+				label, delta = "退款", -delta
+			}
+			lines = append(lines, fmt.Sprintf("预扣 %s → 实扣 %s，%s %s",
+				quotaUSD(pre), quotaUSD(actual), label, quotaUSD(delta)))
+		}
+		if info.TaskId != "" {
+			lines = append(lines, "任务 "+info.TaskId)
+		}
+		return strings.Join(lines, "\n"), true
+	}
+
+	// 预扣阶段：估算金额 + 单价与倍率，结算前仅供参考。
+	lines = append(lines, "任务预扣费（估算，任务完成后按实际用量结算，多退少补）")
+	lines = append(lines, "预扣金额 "+quotaUSD(float64(log.Quota)))
+	if info.VideoUnitPrice > 0 {
+		unitLine := fmt.Sprintf("单价 $%s / 1M tokens", formatPrice(unitUSD))
+		if info.VideoResolution != "" {
+			hasInput := "不含视频输入"
+			if info.VideoHasInput {
+				hasInput = "含视频输入"
+			}
+			unitLine += fmt.Sprintf("（%s，%s）", info.VideoResolution, hasInput)
+		}
+		lines = append(lines, fmt.Sprintf("%s × %s %s%s", unitLine, ratioLabel, formatRatio(groupRatio), vpart))
+	} else if info.ModelPrice > 0 {
+		lines = append(lines, fmt.Sprintf("按次价格 $%s × %s %s", formatPrice(info.ModelPrice), ratioLabel, formatRatio(groupRatio)))
+	} else if info.ModelRatio > 0 {
+		lines = append(lines, fmt.Sprintf("单价 $%s / 1M tokens × %s %s%s", formatPrice(unitUSD), ratioLabel, formatRatio(groupRatio), vpart))
+	}
+	if info.TaskId != "" {
+		lines = append(lines, "任务 "+info.TaskId)
+	}
+	lines = append(lines, billingDisclaimer)
+	return strings.Join(lines, "\n"), true
 }
 
 // formatPrice renders a USD amount the way the frontend does — six fractional

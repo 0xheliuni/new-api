@@ -76,7 +76,7 @@ func buildBillSummaryPage(agg *billSummaryAgg, exchangeRate float64, page, pageS
 			r := agg.rows[k]
 			usd := roundTo6(float64(r.Quota) / common.QuotaPerUnit)
 			items = append(items, billSummaryItemDTO{
-				Date:                k.Day,
+				Date:                billPeriodLabel(k.Day, agg.granularity),
 				Username:            k.Username,
 				ChannelId:           k.ChannelId,
 				TokenName:           k.TokenName,
@@ -128,6 +128,7 @@ func QueryBillSummaryAll(c *gin.Context) {
 	rate := billSummaryRate(c)
 
 	agg := newBillSummaryAgg()
+	agg.granularity = normalizeBillGranularity(c.Query("granularity"))
 	maxRows := model.LogExportMaxRows("xlsx")
 	_, err := model.GetAllLogsForExport(model.LogTypeUnknown, start, end,
 		c.Query("model_name"), c.Query("username"), c.Query("token_name"),
@@ -155,6 +156,7 @@ func QueryBillSummarySelf(c *gin.Context) {
 	rate := billSummaryRate(c)
 
 	agg := newBillSummaryAgg()
+	agg.granularity = normalizeBillGranularity(c.Query("granularity"))
 	maxRows := model.LogExportMaxRows("xlsx")
 	_, err := model.GetUserLogsForExport(userId, model.LogTypeUnknown, start, end,
 		c.Query("model_name"), c.Query("token_name"), c.Query("group"), "", maxRows,

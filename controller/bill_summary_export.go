@@ -25,6 +25,8 @@ type billExportParams struct {
 	group          string
 	withDetail     bool
 	detailSplit    bool
+	external       bool
+	granularity    string
 	exchangeRate   float64
 }
 
@@ -48,6 +50,8 @@ func parseBillExportParams(c *gin.Context) billExportParams {
 		group:          c.Query("group"),
 		withDetail:     c.Query("with_detail") == "1",
 		detailSplit:    c.Query("detail_split_model") == "1",
+		external:       c.Query("bill_mode") == "external",
+		granularity:    normalizeBillGranularity(c.Query("granularity")),
 		exchangeRate:   rate,
 	}
 }
@@ -60,6 +64,8 @@ func runBillExport(c *gin.Context, p billExportParams,
 	defer func() { _ = f.Close() }()
 
 	agg := newBillSummaryAgg()
+	agg.external = p.external
+	agg.granularity = p.granularity
 	var detail *billDetailWriter
 	if p.withDetail {
 		var err error
@@ -88,7 +94,7 @@ func runBillExport(c *gin.Context, p billExportParams,
 			return
 		}
 	}
-	if err := writeBillSummarySheet(f, agg, p.exchangeRate); err != nil {
+	if err := writeBillSummarySheets(f, agg, p.exchangeRate); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -134,14 +140,33 @@ func ExportBillSummarySelf(c *gin.Context) {
 	})
 }
 
-// finalizeBillWorkbook removes the default Sheet1 and makes the summary sheet
-// the active/first tab. Detail sheets are created before the summary sheet, so
-// after Sheet1 is deleted the summary must be located by name, not index 0.
+// finalizeBillWorkbook removes the default Sheet1, moves the summary sheets
+// (总对账单*, 明细对账单*) in front of the daily detail sheets — they are created
+// after the streamed detail sheets, but must appear first in the tab order —
+// and activates the grand summary.
 func finalizeBillWorkbook(f *excelize.File) {
 	if err := f.DeleteSheet("Sheet1"); err != nil {
 		common.SysLog("bill export: delete default sheet: " + err.Error())
 	}
-	if idx, err := f.GetSheetIndex(billSummarySheetPrefix); err == nil && idx >= 0 {
+	var summaries []string
+	firstOther := ""
+	for _, name := range f.GetSheetList() {
+		if strings.HasPrefix(name, billGrandSheetPrefix) || strings.HasPrefix(name, billDailySheetPrefix) {
+			summaries = append(summaries, name)
+		} else if firstOther == "" {
+			firstOther = name
+		}
+	}
+	if firstOther != "" {
+		// Moving each summary before the first detail sheet keeps their
+		// creation order: 总对账单, 总对账单 (2)…, 明细对账单, 明细对账单 (2)…
+		for _, name := range summaries {
+			if err := f.MoveSheet(name, firstOther); err != nil {
+				common.SysLog("bill export: move sheet " + name + ": " + err.Error())
+			}
+		}
+	}
+	if idx, err := f.GetSheetIndex(billGrandSheetPrefix); err == nil && idx >= 0 {
 		f.SetActiveSheet(idx)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/xuri/excelize/v2"
 )
@@ -27,6 +28,7 @@ type billDetailWriter struct {
 	headerID   int
 	wrapID     int
 	modelHdrID int
+	costID     int
 	softCap    int
 
 	curDay string
@@ -49,9 +51,15 @@ func newBillDetailWriter(f *excelize.File, splitModel bool) (*billDetailWriter, 
 	if err != nil {
 		return nil, err
 	}
+	// 费用列写原生数字，$ 前缀由数字格式渲染，Excel 仍可直接求和。
+	costFmt := `"$"` + billMoneyNumFmt
+	costID, err := f.NewStyle(&excelize.Style{CustomNumFmt: &costFmt})
+	if err != nil {
+		return nil, err
+	}
 	return &billDetailWriter{
 		f: f, splitModel: splitModel,
-		headerID: headerID, wrapID: wrapID, modelHdrID: modelHdrID,
+		headerID: headerID, wrapID: wrapID, modelHdrID: modelHdrID, costID: costID,
 		softCap: excelSingleSheetSoftCap,
 	}, nil
 }
@@ -94,6 +102,7 @@ func (w *billDetailWriter) flushDay() error {
 			return logs[i].CreatedAt > logs[j].CreatedAt // DESC within model
 		})
 	}
+	logs = alignTaskPairs(logs)
 
 	// 单 sheet 内分片：超 softCap 行时滚动为 (2)(3)…
 	suffix := 1
@@ -160,9 +169,13 @@ func (w *billDetailWriter) flushDay() error {
 	}
 
 	billingIdx := -1
+	costIdx := -1
 	for i, col := range billDetailColumns {
 		if col.key == "billing" {
 			billingIdx = i
+		}
+		if col.key == "cost" {
+			costIdx = i
 		}
 	}
 
@@ -185,11 +198,18 @@ func (w *billDetailWriter) flushDay() error {
 		}
 		row := make([]any, len(billDetailColumns))
 		for i, col := range billDetailColumns {
-			val := cellValue(col, log)
-			if i == billingIdx {
-				row[i] = excelize.Cell{Value: val, StyleID: w.wrapID}
-			} else {
-				row[i] = val
+			switch i {
+			case costIdx:
+				usd := roundTo6(float64(log.Quota) / common.QuotaPerUnit)
+				// 退款行费用写负数：与消费同列求和即得净额（多退少补一目了然）。
+				if log.Type == model.LogTypeRefund {
+					usd = -usd
+				}
+				row[i] = excelize.Cell{Value: usd, StyleID: w.costID}
+			case billingIdx:
+				row[i] = excelize.Cell{Value: cellValue(col, log), StyleID: w.wrapID}
+			default:
+				row[i] = cellValue(col, log)
 			}
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, rowIn+1)
@@ -199,4 +219,46 @@ func (w *billDetailWriter) flushDay() error {
 		rowIn++
 	}
 	return sw.Flush()
+}
+
+// alignTaskPairs pulls rows that share a request_id — an async task's
+// pre-consume / settle / refund rows — next to each other so 多退少补 reads as
+// one block. A group is anchored where its first row appears in the incoming
+// order and sorted chronologically inside (pre-consume first). Ordinary
+// requests produce a single log per request_id, so they pass through as-is;
+// rows without a request_id (legacy logs) are left untouched.
+func alignTaskPairs(logs []*model.Log) []*model.Log {
+	byReq := make(map[string][]*model.Log)
+	multi := false
+	for _, log := range logs {
+		if log.RequestId == "" {
+			continue
+		}
+		byReq[log.RequestId] = append(byReq[log.RequestId], log)
+		if len(byReq[log.RequestId]) > 1 {
+			multi = true
+		}
+	}
+	if !multi {
+		return logs
+	}
+	result := make([]*model.Log, 0, len(logs))
+	emitted := make(map[string]bool, len(byReq))
+	for _, log := range logs {
+		rid := log.RequestId
+		if rid == "" {
+			result = append(result, log)
+			continue
+		}
+		if emitted[rid] {
+			continue
+		}
+		emitted[rid] = true
+		group := byReq[rid]
+		if len(group) > 1 {
+			sort.SliceStable(group, func(i, j int) bool { return group[i].CreatedAt < group[j].CreatedAt })
+		}
+		result = append(result, group...)
+	}
+	return result
 }

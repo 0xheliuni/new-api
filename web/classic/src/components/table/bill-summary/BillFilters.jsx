@@ -23,6 +23,11 @@ import { Form, Button, Space } from '@douyinfe/semi-ui';
 const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t }) => {
   return (
     <Form getFormApi={(api) => (formApiRef.current = api)} layout='horizontal'>
+      <Form.Select field='granularity' label={t('统计粒度')} initValue='day'>
+        <Form.Select.Option value='day'>{t('按天')}</Form.Select.Option>
+        <Form.Select.Option value='week'>{t('按周')}</Form.Select.Option>
+        <Form.Select.Option value='month'>{t('按月')}</Form.Select.Option>
+      </Form.Select>
       <Form.DatePicker field='start_time' label={t('开始时间')} type='dateTime' />
       <Form.DatePicker field='end_time' label={t('结束时间')} type='dateTime' />
       {isAdminUser && <Form.Input field='username' label={t('用户名')} />}
@@ -30,6 +35,10 @@ const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t })
       <Form.Input field='token_name' label={t('令牌名称')} />
       <Form.Input field='model_name' label={t('模型名称')} />
       <Form.Input field='exchange_rate' label={t('汇率')} placeholder='7.3' />
+      <Form.Select field='bill_mode' label={t('导出口径')} initValue='internal'>
+        <Form.Select.Option value='internal'>{t('内部（分渠道分模型）')}</Form.Select.Option>
+        <Form.Select.Option value='external'>{t('对外客户（合并渠道）')}</Form.Select.Option>
+      </Form.Select>
       <Form.Switch field='with_detail' label={t('附带每日明细账')} />
       <Form.Switch field='detail_split_model' label={t('明细分不同模型')} />
       <Space>
