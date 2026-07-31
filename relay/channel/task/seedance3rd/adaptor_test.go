@@ -361,3 +361,23 @@ func TestBuildRequestBody_UsesMappedModel(t *testing.T) {
 		t.Fatalf("upstream body missing mapped model: %s", buf.String())
 	}
 }
+
+func TestConvertToOpenAIVideo_MasksUpstreamErrorMessage(t *testing.T) {
+	a := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID: "task_pub9",
+		Status: model.TaskStatusFailure,
+		Data:   []byte(`{"task":{"id":"up9","status":"failed","error":{"code":"download_failed","message":"cannot fetch http://10.0.0.8/material.mp4"}}}`),
+	}
+	out, err := a.ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, "10.0.0.8") {
+		t.Fatalf("upstream IP leaked: %s", s)
+	}
+	if !strings.Contains(s, "download_failed") || !strings.Contains(s, "cannot fetch") {
+		t.Fatalf("error info lost: %s", s)
+	}
+}

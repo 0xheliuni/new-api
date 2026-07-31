@@ -217,7 +217,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		})
 	}
 	if (tk.Status == "failed" || tk.Status == "expired") && tk.Error != nil {
-		ov.Error = &dto.OpenAIVideoError{Message: tk.Error.Message, Code: tk.Error.Code}
+		// 上游错误脱敏后透传（URL/IP/域名 mask）。
+		ov.Error = &dto.OpenAIVideoError{Message: common.MaskSensitiveInfo(tk.Error.Message), Code: tk.Error.Code}
 	}
 	return common.Marshal(ov)
 }

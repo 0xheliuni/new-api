@@ -616,12 +616,38 @@ func RelayTask(c *gin.Context) {
 	}
 }
 
-// respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
+// respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）。
+// OpenAI 形状端点（/v1/videos*）输出标准 OpenAI 错误格式 {"error":{...}}，
+// 其余任务端点保持原 TaskError 形状（向后兼容）。
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
+		c.JSON(taskErr.StatusCode, gin.H{
+			"error": gin.H{
+				"message": taskErr.Message,
+				"type":    taskErrorTypeForStatus(taskErr.StatusCode),
+				"code":    taskErr.Code,
+			},
+		})
+		return
+	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+// taskErrorTypeForStatus 按 HTTP 状态码映射 OpenAI 错误 type。
+func taskErrorTypeForStatus(statusCode int) string {
+	switch {
+	case statusCode == http.StatusTooManyRequests:
+		return "rate_limit_error"
+	case statusCode >= 500:
+		return "upstream_error"
+	case statusCode >= 400:
+		return "invalid_request_error"
+	default:
+		return "api_error"
+	}
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
