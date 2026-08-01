@@ -4680,6 +4680,7 @@
     "Date": "日期",
     "Amount (USD)": "金额(美元)",
     "Amount (CNY)": "金额(人民币)",
+    "List Amount (USD)": "刊例价金额(美元)",
     "Exchange Rate": "汇率",
     "Prompt Tokens": "输入tokens",
     "Completion Tokens": "输出tokens",

@@ -275,7 +275,9 @@ export function BillExportPage() {
             <div className='min-h-0 flex-1 space-y-2'>
               <div className='text-sm text-muted-foreground'>
                 {t('Total')}: ${data.summary.total_amount_usd.toFixed(6)} / ¥
-                {data.summary.total_amount_cny.toFixed(6)} · {t('Prompt Tokens')}{' '}
+                {data.summary.total_amount_cny.toFixed(6)} · {t('Request Count')}{' '}
+                {data.summary.total_request_count} · {t('List Amount (USD)')} $
+                {data.summary.total_list_amount_usd.toFixed(6)} · {t('Prompt Tokens')}{' '}
                 {data.summary.total_prompt_tokens} · {t('Completion Tokens')}{' '}
                 {data.summary.total_completion_tokens} · {t('Cache Read Tokens')}{' '}
                 {data.summary.total_cache_read_tokens} · {t('Cache Creation Tokens')}{' '}
@@ -289,6 +291,8 @@ export function BillExportPage() {
                     {isAdmin && <TableHead>{t('Channel ID')}</TableHead>}
                     <TableHead>{t('Token Name')}</TableHead>
                     <TableHead>{t('Model Name')}</TableHead>
+                    <TableHead>{t('Request Count')}</TableHead>
+                    <TableHead>{t('List Amount (USD)')}</TableHead>
                     <TableHead>{t('Amount (USD)')}</TableHead>
                     <TableHead>{t('Exchange Rate')}</TableHead>
                     <TableHead>{t('Amount (CNY)')}</TableHead>
@@ -306,6 +310,8 @@ export function BillExportPage() {
                       {isAdmin && <TableCell>{it.channel_id}</TableCell>}
                       <TableCell>{it.token_name}</TableCell>
                       <TableCell>{it.model_name}</TableCell>
+                      <TableCell>{it.request_count}</TableCell>
+                      <TableCell>${it.list_amount_usd.toFixed(6)}</TableCell>
                       <TableCell>${it.amount_usd.toFixed(6)}</TableCell>
                       <TableCell>{it.exchange_rate}</TableCell>
                       <TableCell>¥{it.amount_cny.toFixed(6)}</TableCell>
