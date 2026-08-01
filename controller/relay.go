@@ -552,10 +552,12 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !taskErr.LocalError {
+			// 错误日志由循环外的 recordTaskErrorLog 统一落一条汇总行，
+			// 这里禁用 processChannelError 内的记录，避免重试时逐渠道重复写。
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode, types.ErrOptionWithNoRecordErrorLog()))
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
@@ -619,10 +621,12 @@ func RelayTask(c *gin.Context) {
 
 // recordTaskErrorLog 把任务提交失败写入错误日志（type=5）。任务路径此前不写
 // 错误日志，上游报错只回给客户端，使用日志里无迹可循（预扣退款也不落行），
-// 视频任务提交被上游拒绝时用户无从排查。口径与 processChannelError 的
-// RecordErrorLog 对齐，受同一 ErrorLogEnabled 开关控制。
+// 视频任务提交被上游拒绝时用户无从排查。任务提交失败与计费直接相关（预扣后
+// 静默退款）且低频，因此不受 ERROR_LOG_ENABLED 开关限制、始终记录——该环境
+// 变量默认关闭，若沿用开关此日志在多数部署中永远不会出现。
 func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
-	if !constant.ErrorLogEnabled || taskErr == nil {
+	if taskErr == nil || taskErr.LocalError {
+		// 本地错误（参数校验/额度不足等）与聊天路径口径一致，不写错误日志。
 		return
 	}
 	userId := c.GetInt("id")
