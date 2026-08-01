@@ -111,6 +111,11 @@ func buildBillingText(log *model.Log) string {
 	if log == nil {
 		return billingMissingPlaceholder
 	}
+	// seedance 单行化导出：预扣行携带 TaskInfo 时输出任务全过程（状态/
+	// 预扣→实扣/失败原因/任务 ID），settle/refund 行已在导出批次中剔除。
+	if log.TaskInfo != nil {
+		return buildTaskInfoBillingText(log)
+	}
 	if strings.TrimSpace(log.Other) == "" {
 		return billingMissingPlaceholder
 	}
@@ -204,6 +209,71 @@ func isValidGroupRatio(r float64) bool {
 		return false
 	}
 	return r != -1
+}
+
+// seedanceTaskStatusLabel 把任务状态映射为导出文本用的中文标签。
+func seedanceTaskStatusLabel(status string) string {
+	switch status {
+	case string(model.TaskStatusSuccess):
+		return "成功"
+	case string(model.TaskStatusFailure):
+		return "失败"
+	case string(model.TaskStatusInProgress):
+		return "生成中"
+	case string(model.TaskStatusSubmitted), string(model.TaskStatusQueued):
+		return "排队中"
+	default:
+		return "未知"
+	}
+}
+
+// buildTaskInfoBillingText 渲染 seedance 单行化导出的计费过程：任务状态、
+// 预扣→实扣净额、输出 tokens、失败原因与任务 ID（上游 ID 仅 admin 路径有值）。
+func buildTaskInfoBillingText(log *model.Log) string {
+	ti := log.TaskInfo
+	quotaUSD := func(q int) string { return "$" + formatPrice(float64(q)/common.QuotaPerUnit) }
+	lines := []string{
+		fmt.Sprintf("视频任务：%s（进度 %s）", seedanceTaskStatusLabel(ti.Status), ti.Progress),
+	}
+	settleLine := fmt.Sprintf("预扣 %s → 实扣 %s", quotaUSD(ti.PreQuota), quotaUSD(ti.FinalQuota))
+	if ti.Status == string(model.TaskStatusFailure) && ti.FinalQuota == 0 {
+		settleLine += "（已退款）"
+	}
+	lines = append(lines, settleLine)
+	if ti.OutputTokens > 0 {
+		lines = append(lines, fmt.Sprintf("输出 %d tokens", ti.OutputTokens))
+	}
+	if ti.FailReason != "" {
+		lines = append(lines, "失败原因 "+ti.FailReason)
+	}
+	if ti.TaskId != "" {
+		lines = append(lines, "任务 "+ti.TaskId)
+	}
+	if ti.UpstreamTaskId != "" {
+		lines = append(lines, "上游任务 "+ti.UpstreamTaskId)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// applySeedanceExportMerge 把原始日志导出批次单行化：seedance 的 settle/refund
+// 行剔除；带 TaskInfo 的预扣行费用改写为实扣净额、输出 tokens 落列（导出行是
+// 一次性流式对象，就地改写安全）。其余行原样透传。
+func applySeedanceExportMerge(batch []*model.Log) []*model.Log {
+	out := batch[:0]
+	for _, log := range batch {
+		if strings.Contains(log.ModelName, "seedance") &&
+			(strings.Contains(log.Other, `"billing_stage":"settle"`) || strings.Contains(log.Other, `"billing_stage":"refund"`)) {
+			continue
+		}
+		if ti := log.TaskInfo; ti != nil {
+			log.Quota = ti.FinalQuota
+			if log.CompletionTokens == 0 && ti.OutputTokens > 0 {
+				log.CompletionTokens = ti.OutputTokens
+			}
+		}
+		out = append(out, log)
+	}
+	return out
 }
 
 // buildTaskBillingText renders the stage-specific billing breakdown for async
@@ -824,7 +894,11 @@ func ExportAllLogs(c *gin.Context) {
 	columns := resolveExportColumns(c.Query("columns"))
 
 	dispatchExport(c, columns, format, func(maxRows int, consume func([]*model.Log) error) (bool, error) {
-		return model.GetAllLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, requestId, maxRows, consume)
+		return model.GetAllLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, requestId, maxRows, func(batch []*model.Log) error {
+			// seedance 单行化：结算/退款行剔除、预扣行净额化（与使用日志页一致）。
+			model.EnrichSeedanceTaskLogs(batch, true)
+			return consume(applySeedanceExportMerge(batch))
+		})
 	})
 }
 
@@ -847,6 +921,10 @@ func ExportUserLogs(c *gin.Context) {
 	columns := resolveExportColumns(c.Query("columns"))
 
 	dispatchExport(c, columns, format, func(maxRows int, consume func([]*model.Log) error) (bool, error) {
-		return model.GetUserLogsForExport(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, group, requestId, maxRows, consume)
+		return model.GetUserLogsForExport(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, group, requestId, maxRows, func(batch []*model.Log) error {
+			// seedance 单行化：self 路径不暴露上游任务 ID。
+			model.EnrichSeedanceTaskLogs(batch, false)
+			return consume(applySeedanceExportMerge(batch))
+		})
 	})
 }

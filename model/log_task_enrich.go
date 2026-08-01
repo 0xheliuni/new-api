@@ -26,6 +26,12 @@ type LogTaskInfo struct {
 	IsUserRatio    bool    `json:"is_user_ratio,omitempty"`
 }
 
+// EnrichSeedanceTaskLogs 是 enrichSeedanceTaskLogs 的导出入口，供原始日志导出
+// （controller）在流式批次上复用同一套单行化增强。
+func EnrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
+	enrichSeedanceTaskLogs(logs, includeUpstreamId)
+}
+
 // enrichSeedanceTaskLogs 对页内 seedance 预扣行挂 task_info：
 // 两次批量查询（tasks by task_id、兄弟日志 by request_id），无逐行 N+1。
 // includeUpstreamId=false（self 路径）不暴露上游任务 ID。
