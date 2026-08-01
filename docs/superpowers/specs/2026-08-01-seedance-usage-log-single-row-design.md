@@ -1,7 +1,7 @@
 # seedance 使用记录单行化 + 任务态展示 — 设计文档
 
 - 日期: 2026-08-01
-- 状态: 已确认设计，待实现
+- 状态: 已实现（2026-08-01，含测试；生成秒数按 §3.3 简化为增强阶段解析）
 - 前置: `2026-07-12-seedance-task-billing-log-transparency-design.md`（三行透明化，request_id 关联）、`2026-06-25-dreamina-seedance2-video-billing-design.md`、`2026-07-28-seedance-thirdparty-video-channel-design.md`、`2026-07-31-task-upstream-error-passthrough-design.md`
 - 相关规则: CLAUDE.md Rule 1 (JSON wrapper)、Rule 2 (三库兼容——LIKE 过滤与迁移必须 SQLite/MySQL/PG 通过)、Rule 5 (受保护标识)
 
@@ -75,11 +75,9 @@ type LogTaskInfo struct {
 - `Other` 读改写全程 `common.UnmarshalJsonStr`/`common.Marshal`；UPDATE 只动 `other` 列；单行失败记日志继续，不中断启动。
 - `private_data.request_id` 为空的更早期任务跳过（该部分历史行维持旧样式，接受）。
 
-### 3.3 写入侧唯一增量：生成秒数
+### 3.3 生成秒数来源（实现简化：不改写入侧）
 
-- `service/task_billing.go` 的 `taskBillingOther` 增写 `video_duration_s`（settle 时从 TaskInfo/adaptor 可得的 Duration 秒数，取不到写 0 则省略）。
-- 三个 adaptor（doubao/sora/seedance3rd）`ParseTaskResult` 已有 Duration 字段的透传确认，缺的补上。
-- 历史记录的秒数在增强阶段从 `task.Data`（上游最终响应 JSON）尽力解析（`duration`/`seconds` 等键），解析不到详情里不显示该项。
+`relaycommon.TaskInfo` 无 Duration 字段，而每个任务的 `task.Data` 已存有（脱敏后的）上游最终响应 JSON（提交时与轮询时都会更新）。因此生成秒数统一在**增强阶段**从 `task.Data` 尽力解析（`duration`/`seconds`/`duration_seconds` 等键，顶层与一层嵌套），新旧记录同一条代码路径，不需要在结算时新增 `video_duration_s` 写入。解析不到则详情里不显示该项。
 
 ### 3.4 前端 — 默认主题（`web/default/src/features/usage-logs/`）
 
@@ -106,7 +104,7 @@ type LogTaskInfo struct {
 
 1. `model`：列表排除（settle/refund 隐藏、pre_consume 保留、非 seedance 不受影响、count 一致）；增强（成功/失败/进行中/task 被清理四态、admin/self 的 UpstreamTaskId 差异、批量查询不 N+1——用查询计数或直接断言单批 IN）。
 2. 回填迁移：三种 stage 推断、幂等（二跑无变更）、request_id 缺失跳过、坏 JSON 容错。
-3. `service`：settle 写入 `video_duration_s`。
+3. 增强：生成秒数/输出 tokens 从 `task.Data` 解析的各形态用例。
 4. `controller`：逐日明细合并（2 行/3 行/失败全退、净额、过程文字完整、非 seedance 不合并）。
 5. 前端：默认主题 `bun run build` + classic 主题构建均通过；两主题状态列/费用列分支的组件渲染逻辑走查。
 6. 回归：账单汇总导出（v5 全套 sheet 数值不变）、`go build ./...`、bill 相关全部既有测试。
@@ -117,9 +115,8 @@ type LogTaskInfo struct {
 
 ## 6. 分阶段实施
 
-1. **Phase 1**：`model` 列表排除 + LogTaskInfo 增强（含测试）。
+1. **Phase 1**：`model` 列表排除 + LogTaskInfo 增强（含秒数解析，含测试）。
 2. **Phase 2**：历史回填迁移（含测试）。
-3. **Phase 3**：settle 写 `video_duration_s` + adaptor Duration 透传补齐。
-4. **Phase 4**：默认主题前端（状态列/费用列/详情弹窗 + i18n + build）。
-5. **Phase 4b**：Classic 主题前端（同口径列与详情改造 + i18n + build）。
-6. **Phase 5**：逐日明细合并 + 全量回归。
+3. **Phase 3**：默认主题前端（状态列/费用列/详情弹窗 + i18n + build）。
+4. **Phase 4**：Classic 主题前端（同口径列与详情改造 + i18n + build）。
+5. **Phase 5**：逐日明细合并 + 全量回归。
