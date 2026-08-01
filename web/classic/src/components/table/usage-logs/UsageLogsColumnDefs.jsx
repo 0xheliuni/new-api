@@ -24,6 +24,7 @@ import {
   Tag,
   Tooltip,
   Popover,
+  Progress,
   Typography,
 } from '@douyinfe/semi-ui';
 import {
@@ -474,6 +475,24 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   };
 }
 
+// seedance 任务状态 Tag（配色对齐任务日志页 renderStatus）。
+function renderSeedanceTaskStatus(status, t) {
+  const map = {
+    SUCCESS: { color: 'green', label: '成功' },
+    FAILURE: { color: 'red', label: '失败' },
+    IN_PROGRESS: { color: 'blue', label: '执行中' },
+    SUBMITTED: { color: 'yellow', label: '队列中' },
+    QUEUED: { color: 'orange', label: '排队中' },
+    NOT_START: { color: 'grey', label: '未启动' },
+  };
+  const item = map[status] || { color: 'white', label: '未知' };
+  return (
+    <Tag color={item.color} shape='circle' size='small'>
+      {t(item.label)}
+    </Tag>
+  );
+}
+
 export const getLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -695,6 +714,27 @@ export const getLogsColumns = ({
       },
     },
     {
+      // seedance 视频任务态：状态 Tag + 进度条（非任务行留空），观感对齐任务日志页。
+      key: COLUMN_KEYS.TASK_STATUS,
+      title: t('状态'),
+      dataIndex: 'task_info',
+      render: (taskInfo) => {
+        if (!taskInfo) return <></>;
+        const pct = parseInt(taskInfo.progress || '0', 10) || 0;
+        return (
+          <div style={{ minWidth: 90 }}>
+            {renderSeedanceTaskStatus(taskInfo.status, t)}
+            <Progress
+              percent={pct}
+              showInfo
+              aria-label='task progress'
+              style={{ marginTop: 4 }}
+            />
+          </div>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.USE_TIME,
       title: t('用时/首字'),
       dataIndex: 'use_time',
@@ -824,6 +864,29 @@ export const getLogsColumns = ({
             <Tooltip content={`${t('由订阅抵扣')}：${renderQuota(text, 6)}`}>
               <span>{renderBillingTag(record, t)}</span>
             </Tooltip>
+          );
+        }
+        // seedance 任务三态费用：进行中不显示预扣金额；成功/失败显示实扣净额，
+        // 失败追加已退款角标；UNKNOWN 落回普通显示。
+        const taskInfo = record.task_info;
+        if (taskInfo && taskInfo.status !== 'UNKNOWN') {
+          if (taskInfo.status === 'SUCCESS') {
+            return <>{renderQuota(taskInfo.final_quota || 0, 6)}</>;
+          }
+          if (taskInfo.status === 'FAILURE') {
+            return (
+              <Space>
+                {renderQuota(taskInfo.final_quota || 0, 6)}
+                <Tag color='red' shape='circle' size='small'>
+                  {t('已退款')}
+                </Tag>
+              </Space>
+            );
+          }
+          return (
+            <Tag color='grey' shape='circle' size='small'>
+              {t('生成中')}
+            </Tag>
           );
         }
         return <>{renderQuota(text, 6)}</>;
