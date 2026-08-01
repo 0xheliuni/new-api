@@ -191,16 +191,15 @@ func billFilterEcho(p billExportParams) []string {
 }
 
 // finalizeBillWorkbook removes the default Sheet1, moves the summary sheets
-// (账单汇总, 总对账单*, 明细对账单*, 按日/按令牌/按模型汇总*) in front of the daily
-// detail sheets — they are created after the streamed detail sheets, but must
-// appear first in the tab order — and activates the cover (falling back to the
-// grand summary when no cover was written, e.g. legacy tests).
+// (账单汇总, 账单明细*, 按模型汇总*) in front of the daily detail sheets — they
+// are created after the streamed detail sheets, but must appear first in the
+// tab order — and activates the cover (falling back to the first summary when
+// no cover was written, e.g. legacy tests).
 func finalizeBillWorkbook(f *excelize.File) {
 	if err := f.DeleteSheet("Sheet1"); err != nil {
 		common.SysLog("bill export: delete default sheet: " + err.Error())
 	}
-	orderedPrefixes := []string{billCoverSheetName, billGrandSheetPrefix, billDailySheetPrefix,
-		billByDaySheetPrefix, billByTokenSheetPrefix, billByModelSheetPrefix}
+	orderedPrefixes := []string{billCoverSheetName, billDailySheetPrefix, billByModelSheetPrefix}
 	rank := func(name string) int {
 		for idx, prefix := range orderedPrefixes {
 			if strings.HasPrefix(name, prefix) {
@@ -233,7 +232,7 @@ func finalizeBillWorkbook(f *excelize.File) {
 		f.SetActiveSheet(idx)
 		return
 	}
-	if idx, err := f.GetSheetIndex(billGrandSheetPrefix); err == nil && idx >= 0 {
+	if idx, err := f.GetSheetIndex(billDailySheetPrefix); err == nil && idx >= 0 {
 		f.SetActiveSheet(idx)
 	}
 }

@@ -14,7 +14,7 @@ func TestFinalizeBillWorkbook_OrdersAndActivatesSummaries(t *testing.T) {
 	f.NewSheet("2026-06-02") // fake detail sheet
 	f.NewSheet("2026-06-01") // another fake detail sheet
 
-	// Create the real summary sheets via the actual writer
+	// Create the real summary sheet via the actual writer
 	agg := newBillSummaryAgg()
 	agg.rows[billSummaryKey{Day: "2026-06-01", Username: "alice", ChannelId: 3, TokenName: "tk", ModelName: "gpt-4o"}] =
 		&billSummaryRow{Quota: 1500}
@@ -24,9 +24,9 @@ func TestFinalizeBillWorkbook_OrdersAndActivatesSummaries(t *testing.T) {
 
 	finalizeBillWorkbook(f)
 
-	// Summaries first, then detail sheets in their original order
+	// Summary first, then detail sheets in their original order
 	list := f.GetSheetList()
-	want := []string{billGrandSheetPrefix, billDailySheetPrefix, "2026-06-02", "2026-06-01"}
+	want := []string{billDailySheetPrefix, "2026-06-02", "2026-06-01"}
 	if len(list) != len(want) {
 		t.Fatalf("sheet list = %v, want %v", list, want)
 	}
@@ -36,10 +36,10 @@ func TestFinalizeBillWorkbook_OrdersAndActivatesSummaries(t *testing.T) {
 		}
 	}
 
-	// Grand summary must be the active sheet
+	// Without a cover, 账单明细 must be the active sheet
 	activeName := f.GetSheetName(f.GetActiveSheetIndex())
-	if activeName != billGrandSheetPrefix {
-		t.Fatalf("active sheet = %q, want %q", activeName, billGrandSheetPrefix)
+	if activeName != billDailySheetPrefix {
+		t.Fatalf("active sheet = %q, want %q", activeName, billDailySheetPrefix)
 	}
 
 	// Sheet1 must be removed
@@ -60,12 +60,12 @@ func TestFinalizeBillWorkbook_NoDetailSheets(t *testing.T) {
 	finalizeBillWorkbook(f)
 
 	list := f.GetSheetList()
-	want := []string{billGrandSheetPrefix, billDailySheetPrefix}
-	if len(list) != len(want) || list[0] != want[0] || list[1] != want[1] {
+	want := []string{billDailySheetPrefix}
+	if len(list) != len(want) || list[0] != want[0] {
 		t.Fatalf("sheet list = %v, want %v", list, want)
 	}
 	activeName := f.GetSheetName(f.GetActiveSheetIndex())
-	if activeName != billGrandSheetPrefix {
-		t.Fatalf("active sheet = %q, want %q", activeName, billGrandSheetPrefix)
+	if activeName != billDailySheetPrefix {
+		t.Fatalf("active sheet = %q, want %q", activeName, billDailySheetPrefix)
 	}
 }

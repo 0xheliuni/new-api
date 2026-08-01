@@ -91,35 +91,9 @@ func TestWriteBillSummarySheets_InternalValues(t *testing.T) {
 		t.Fatalf("daily A4 = %q, want empty (totals row removed)", after)
 	}
 
-	// ---- 总对账单 (grand) ----
-	grand := billGrandSheetPrefix
-	gs, _ := f.GetCellValue(grand, "A1")
-	if gs != "开始日期" {
-		t.Fatalf("grand A1 = %q, want 开始日期", gs)
-	}
-	from, _ := f.GetCellValue(grand, "A2")
-	to, _ := f.GetCellValue(grand, "B2")
-	if from != "2026-06-01" || to != "2026-06-02" {
-		t.Fatalf("grand range = %q..%q, want 2026-06-01..2026-06-02", from, to)
-	}
-	gm, _ := f.GetCellValue(grand, "E2")
-	if gm != "gpt-4o" {
-		t.Fatalf("grand E2 (model) = %q, want gpt-4o", gm)
-	}
-	// whole-range quota 2000 => $0.004（计费记录/请求数/刊例价金额三列插入后 F→I）
-	gu, _ := f.GetCellValue(grand, "I2")
-	if gu != "0.004000" {
-		t.Fatalf("grand I2 (USD) = %q, want 0.004000", gu)
-	}
-	assertCellNotText(t, f, grand, "I2")
-	gp, _ := f.GetCellValue(grand, "L2")
-	if gp != "14" {
-		t.Fatalf("grand L2 (prompt) = %q, want 14", gp)
-	}
-	// single grand row, no totals row
-	g3, _ := f.GetCellValue(grand, "A3")
-	if g3 != "" {
-		t.Fatalf("grand A3 = %q, want empty", g3)
+	// 总对账单已在 v2 精简中删除，区间合计见封面（账单汇总）。
+	if idx, _ := f.GetSheetIndex("总对账单"); idx != -1 {
+		t.Fatalf("总对账单 sheet should no longer be generated")
 	}
 }
 
@@ -173,15 +147,6 @@ func TestWriteBillSummarySheets_ExternalMergesChannelsAndTokens(t *testing.T) {
 		t.Fatalf("external daily A3 = %q, want empty (rows merged)", a3)
 	}
 
-	grand := billGrandSheetPrefix
-	gd, _ := f.GetCellValue(grand, "D1")
-	if gd != "模型名称" {
-		t.Fatalf("external grand D1 = %q, want 模型名称", gd)
-	}
-	gu, _ := f.GetCellValue(grand, "H2")
-	if gu != "0.003000" {
-		t.Fatalf("external grand H2 (USD) = %q, want 0.003000", gu)
-	}
 }
 
 func TestBillDetailWriter_CostIsNumeric(t *testing.T) {
@@ -232,12 +197,6 @@ func TestWriteBillSummarySheets_MonthGranularity(t *testing.T) {
 	usd, _ := f.GetCellValue(billDailySheetPrefix, "K2")
 	if usd != "0.003000" {
 		t.Fatalf("month-bucket daily K2 = %q, want 0.003000", usd)
-	}
-	// grand range stays in real calendar days regardless of granularity
-	from, _ := f.GetCellValue(billGrandSheetPrefix, "A2")
-	to, _ := f.GetCellValue(billGrandSheetPrefix, "B2")
-	if from != "2026-06-03" || to != "2026-06-07" {
-		t.Fatalf("grand range = %q..%q, want 2026-06-03..2026-06-07", from, to)
 	}
 }
 

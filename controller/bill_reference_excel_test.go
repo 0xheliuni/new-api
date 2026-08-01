@@ -30,38 +30,35 @@ func TestWriteBillReferenceSheets(t *testing.T) {
 		v, _ := f.GetCellValue(sheet, cell)
 		return v
 	}
-	// 按日汇总：day DESC
-	if get(billByDaySheetPrefix, "A1") != "日期" || get(billByDaySheetPrefix, "A2") != "2026-06-02" || get(billByDaySheetPrefix, "A3") != "2026-06-01" {
-		t.Fatalf("byDay rows: %q/%q/%q", get(billByDaySheetPrefix, "A1"), get(billByDaySheetPrefix, "A2"), get(billByDaySheetPrefix, "A3"))
+	// 精简版：仅输出 按模型汇总；按日/按令牌汇总不再生成
+	if idx, _ := f.GetSheetIndex(billByDaySheetPrefix); idx != -1 {
+		t.Fatalf("按日汇总 should no longer be generated")
 	}
-	if get(billByDaySheetPrefix, "B2") != "1" || get(billByDaySheetPrefix, "C2") != "1" {
-		t.Fatalf("byDay counts = %q/%q", get(billByDaySheetPrefix, "B2"), get(billByDaySheetPrefix, "C2"))
+	if idx, _ := f.GetSheetIndex(billByTokenSheetPrefix); idx != -1 {
+		t.Fatalf("按令牌汇总 should no longer be generated")
 	}
-	if get(billByDaySheetPrefix, "H2") != "1000" { // Quota Units 原生整数
-		t.Fatalf("byDay quota units = %q, want 1000", get(billByDaySheetPrefix, "H2"))
+	// 按模型汇总：Quota DESC → m1 在前；首/末笔时间列在 K/L
+	if get(billByModelSheetPrefix, "A1") != "模型名称" || get(billByModelSheetPrefix, "A2") != "m1" || get(billByModelSheetPrefix, "A3") != "m2" {
+		t.Fatalf("byModel rows: %q/%q/%q", get(billByModelSheetPrefix, "A1"), get(billByModelSheetPrefix, "A2"), get(billByModelSheetPrefix, "A3"))
 	}
-	if get(billByDaySheetPrefix, "I2") != "0.004000" { // list 2000/500000
-		t.Fatalf("byDay list amount = %q, want 0.004000", get(billByDaySheetPrefix, "I2"))
+	if get(billByModelSheetPrefix, "B2") != "1" || get(billByModelSheetPrefix, "C2") != "1" {
+		t.Fatalf("byModel counts = %q/%q", get(billByModelSheetPrefix, "B2"), get(billByModelSheetPrefix, "C2"))
 	}
-	if get(billByDaySheetPrefix, "J2") != "0.002000" {
-		t.Fatalf("byDay amount = %q, want 0.002000", get(billByDaySheetPrefix, "J2"))
+	if get(billByModelSheetPrefix, "H2") != "1000" {
+		t.Fatalf("byModel quota units = %q, want 1000", get(billByModelSheetPrefix, "H2"))
 	}
-	assertCellNotText(t, f, billByDaySheetPrefix, "I2")
-
-	// 按令牌汇总：withUser=false 无用户名列；Quota DESC → tk1 在前；首/末笔时间格式
-	if get(billByTokenSheetPrefix, "A1") != "令牌名称" || get(billByTokenSheetPrefix, "A2") != "tk1" || get(billByTokenSheetPrefix, "A3") != "tk2" {
-		t.Fatalf("byToken rows: %q/%q/%q", get(billByTokenSheetPrefix, "A1"), get(billByTokenSheetPrefix, "A2"), get(billByTokenSheetPrefix, "A3"))
+	if get(billByModelSheetPrefix, "I2") != "0.004000" {
+		t.Fatalf("byModel list amount = %q, want 0.004000", get(billByModelSheetPrefix, "I2"))
 	}
-	if get(billByTokenSheetPrefix, "K1") != "首笔计费时间" || get(billByTokenSheetPrefix, "L1") != "末笔计费时间" {
-		t.Fatalf("byToken ts headers: %q/%q", get(billByTokenSheetPrefix, "K1"), get(billByTokenSheetPrefix, "L1"))
+	if get(billByModelSheetPrefix, "J2") != "0.002000" {
+		t.Fatalf("byModel amount = %q, want 0.002000", get(billByModelSheetPrefix, "J2"))
 	}
-	if get(billByTokenSheetPrefix, "K2") != "2026-06-02 12:00:00" {
-		t.Fatalf("byToken first ts = %q", get(billByTokenSheetPrefix, "K2"))
+	assertCellNotText(t, f, billByModelSheetPrefix, "I2")
+	if get(billByModelSheetPrefix, "K1") != "首笔计费时间" || get(billByModelSheetPrefix, "L1") != "末笔计费时间" {
+		t.Fatalf("byModel ts headers: %q/%q", get(billByModelSheetPrefix, "K1"), get(billByModelSheetPrefix, "L1"))
 	}
-
-	// 按模型汇总
-	if get(billByModelSheetPrefix, "A1") != "模型名称" || get(billByModelSheetPrefix, "A2") != "m1" {
-		t.Fatalf("byModel: %q/%q", get(billByModelSheetPrefix, "A1"), get(billByModelSheetPrefix, "A2"))
+	if get(billByModelSheetPrefix, "K2") != "2026-06-02 12:00:00" {
+		t.Fatalf("byModel first ts = %q", get(billByModelSheetPrefix, "K2"))
 	}
 }
 
@@ -77,10 +74,10 @@ func TestWriteBillReferenceSheets_WithUserColumn(t *testing.T) {
 	if err := writeBillReferenceSheets(f, styles, ref, true, 7.3); err != nil {
 		t.Fatal(err)
 	}
-	u, _ := f.GetCellValue(billByTokenSheetPrefix, "A1")
-	n, _ := f.GetCellValue(billByTokenSheetPrefix, "B1")
-	if u != "用户名" || n != "令牌名称" {
-		t.Fatalf("byToken withUser headers = %q/%q", u, n)
+	u, _ := f.GetCellValue(billByModelSheetPrefix, "A1")
+	n, _ := f.GetCellValue(billByModelSheetPrefix, "B1")
+	if u != "用户名" || n != "模型名称" {
+		t.Fatalf("byModel withUser headers = %q/%q", u, n)
 	}
 }
 
@@ -137,8 +134,7 @@ func TestWriteBillCoverSheet(t *testing.T) {
 	}
 }
 
-// 全套 sheet 顺序：账单汇总, 总对账单, 明细对账单, 按日, 按令牌, 按模型, 逐日明细；
-// 激活 sheet 为账单汇总。
+// 精简版 sheet 顺序：账单汇总, 账单明细, 按模型汇总, 逐日明细；激活 sheet 为账单汇总。
 func TestFinalizeBillWorkbook_ReferenceSheetOrder(t *testing.T) {
 	f := excelize.NewFile()
 	defer f.Close()
@@ -166,8 +162,7 @@ func TestFinalizeBillWorkbook_ReferenceSheetOrder(t *testing.T) {
 	finalizeBillWorkbook(f)
 
 	list := f.GetSheetList()
-	want := []string{billCoverSheetName, billGrandSheetPrefix, billDailySheetPrefix,
-		billByDaySheetPrefix, billByTokenSheetPrefix, billByModelSheetPrefix, "2026-06-01"}
+	want := []string{billCoverSheetName, billDailySheetPrefix, billByModelSheetPrefix, "2026-06-01"}
 	if len(list) != len(want) {
 		t.Fatalf("sheet list = %v, want %v", list, want)
 	}
