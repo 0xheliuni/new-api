@@ -34,6 +34,13 @@ type billSummaryRow struct {
 	EffectiveRatio float64
 	hasPrice       bool
 	hasRatio       bool
+	// BillingRecords 计费记录（消费+退款行数）；RequestCount 请求数（消费且
+	// billing_stage != "settle"，任务多行只按 pre_consume 计 1 次）；
+	// ListQuota 刊例价金额（quota 单位）：逐条 quota/生效倍率 累加，退款冲抵，
+	// 旧日志无倍率键时按实付兜底。
+	BillingRecords int
+	RequestCount   int
+	ListQuota      float64
 }
 
 type billSummaryAgg struct {
@@ -120,12 +127,19 @@ func (a *billSummaryAgg) addBatch(logs []*model.Log) {
 		}
 		info := parseLogPricingInfo(log)
 		row.capturePricing(info)
+		row.BillingRecords++
+		listQ := logListQuota(log, info)
 		if log.Type == model.LogTypeRefund {
-			// 退款冲抵金额；退款日志无 tokens，不动 token 列。
+			// 退款冲抵金额与刊例价金额；退款日志无 tokens，不动 token 列。
 			row.Quota -= log.Quota
+			row.ListQuota -= listQ
 			continue
 		}
+		if !isSettleStageLog(info) {
+			row.RequestCount++
+		}
 		row.Quota += log.Quota
+		row.ListQuota += listQ
 		row.PromptTokens += log.PromptTokens
 		row.CompletionTokens += log.CompletionTokens
 		row.CacheReadTokens += getCacheTokensFromOther(log, "cache_tokens")
@@ -143,6 +157,32 @@ func parseLogPricingInfo(log *model.Log) *logPricingInfo {
 		return nil
 	}
 	return &info
+}
+
+// isSettleStageLog: 任务结算补扣行（消费类型、stage=settle）不计请求数。
+func isSettleStageLog(info *logPricingInfo) bool {
+	return info != nil && info.BillingStage == "settle"
+}
+
+// logListQuota 按刊例价反推该条日志的 quota（未折扣）。所有计费模式满足
+// quota = 刊例成本 × 生效倍率，故除以倍率即精确刊例价金额；免费组 quota 为 0；
+// 旧日志无倍率键时兜底返回实付 quota（视倍率 1）。
+func logListQuota(log *model.Log, info *logPricingInfo) float64 {
+	q := float64(log.Quota)
+	if q == 0 {
+		return 0
+	}
+	if info == nil {
+		return q
+	}
+	eff := info.GroupRatio
+	if isValidGroupRatio(info.UserGroupRatio) && info.UserGroupRatio > 0 {
+		eff = info.UserGroupRatio
+	}
+	if eff > 0 {
+		return q / eff
+	}
+	return q
 }
 
 // capturePricing 从已解析的日志定价信息提取刊例价与生效倍率。流式顺序为

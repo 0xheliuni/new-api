@@ -187,3 +187,56 @@ func TestBillSummaryAgg_WeekGranularityBucketsAndRealRange(t *testing.T) {
 		t.Fatalf("real range = %q..%q, want 2026-06-03..2026-06-07", agg.minDay, agg.maxDay)
 	}
 }
+
+// 任务三行（pre_consume 消费 + settle 补扣消费 + refund 退款）：
+// 计费记录 3、请求数 1；刊例价金额按 quota/倍率 逐条累加、退款冲抵。
+func TestBillSummaryAgg_CountsAndListQuota(t *testing.T) {
+	agg := newBillSummaryAgg()
+	agg.addBatch([]*model.Log{
+		// 普通消费：group_ratio 0.5 → listQuota 2000
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), Username: "a", ChannelId: 1, TokenName: "tk", ModelName: "m",
+			Quota: 1000, PromptTokens: 10, Other: `{"model_ratio":10,"group_ratio":0.5,"user_group_ratio":-1}`},
+		// 任务 settle 补扣：请求数不计；user_group_ratio 0.5 优先 → listQuota 400
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 11), Username: "a", ChannelId: 1, TokenName: "tk", ModelName: "m",
+			Quota: 200, Other: `{"billing_stage":"settle","group_ratio":1,"user_group_ratio":0.5}`},
+		// 任务 pre_consume：请求数计 1 → listQuota 600
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), Username: "a", ChannelId: 1, TokenName: "tk", ModelName: "m",
+			Quota: 300, Other: `{"billing_stage":"pre_consume","group_ratio":0.5}`},
+		// 退款：计费记录 +1、请求数不计、刊例价金额冲抵 -200
+		{Type: model.LogTypeRefund, CreatedAt: tsOn("2026-06-01", 9), Username: "a", ChannelId: 1, TokenName: "tk", ModelName: "m",
+			Quota: 100, Other: `{"billing_stage":"refund","group_ratio":0.5}`},
+	})
+	r := agg.rows[agg.sortedKeys()[0]]
+	if r.BillingRecords != 4 {
+		t.Fatalf("BillingRecords = %d, want 4", r.BillingRecords)
+	}
+	if r.RequestCount != 2 { // 普通消费 1 + pre_consume 1
+		t.Fatalf("RequestCount = %d, want 2", r.RequestCount)
+	}
+	if r.ListQuota != 2000+400+600-200 {
+		t.Fatalf("ListQuota = %v, want 2800", r.ListQuota)
+	}
+	if r.Quota != 1000+200+300-100 {
+		t.Fatalf("Quota = %d, want 1400", r.Quota)
+	}
+}
+
+// 边界：旧日志无 Other → listQuota 兜底为 quota；免费组 quota=0 → 0；
+// 无倍率键但 quota>0 → 兜底 quota。
+func TestLogListQuota_Fallbacks(t *testing.T) {
+	if got := logListQuota(&model.Log{Quota: 500}, nil); got != 500 {
+		t.Fatalf("nil info → %v, want 500", got)
+	}
+	if got := logListQuota(&model.Log{Quota: 0}, &logPricingInfo{GroupRatio: 0}); got != 0 {
+		t.Fatalf("free group → %v, want 0", got)
+	}
+	if got := logListQuota(&model.Log{Quota: 700}, &logPricingInfo{}); got != 700 {
+		t.Fatalf("missing ratio keys → %v, want 700 (fallback to actual)", got)
+	}
+	if got := logListQuota(&model.Log{Quota: 1000}, &logPricingInfo{GroupRatio: 0.8, UserGroupRatio: -1}); got != 1250 {
+		t.Fatalf("sentinel -1 → %v, want 1250 (group_ratio)", got)
+	}
+	if got := logListQuota(&model.Log{Quota: 1000, PromptTokens: 1}, &logPricingInfo{GroupRatio: 1, UserGroupRatio: 0.5}); got != 2000 {
+		t.Fatalf("user_group_ratio wins → %v, want 2000", got)
+	}
+}
