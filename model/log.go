@@ -394,6 +394,11 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
+// seedanceHiddenStageCond 把 seedance 任务的结算/退款行从分页列表隐藏：
+// 展示层合并为一条（预扣行 + task_info 增强），DB 数据与导出流式扫描不受影响。
+// 纯 LIKE 保证 SQLite/MySQL/PG 三库兼容；common.Marshal 生成的 JSON 无空格。
+const seedanceHiddenStageCond = `NOT (logs.model_name LIKE '%seedance%' AND (logs.other LIKE '%"billing_stage":"settle"%' OR logs.other LIKE '%"billing_stage":"refund"%'))`
+
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
@@ -429,6 +434,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
+	tx = tx.Where(seedanceHiddenStageCond)
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
@@ -512,6 +518,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
+	tx = tx.Where(seedanceHiddenStageCond)
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {
 		common.SysError("failed to count user logs: " + err.Error())
