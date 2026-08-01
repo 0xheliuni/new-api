@@ -36,10 +36,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
-import { Progress } from '@/components/ui/progress'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import { taskStatusMapper } from '../../lib/mappers'
+import { TaskProgressRing } from '../task-progress-ring'
 import {
   formatModelName,
   getFirstResponseTimeColor,
@@ -542,33 +542,6 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       meta: { mobileTitle: true },
     },
     {
-      // seedance 视频任务态：状态徽章 + 进度条（非任务行留空），观感对齐任务日志页。
-      id: 'task_status',
-      header: t('Status'),
-      cell: ({ row }) => {
-        const ti = row.original.task_info
-        if (!ti) return null
-        const pct = parseInt(ti.progress || '0', 10) || 0
-        return (
-          <div className='flex min-w-24 flex-col gap-1'>
-            <StatusBadge
-              label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
-              variant={taskStatusMapper.getVariant(ti.status)}
-              size='sm'
-              copyable={false}
-              className='-ml-1.5 w-fit'
-            />
-            <div className='flex items-center gap-1.5'>
-              <Progress value={pct} className='h-1 w-16' />
-              <span className='text-muted-foreground text-[11px] tabular-nums'>
-                {ti.progress || '0%'}
-              </span>
-            </div>
-          </div>
-        )
-      },
-    },
-    {
       accessorKey: 'use_time',
       header: t('Timing'),
       cell: ({ row }) => {
@@ -686,7 +659,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const other = parseLogOther(log.other)
 
         const promptTokens = log.prompt_tokens || 0
-        const completionTokens = log.completion_tokens || 0
+        // seedance 视频任务：输出 tokens 从 task_info 补齐（预扣行本身为 0）。
+        const completionTokens =
+          log.completion_tokens || log.task_info?.output_tokens || 0
         if (promptTokens === 0 && completionTokens === 0) {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
@@ -806,6 +781,30 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               )}
               <span>{quotaDisplay.amount}</span>
             </span>
+          </div>
+        )
+      },
+    },
+
+    {
+      // seedance 视频任务态：圆形进度环（环心百分比）+ 中文状态（非任务行留空）。
+      // 位于详情列之前，普通用户可见。
+      id: 'task_status',
+      header: t('Status'),
+      cell: ({ row }) => {
+        const ti = row.original.task_info
+        if (!ti) return null
+        return (
+          <div className='flex items-center gap-2'>
+            <TaskProgressRing status={ti.status} progress={ti.progress} />
+            <StatusBadge
+              label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
+              variant={taskStatusMapper.getVariant(ti.status)}
+              size='sm'
+              copyable={false}
+              showDot={false}
+              type='text'
+            />
           </div>
         )
       },

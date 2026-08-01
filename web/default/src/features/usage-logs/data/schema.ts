@@ -34,6 +34,8 @@ export const logTaskInfoSchema = z.object({
   final_quota: z.number().default(0),
   output_tokens: z.number().optional(),
   resolution_tier: z.string().optional(),
+  resolution: z.string().optional(),
+  ratio: z.string().optional(),
   duration_s: z.number().optional(),
   has_input: z.boolean().default(false),
   effective_ratio: z.number().optional(),

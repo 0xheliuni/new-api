@@ -44,6 +44,7 @@ import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import type { UsageLog } from '../../data/schema'
 import { taskStatusMapper } from '../../lib/mappers'
+import { TaskProgressRing } from '../task-progress-ring'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -484,13 +485,18 @@ function SeedanceTaskSection(props: { log: UsageLog }) {
     '1080p': '1080p',
     '4k': '4K',
   }
-  const pct = parseInt(ti.progress || '0', 10) || 0
   const rows: Array<{ label: string; value: string }> = []
-  if (ti.resolution_tier) {
+  // 请求参数真实值（来自用户原始请求）优先；缺失时回退计费档位。
+  if (ti.resolution) {
+    rows.push({ label: t('Resolution'), value: ti.resolution })
+  } else if (ti.resolution_tier) {
     rows.push({
       label: t('Resolution Tier'),
       value: tierLabelMap[ti.resolution_tier] ?? ti.resolution_tier,
     })
+  }
+  if (ti.ratio) {
+    rows.push({ label: t('Aspect Ratio'), value: ti.ratio })
   }
   if (ti.duration_s && ti.duration_s > 0) {
     rows.push({ label: t('Duration (s)'), value: String(ti.duration_s) })
@@ -521,11 +527,12 @@ function SeedanceTaskSection(props: { log: UsageLog }) {
 
   return (
     <DetailSection label={t('Video Task')}>
-      <DetailRow
-        label={t('Status')}
-        value={`${t(taskStatusMapper.getLabel(ti.status, ti.status))} · ${ti.progress || `${pct}%`}`}
-        mono
-      />
+      <div className='flex items-center gap-2 py-1'>
+        <TaskProgressRing status={ti.status} progress={ti.progress} size={30} />
+        <span className='text-sm'>
+          {t(taskStatusMapper.getLabel(ti.status, ti.status))}
+        </span>
+      </div>
       {rows.map((row, idx) => (
         <DetailRow key={idx} label={row.label} value={row.value} mono />
       ))}

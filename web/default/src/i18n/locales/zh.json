@@ -1623,6 +1623,8 @@
     "Generating": "生成中",
     "Refunded": "已退款",
     "Duration (s)": "生成秒数",
+    "Resolution": "分辨率",
+    "Aspect Ratio": "宽高比",
     "Upstream Task ID": "上游任务 ID",
     "Pre-charged": "预扣",
     "Final Charged": "实扣",
