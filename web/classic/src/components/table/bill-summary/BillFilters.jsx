@@ -107,11 +107,8 @@ const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t })
           </Form.Select>
         </div>
 
-        {/* 操作按钮区域（导出配置收拢到右侧） */}
-        <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
-          <Button theme='solid' size='small' loading={loading} onClick={onQuery}>
-            {t('查询')}
-          </Button>
+        {/* 操作按钮区域（导出配置 + 查询/导出按钮相邻收拢到右侧） */}
+        <div className='flex flex-col sm:flex-row justify-end items-start sm:items-center gap-3'>
           <div className='flex flex-wrap items-center gap-2'>
             <Form.Select
               field='bill_mode'
@@ -155,6 +152,9 @@ const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t })
                 {t('明细分不同模型')}
               </Form.Select.Option>
             </Form.Select>
+            <Button theme='solid' size='small' loading={loading} onClick={onQuery}>
+              {t('查询')}
+            </Button>
             <Button size='small' onClick={onExport}>
               {t('导出汇总账单')}
             </Button>

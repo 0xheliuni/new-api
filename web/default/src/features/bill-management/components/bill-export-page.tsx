@@ -43,6 +43,7 @@ import {
   StaticDataTable,
   type StaticDataTableColumn,
 } from '@/components/data-table'
+import { LogsFilterField } from '@/features/usage-logs/components/logs-filter-toolbar'
 import {
   exportBillSummary,
   getBillSummary,
@@ -273,124 +274,132 @@ export function BillExportPage() {
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
             />
-            <Select
-              items={[
-                { value: 'day', label: t('By day') },
-                { value: 'week', label: t('By week') },
-                { value: 'month', label: t('By month') },
-              ]}
-              value={granularity}
-              onValueChange={(value) =>
-                setGranularity(
-                  value === 'week' || value === 'month' ? value : 'day'
-                )
-              }
-            >
-              <SelectTrigger className='h-8 w-24'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  <SelectItem value='day'>{t('By day')}</SelectItem>
-                  <SelectItem value='week'>{t('By week')}</SelectItem>
-                  <SelectItem value='month'>{t('By month')}</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            <LogsFilterField className='w-28'>
+              <Select
+                items={[
+                  { value: 'day', label: t('By day') },
+                  { value: 'week', label: t('By week') },
+                  { value: 'month', label: t('By month') },
+                ]}
+                value={granularity}
+                onValueChange={(value) =>
+                  setGranularity(
+                    value === 'week' || value === 'month' ? value : 'day'
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value='day'>{t('By day')}</SelectItem>
+                    <SelectItem value='week'>{t('By week')}</SelectItem>
+                    <SelectItem value='month'>{t('By month')}</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </LogsFilterField>
             <Input
               className='h-8 w-20'
               placeholder={t('Exchange Rate')}
               value={rate}
               onChange={(e) => setRate(e.target.value)}
             />
-            <Button
-              size='sm'
-              className='h-8'
-              onClick={() => runQuery(1)}
-              disabled={querying}
-            >
-              <Search className='mr-1 size-3.5' />
-              {t('Query')}
-            </Button>
 
-            {/* 导出区（右侧收拢） */}
+            {/* 导出配置 + 查询/导出按钮（右侧收拢，按钮相邻） */}
             <div className='ml-auto flex flex-wrap items-end gap-2'>
-              <Select
-                items={[
-                  {
-                    value: 'internal',
-                    label: t('Internal (split by channel & model)'),
-                  },
-                  {
-                    value: 'external',
-                    label: t('External customer (merged channels)'),
-                  },
-                ]}
-                value={billMode}
-                onValueChange={(value) =>
-                  setBillMode(value === 'external' ? 'external' : 'internal')
-                }
-              >
-                <SelectTrigger className='h-8 w-44'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    <SelectItem value='internal'>
-                      {t('Internal (split by channel & model)')}
-                    </SelectItem>
-                    <SelectItem value='external'>
-                      {t('External customer (merged channels)')}
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <Select
-                items={[
-                  { value: 'no', label: t('Exclude daily detail') },
-                  { value: 'yes', label: t('Include daily detail') },
-                ]}
-                value={withDetail ? 'yes' : 'no'}
-                onValueChange={(value) => setWithDetail(value === 'yes')}
-              >
-                <SelectTrigger className='h-8 w-36'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    <SelectItem value='no'>
-                      {t('Exclude daily detail')}
-                    </SelectItem>
-                    <SelectItem value='yes'>
-                      {t('Include daily detail')}
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              {withDetail && (
+              <LogsFilterField className='w-44'>
                 <Select
                   items={[
-                    { value: 'no', label: t('Detail not split by model') },
-                    { value: 'yes', label: t('Split detail by model') },
+                    {
+                      value: 'internal',
+                      label: t('Internal (split by channel & model)'),
+                    },
+                    {
+                      value: 'external',
+                      label: t('External customer (merged channels)'),
+                    },
                   ]}
-                  value={splitModel ? 'yes' : 'no'}
-                  onValueChange={(value) => setSplitModel(value === 'yes')}
+                  value={billMode}
+                  onValueChange={(value) =>
+                    setBillMode(value === 'external' ? 'external' : 'internal')
+                  }
                 >
-                  <SelectTrigger className='h-8 w-40'>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value='internal'>
+                        {t('Internal (split by channel & model)')}
+                      </SelectItem>
+                      <SelectItem value='external'>
+                        {t('External customer (merged channels)')}
+                      </SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </LogsFilterField>
+              <LogsFilterField className='w-36'>
+                <Select
+                  items={[
+                    { value: 'no', label: t('Exclude daily detail') },
+                    { value: 'yes', label: t('Include daily detail') },
+                  ]}
+                  value={withDetail ? 'yes' : 'no'}
+                  onValueChange={(value) => setWithDetail(value === 'yes')}
+                >
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
                     <SelectGroup>
                       <SelectItem value='no'>
-                        {t('Detail not split by model')}
+                        {t('Exclude daily detail')}
                       </SelectItem>
                       <SelectItem value='yes'>
-                        {t('Split detail by model')}
+                        {t('Include daily detail')}
                       </SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
+              </LogsFilterField>
+              {withDetail && (
+                <LogsFilterField className='w-40'>
+                  <Select
+                    items={[
+                      { value: 'no', label: t('Detail not split by model') },
+                      { value: 'yes', label: t('Split detail by model') },
+                    ]}
+                    value={splitModel ? 'yes' : 'no'}
+                    onValueChange={(value) => setSplitModel(value === 'yes')}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        <SelectItem value='no'>
+                          {t('Detail not split by model')}
+                        </SelectItem>
+                        <SelectItem value='yes'>
+                          {t('Split detail by model')}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </LogsFilterField>
               )}
+              <Button
+                size='sm'
+                className='h-8'
+                onClick={() => runQuery(1)}
+                disabled={querying}
+              >
+                <Search className='mr-1 size-3.5' />
+                {t('Query')}
+              </Button>
               <Button
                 size='sm'
                 variant='outline'

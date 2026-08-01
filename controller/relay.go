@@ -612,8 +612,48 @@ func RelayTask(c *gin.Context) {
 	}
 
 	if taskErr != nil {
+		recordTaskErrorLog(c, taskErr)
 		respondTaskError(c, taskErr)
 	}
+}
+
+// recordTaskErrorLog 把任务提交失败写入错误日志（type=5）。任务路径此前不写
+// 错误日志，上游报错只回给客户端，使用日志里无迹可循（预扣退款也不落行），
+// 视频任务提交被上游拒绝时用户无从排查。口径与 processChannelError 的
+// RecordErrorLog 对齐，受同一 ErrorLogEnabled 开关控制。
+func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
+	if !constant.ErrorLogEnabled || taskErr == nil {
+		return
+	}
+	userId := c.GetInt("id")
+	tokenName := c.GetString("token_name")
+	modelName := c.GetString("original_model")
+	if modelName == "" {
+		modelName = c.GetString("model")
+	}
+	tokenId := c.GetInt("token_id")
+	userGroup := c.GetString("group")
+	channelId := c.GetInt("channel_id")
+	other := make(map[string]interface{})
+	if c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	other["error_type"] = "task_error"
+	other["error_code"] = taskErr.Code
+	other["status_code"] = taskErr.StatusCode
+	other["channel_id"] = channelId
+	other["channel_name"] = c.GetString("channel_name")
+	other["channel_type"] = c.GetInt("channel_type")
+	adminInfo := make(map[string]interface{})
+	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+	other["admin_info"] = adminInfo
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	content := common.MaskSensitiveInfo(taskErr.Message)
+	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, content, tokenId, useTimeSeconds, false, userGroup, other)
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）。
