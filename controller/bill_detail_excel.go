@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -103,6 +104,7 @@ func (w *billDetailWriter) flushDay() error {
 		})
 	}
 	logs = alignTaskPairs(logs)
+	drs := mergeSeedanceTaskRows(logs)
 
 	// 单 sheet 内分片：超 softCap 行时滚动为 (2)(3)…
 	suffix := 1
@@ -179,7 +181,8 @@ func (w *billDetailWriter) flushDay() error {
 		}
 	}
 
-	for _, log := range logs {
+	for _, dr := range drs {
+		log := dr.log
 		// Roll the sheet if we are at or over the cap before writing the data row.
 		// After openSheet, lastModel=="" so emitModelHeader will fire below.
 		if rowIn >= w.softCap {
@@ -198,16 +201,26 @@ func (w *billDetailWriter) flushDay() error {
 		}
 		row := make([]any, len(billDetailColumns))
 		for i, col := range billDetailColumns {
-			switch i {
-			case costIdx:
+			switch {
+			case i == costIdx:
 				usd := roundTo6(float64(log.Quota) / common.QuotaPerUnit)
-				// 退款行费用写负数：与消费同列求和即得净额（多退少补一目了然）。
-				if log.Type == model.LogTypeRefund {
+				if dr.mergedText != "" {
+					// seedance 合并行：费用列直接写净额（预扣±结算差额后）。
+					usd = roundTo6(float64(dr.netQuota) / common.QuotaPerUnit)
+				} else if log.Type == model.LogTypeRefund {
+					// 退款行费用写负数：与消费同列求和即得净额（多退少补一目了然）。
 					usd = -usd
 				}
 				row[i] = excelize.Cell{Value: usd, StyleID: w.costID}
-			case billingIdx:
-				row[i] = excelize.Cell{Value: cellValue(col, log), StyleID: w.wrapID}
+			case i == billingIdx:
+				if dr.mergedText != "" {
+					row[i] = excelize.Cell{Value: dr.mergedText, StyleID: w.wrapID}
+				} else {
+					row[i] = excelize.Cell{Value: cellValue(col, log), StyleID: w.wrapID}
+				}
+			case dr.mergedText != "" && col.key == "type":
+				// 合并行统一显示消费（净额视角）。
+				row[i] = "消费"
 			default:
 				row[i] = cellValue(col, log)
 			}
@@ -219,6 +232,57 @@ func (w *billDetailWriter) flushDay() error {
 		rowIn++
 	}
 	return sw.Flush()
+}
+
+// billDetailRow 是逐日明细的展示行：seedance 任务多行合并后 mergedText 非空。
+type billDetailRow struct {
+	log        *model.Log
+	mergedText string
+	netQuota   int
+}
+
+// mergeSeedanceTaskRows 把 alignTaskPairs 排好的同 request_id seedance 多行
+// 折叠为一行：净额 + 按时间序拼接的各阶段计费过程全文（alignTaskPairs 已保证
+// 组内相邻且升序、pre_consume 在前）。其他行原样透传。
+func mergeSeedanceTaskRows(logs []*model.Log) []billDetailRow {
+	rows := make([]billDetailRow, 0, len(logs))
+	i := 0
+	for i < len(logs) {
+		log := logs[i]
+		rid := log.RequestId
+		if rid == "" || !strings.Contains(log.ModelName, "seedance") || !strings.Contains(log.Other, `"billing_stage"`) {
+			rows = append(rows, billDetailRow{log: log})
+			i++
+			continue
+		}
+		j := i
+		var group []*model.Log
+		for j < len(logs) && logs[j].RequestId == rid {
+			group = append(group, logs[j])
+			j++
+		}
+		if len(group) == 1 {
+			rows = append(rows, billDetailRow{log: group[0]})
+			i = j
+			continue
+		}
+		net := 0
+		texts := make([]string, 0, len(group))
+		for _, g := range group {
+			if g.Type == model.LogTypeRefund {
+				net -= g.Quota
+			} else {
+				net += g.Quota
+			}
+			texts = append(texts, buildBillingText(g))
+		}
+		if net < 0 {
+			net = 0
+		}
+		rows = append(rows, billDetailRow{log: group[0], mergedText: strings.Join(texts, "\n——\n"), netQuota: net})
+		i = j
+	}
+	return rows
 }
 
 // alignTaskPairs pulls rows that share a request_id — an async task's
