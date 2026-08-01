@@ -36,20 +36,22 @@ func billGrandLayout(external bool) billSheetLayout {
 			prefix: billGrandSheetPrefix,
 			headers: []string{
 				"开始日期", "结束日期", "用户名", "模型名称",
+				"计费记录", "请求数", "刊例价金额(美元)",
 				"汇总金额(美元)", "汇率", "汇总金额(人民币)",
 				"输入tokens", "输出tokens", "缓存读取tokens", "缓存创建tokens",
 			},
-			widths: []float64{12, 12, 16, 22, 16, 8, 18, 12, 12, 16, 16},
+			widths: []float64{12, 12, 16, 22, 10, 10, 16, 16, 8, 18, 12, 12, 16, 16},
 		}
 	}
 	return billSheetLayout{
 		prefix: billGrandSheetPrefix,
 		headers: []string{
 			"开始日期", "结束日期", "用户名", "渠道ID", "模型名称",
+			"计费记录", "请求数", "刊例价金额(美元)",
 			"汇总金额(美元)", "汇率", "汇总金额(人民币)",
 			"输入tokens", "输出tokens", "缓存读取tokens", "缓存创建tokens",
 		},
-		widths: []float64{12, 12, 16, 10, 22, 16, 8, 18, 12, 12, 16, 16},
+		widths: []float64{12, 12, 16, 10, 22, 10, 10, 16, 16, 8, 18, 12, 12, 16, 16},
 	}
 }
 
@@ -59,20 +61,22 @@ func billDailyLayout(external bool) billSheetLayout {
 			prefix: billDailySheetPrefix,
 			headers: []string{
 				"日期", "用户名", "模型名称", "刊例价", "专属倍率",
+				"计费记录", "请求数", "刊例价金额(美元)",
 				"汇总金额(美元)", "汇率", "汇总金额(人民币)",
 				"输入tokens", "输出tokens", "缓存读取tokens", "缓存创建tokens",
 			},
-			widths: []float64{14, 16, 22, 10, 10, 16, 8, 18, 12, 12, 16, 16},
+			widths: []float64{14, 16, 22, 10, 10, 10, 10, 16, 16, 8, 18, 12, 12, 16, 16},
 		}
 	}
 	return billSheetLayout{
 		prefix: billDailySheetPrefix,
 		headers: []string{
 			"日期", "用户名", "渠道ID", "令牌名称", "模型名称", "刊例价", "专属倍率",
+			"计费记录", "请求数", "刊例价金额(美元)",
 			"汇总金额(美元)", "汇率", "汇总金额(人民币)",
 			"输入tokens", "输出tokens", "缓存读取tokens", "缓存创建tokens",
 		},
-		widths: []float64{14, 16, 10, 16, 22, 10, 10, 16, 8, 18, 12, 12, 16, 16},
+		widths: []float64{14, 16, 10, 16, 22, 10, 10, 10, 10, 16, 16, 8, 18, 12, 12, 16, 16},
 	}
 }
 
@@ -196,6 +200,9 @@ func writeBillSummarySheets(f *excelize.File, agg *billSummaryAgg, exchangeRate 
 		g.CompletionTokens += r.CompletionTokens
 		g.CacheReadTokens += r.CacheReadTokens
 		g.CacheCreationTokens += r.CacheCreationTokens
+		g.BillingRecords += r.BillingRecords
+		g.RequestCount += r.RequestCount
+		g.ListQuota += r.ListQuota
 		if agg.minDay == "" {
 			if minDay == "" || k.Day < minDay {
 				minDay = k.Day
@@ -224,6 +231,7 @@ func writeBillSummarySheets(f *excelize.File, agg *billSummaryAgg, exchangeRate 
 			row = append(row, gk.ChannelId)
 		}
 		row = append(row, gk.ModelName,
+			g.BillingRecords, g.RequestCount, money(g.ListQuota/common.QuotaPerUnit),
 			money(usd), exchangeRate, money(usd*exchangeRate),
 			g.PromptTokens, g.CompletionTokens, g.CacheReadTokens, g.CacheCreationTokens,
 		)
@@ -250,6 +258,7 @@ func writeBillSummarySheets(f *excelize.File, agg *billSummaryAgg, exchangeRate 
 			ratio = r.EffectiveRatio
 		}
 		row = append(row, k.ModelName, listPrice, ratio,
+			r.BillingRecords, r.RequestCount, money(r.ListQuota/common.QuotaPerUnit),
 			money(usd), exchangeRate, money(usd*exchangeRate),
 			r.PromptTokens, r.CompletionTokens, r.CacheReadTokens, r.CacheCreationTokens,
 		)

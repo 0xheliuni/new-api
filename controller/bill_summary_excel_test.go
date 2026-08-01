@@ -58,26 +58,33 @@ func TestWriteBillSummarySheets_InternalValues(t *testing.T) {
 	if lpv != "" {
 		t.Fatalf("daily F3 (list price, no Other) = %q, want empty", lpv)
 	}
+	// 新增三列表头：计费记录/请求数/刊例价金额(美元)
+	br, _ := f.GetCellValue(daily, "H1")
+	rc, _ := f.GetCellValue(daily, "I1")
+	la, _ := f.GetCellValue(daily, "J1")
+	if br != "计费记录" || rc != "请求数" || la != "刊例价金额(美元)" {
+		t.Fatalf("daily H1/I1/J1 = %q/%q/%q", br, rc, la)
+	}
 	// quota 1500 => $0.003, six-decimal number format
-	usd, _ := f.GetCellValue(daily, "H3")
+	usd, _ := f.GetCellValue(daily, "K3")
 	if usd != "0.003000" {
-		t.Fatalf("daily H3 (USD) = %q, want 0.003000", usd)
-	}
-	assertCellNotText(t, f, daily, "H3")
-	rate, _ := f.GetCellValue(daily, "I3")
-	if rate != "7.3" {
-		t.Fatalf("daily I3 (rate) = %q, want 7.3", rate)
-	}
-	assertCellNotText(t, f, daily, "I3")
-	cny, _ := f.GetCellValue(daily, "J3")
-	if cny != "0.021900" {
-		t.Fatalf("daily J3 (CNY) = %q, want 0.021900", cny)
-	}
-	prompt, _ := f.GetCellValue(daily, "K3")
-	if prompt != "12" {
-		t.Fatalf("daily K3 (prompt) = %q, want 12", prompt)
+		t.Fatalf("daily K3 (USD) = %q, want 0.003000", usd)
 	}
 	assertCellNotText(t, f, daily, "K3")
+	rate, _ := f.GetCellValue(daily, "L3")
+	if rate != "7.3" {
+		t.Fatalf("daily L3 (rate) = %q, want 7.3", rate)
+	}
+	assertCellNotText(t, f, daily, "L3")
+	cny, _ := f.GetCellValue(daily, "M3")
+	if cny != "0.021900" {
+		t.Fatalf("daily M3 (CNY) = %q, want 0.021900", cny)
+	}
+	prompt, _ := f.GetCellValue(daily, "N3")
+	if prompt != "12" {
+		t.Fatalf("daily N3 (prompt) = %q, want 12", prompt)
+	}
+	assertCellNotText(t, f, daily, "N3")
 	// no totals row after the last data row
 	after, _ := f.GetCellValue(daily, "A4")
 	if after != "" {
@@ -99,15 +106,15 @@ func TestWriteBillSummarySheets_InternalValues(t *testing.T) {
 	if gm != "gpt-4o" {
 		t.Fatalf("grand E2 (model) = %q, want gpt-4o", gm)
 	}
-	// whole-range quota 2000 => $0.004
-	gu, _ := f.GetCellValue(grand, "F2")
+	// whole-range quota 2000 => $0.004（计费记录/请求数/刊例价金额三列插入后 F→I）
+	gu, _ := f.GetCellValue(grand, "I2")
 	if gu != "0.004000" {
-		t.Fatalf("grand F2 (USD) = %q, want 0.004000", gu)
+		t.Fatalf("grand I2 (USD) = %q, want 0.004000", gu)
 	}
-	assertCellNotText(t, f, grand, "F2")
-	gp, _ := f.GetCellValue(grand, "I2")
+	assertCellNotText(t, f, grand, "I2")
+	gp, _ := f.GetCellValue(grand, "L2")
 	if gp != "14" {
-		t.Fatalf("grand I2 (prompt) = %q, want 14", gp)
+		t.Fatalf("grand L2 (prompt) = %q, want 14", gp)
 	}
 	// single grand row, no totals row
 	g3, _ := f.GetCellValue(grand, "A3")
@@ -145,10 +152,20 @@ func TestWriteBillSummarySheets_ExternalMergesChannelsAndTokens(t *testing.T) {
 	if model2 != "gpt-4o" {
 		t.Fatalf("external daily C2 = %q, want gpt-4o", model2)
 	}
-	// merged quota 1500 => $0.003 (USD moved to F with the two pricing columns)
-	usd, _ := f.GetCellValue(daily, "F2")
+	// merged quota 1500 => $0.003 (USD moved to I with the pricing & count columns)
+	usd, _ := f.GetCellValue(daily, "I2")
 	if usd != "0.003000" {
-		t.Fatalf("external daily F2 (USD) = %q, want 0.003000", usd)
+		t.Fatalf("external daily I2 (USD) = %q, want 0.003000", usd)
+	}
+	// 计数列：2 条消费 → 计费记录 2 / 请求数 2；无 group_ratio → 刊例价金额兜底实付
+	brv, _ := f.GetCellValue(daily, "F2")
+	rcv, _ := f.GetCellValue(daily, "G2")
+	if brv != "2" || rcv != "2" {
+		t.Fatalf("external daily F2/G2 = %q/%q, want 2/2", brv, rcv)
+	}
+	lav, _ := f.GetCellValue(daily, "H2")
+	if lav != "0.003000" {
+		t.Fatalf("external daily H2 (list amount) = %q, want 0.003000", lav)
 	}
 	// only one merged data row
 	a3, _ := f.GetCellValue(daily, "A3")
@@ -161,9 +178,9 @@ func TestWriteBillSummarySheets_ExternalMergesChannelsAndTokens(t *testing.T) {
 	if gd != "模型名称" {
 		t.Fatalf("external grand D1 = %q, want 模型名称", gd)
 	}
-	gu, _ := f.GetCellValue(grand, "E2")
+	gu, _ := f.GetCellValue(grand, "H2")
 	if gu != "0.003000" {
-		t.Fatalf("external grand E2 (USD) = %q, want 0.003000", gu)
+		t.Fatalf("external grand H2 (USD) = %q, want 0.003000", gu)
 	}
 }
 
@@ -212,9 +229,9 @@ func TestWriteBillSummarySheets_MonthGranularity(t *testing.T) {
 	if day != "2026-06" {
 		t.Fatalf("month-bucket daily A2 = %q, want 2026-06", day)
 	}
-	usd, _ := f.GetCellValue(billDailySheetPrefix, "H2")
+	usd, _ := f.GetCellValue(billDailySheetPrefix, "K2")
 	if usd != "0.003000" {
-		t.Fatalf("month-bucket daily H2 = %q, want 0.003000", usd)
+		t.Fatalf("month-bucket daily K2 = %q, want 0.003000", usd)
 	}
 	// grand range stays in real calendar days regardless of granularity
 	from, _ := f.GetCellValue(billGrandSheetPrefix, "A2")
@@ -299,6 +316,13 @@ func TestWriteBillSummarySheets_ListPriceAndRatioColumns(t *testing.T) {
 	}
 	assertCellNotText(t, f, daily, "F2")
 	assertCellNotText(t, f, daily, "G2")
+	// 新三列：a-model 1 条消费、group_ratio 0.8 → listQuota 1250 → $0.002500
+	if get("H2") != "1" || get("I2") != "1" {
+		t.Fatalf("a-model records/requests = %q/%q, want 1/1", get("H2"), get("I2"))
+	}
+	if get("J2") != "0.002500" {
+		t.Fatalf("a-model list amount = %q, want 0.002500 (1000/0.8/500000)", get("J2"))
+	}
 }
 
 // TestBillSummaryAgg_PricingFirstSeenWins: 流式 DESC 顺序下组内最新一条日志的
