@@ -59,6 +59,9 @@ type Log struct {
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_upstream_request_id;default:''"`
 	Other             string `json:"other"`
+	// TaskInfo 是 seedance 视频任务预扣行在查询时挂载的任务态增强（不落库）：
+	// 状态/进度/净额/输出tokens/档位/秒数/参考视频/倍率/失败原因/上游ID(仅admin)。
+	TaskInfo *LogTaskInfo `json:"task_info,omitempty" gorm:"-"`
 }
 
 // don't use iota, avoid change log type value
@@ -484,6 +487,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		}
 	}
 
+	enrichSeedanceTaskLogs(logs, true)
 	return logs, total, err
 }
 
@@ -530,6 +534,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, errors.New("查询日志失败")
 	}
 
+	enrichSeedanceTaskLogs(logs, false)
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
 }
