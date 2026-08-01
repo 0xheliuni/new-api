@@ -1,7 +1,7 @@
 # seedance 展示与统计 v2 — 状态环 UX、统计口径修复、请求参数真实值、Excel 精简、账单页重做
 
 - 日期: 2026-08-02
-- 状态: 已确认设计，待实现
+- 状态: 已实现（2026-08-02，含测试）
 - 前置: `2026-08-01-seedance-usage-log-single-row-design.md`（单行化 + task_info 增强）、`2026-07-30-bill-export-v2/v3/v4`、`2026-08-01-bill-export-v5-reference-layout-design.md`
 - 相关规则: CLAUDE.md Rule 1 (JSON wrapper)、Rule 2 (三库兼容)、Rule 5 (受保护标识)
 
