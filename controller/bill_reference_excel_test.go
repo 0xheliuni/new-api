@@ -83,3 +83,100 @@ func TestWriteBillReferenceSheets_WithUserColumn(t *testing.T) {
 		t.Fatalf("byToken withUser headers = %q/%q", u, n)
 	}
 }
+
+func TestWriteBillCoverSheet(t *testing.T) {
+	ref := newBillRefAgg()
+	ref.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), Username: "u1", TokenName: "tk", ModelName: "m",
+			Quota: 1000, PromptTokens: 10, CompletionTokens: 5, Other: `{"model_ratio":10,"group_ratio":0.5}`},
+	})
+	f := excelize.NewFile()
+	defer f.Close()
+	styles, _ := newBillExcelStyles(f)
+	meta := billCoverMeta{
+		Customer: "u1", StartTs: tsOn("2026-06-01", 0), EndTs: tsOn("2026-06-02", 0),
+		ExchangeRate: 7.3, Filters: []string{"模型=m"}, Truncated: true, MaxRows: 100,
+	}
+	if err := writeBillCoverSheet(f, styles, meta, ref.totals()); err != nil {
+		t.Fatal(err)
+	}
+	get := func(cell string) string {
+		v, _ := f.GetCellValue(billCoverSheetName, cell)
+		return v
+	}
+	if get("A1") != "账单详情" {
+		t.Fatalf("A1 = %q", get("A1"))
+	}
+	if get("A4") != "客户" || get("B4") != "u1" {
+		t.Fatalf("customer = %q/%q", get("A4"), get("B4"))
+	}
+	if get("B5") != "2026-06-01 00:00:00" || get("D5") != "2026-06-02 00:00:00" {
+		t.Fatalf("range = %q..%q", get("B5"), get("D5"))
+	}
+	if get("A9") != "计费记录" || get("B9") != "1" || get("C9") != "请求数" || get("D9") != "1" {
+		t.Fatalf("counts row: %q=%q %q=%q", get("A9"), get("B9"), get("C9"), get("D9"))
+	}
+	if get("B12") != "1000" {
+		t.Fatalf("quota units = %q, want 1000", get("B12"))
+	}
+	if get("B15") != "USD = quota_units / 500000" {
+		t.Fatalf("金额口径 = %q", get("B15"))
+	}
+	if get("B16") != "0.004000" || get("D16") != "0.002000" {
+		t.Fatalf("list/actual USD = %q/%q", get("B16"), get("D16"))
+	}
+	if get("B17") != "7.3" || get("D17") != "0.014600" {
+		t.Fatalf("rate/CNY = %q/%q", get("B17"), get("D17"))
+	}
+	// 说明区：筛选回显 + 截断提示
+	if get("A20") != "筛选：模型=m" {
+		t.Fatalf("filter echo = %q", get("A20"))
+	}
+	if get("A21") != "数据已按上限 100 行截断，金额仅覆盖已导出行" {
+		t.Fatalf("truncation note = %q", get("A21"))
+	}
+}
+
+// 全套 sheet 顺序：账单汇总, 总对账单, 明细对账单, 按日, 按令牌, 按模型, 逐日明细；
+// 激活 sheet 为账单汇总。
+func TestFinalizeBillWorkbook_ReferenceSheetOrder(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	f.NewSheet("2026-06-01") // 逐日明细在流式阶段先创建
+
+	agg := newBillSummaryAgg()
+	ref := newBillRefAgg()
+	logs := []*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), Username: "u1", TokenName: "tk", ModelName: "m",
+			Quota: 100, Other: `{"group_ratio":1}`},
+	}
+	agg.addBatch(logs)
+	ref.addBatch(logs)
+	styles, _ := newBillExcelStyles(f)
+	if err := writeBillCoverSheet(f, styles, billCoverMeta{ExchangeRate: 7.3}, ref.totals()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBillSummarySheets(f, agg, 7.3); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBillReferenceSheets(f, styles, ref, true, 7.3); err != nil {
+		t.Fatal(err)
+	}
+
+	finalizeBillWorkbook(f)
+
+	list := f.GetSheetList()
+	want := []string{billCoverSheetName, billGrandSheetPrefix, billDailySheetPrefix,
+		billByDaySheetPrefix, billByTokenSheetPrefix, billByModelSheetPrefix, "2026-06-01"}
+	if len(list) != len(want) {
+		t.Fatalf("sheet list = %v, want %v", list, want)
+	}
+	for i := range want {
+		if list[i] != want[i] {
+			t.Fatalf("sheet[%d] = %q, want %q (full %v)", i, list[i], want[i], list)
+		}
+	}
+	if got := f.GetSheetName(f.GetActiveSheetIndex()); got != billCoverSheetName {
+		t.Fatalf("active sheet = %q, want %q", got, billCoverSheetName)
+	}
+}

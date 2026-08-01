@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ type billExportParams struct {
 	external       bool
 	granularity    string
 	exchangeRate   float64
+	// coverCustomer 封面「客户」：admin 导出 = username 筛选值（空则"全部用户"），
+	// self 导出 = 当前登录用户名（p.username 会被清空，故单独携带）。
+	coverCustomer string
 }
 
 func parseBillExportParams(c *gin.Context) billExportParams {
@@ -66,6 +70,7 @@ func runBillExport(c *gin.Context, p billExportParams,
 	agg := newBillSummaryAgg()
 	agg.external = p.external
 	agg.granularity = p.granularity
+	ref := newBillRefAgg()
 	var detail *billDetailWriter
 	if p.withDetail {
 		var err error
@@ -79,6 +84,7 @@ func runBillExport(c *gin.Context, p billExportParams,
 	maxRows := model.LogExportMaxRows("xlsx")
 	truncated, err := streamFn(maxRows, func(batch []*model.Log) error {
 		agg.addBatch(batch)
+		ref.addBatch(batch)
 		if detail != nil {
 			return detail.addBatch(batch)
 		}
@@ -95,6 +101,27 @@ func runBillExport(c *gin.Context, p billExportParams,
 		}
 	}
 	if err := writeBillSummarySheets(f, agg, p.exchangeRate); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	styles, err := newBillExcelStyles(f)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := writeBillCoverSheet(f, styles, billCoverMeta{
+		Customer:     p.coverCustomer,
+		StartTs:      p.startTimestamp,
+		EndTs:        p.endTimestamp,
+		ExchangeRate: p.exchangeRate,
+		Filters:      billFilterEcho(p),
+		Truncated:    truncated,
+		MaxRows:      maxRows,
+	}, ref.totals()); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := writeBillReferenceSheets(f, styles, ref, !p.external, p.exchangeRate); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -118,6 +145,7 @@ func runBillExport(c *gin.Context, p billExportParams,
 // ExportBillSummaryAll 管理员：可按 username / channel 查任意用户。
 func ExportBillSummaryAll(c *gin.Context) {
 	p := parseBillExportParams(c)
+	p.coverCustomer = p.username
 	runBillExport(c, p, func(maxRows int, consume func([]*model.Log) error) (bool, error) {
 		return model.GetAllLogsForExport(model.LogTypeUnknown, p.startTimestamp, p.endTimestamp,
 			p.modelName, p.username, p.tokenName, p.channel, p.group, "", maxRows, consume)
@@ -134,37 +162,76 @@ func ExportBillSummarySelf(c *gin.Context) {
 	p := parseBillExportParams(c)
 	p.username = ""
 	p.channel = 0
+	p.coverCustomer = c.GetString("username")
 	runBillExport(c, p, func(maxRows int, consume func([]*model.Log) error) (bool, error) {
 		return model.GetUserLogsForExport(userId, model.LogTypeUnknown, p.startTimestamp, p.endTimestamp,
 			p.modelName, p.tokenName, p.group, "", maxRows, consume)
 	})
 }
 
+// billFilterEcho 把非空筛选条件渲染为封面说明行。
+func billFilterEcho(p billExportParams) []string {
+	var out []string
+	if p.username != "" {
+		out = append(out, "用户名="+p.username)
+	}
+	if p.channel != 0 {
+		out = append(out, fmt.Sprintf("渠道=%d", p.channel))
+	}
+	if p.tokenName != "" {
+		out = append(out, "令牌="+p.tokenName)
+	}
+	if p.modelName != "" {
+		out = append(out, "模型="+p.modelName)
+	}
+	if p.group != "" {
+		out = append(out, "分组="+p.group)
+	}
+	return out
+}
+
 // finalizeBillWorkbook removes the default Sheet1, moves the summary sheets
-// (总对账单*, 明细对账单*) in front of the daily detail sheets — they are created
-// after the streamed detail sheets, but must appear first in the tab order —
-// and activates the grand summary.
+// (账单汇总, 总对账单*, 明细对账单*, 按日/按令牌/按模型汇总*) in front of the daily
+// detail sheets — they are created after the streamed detail sheets, but must
+// appear first in the tab order — and activates the cover (falling back to the
+// grand summary when no cover was written, e.g. legacy tests).
 func finalizeBillWorkbook(f *excelize.File) {
 	if err := f.DeleteSheet("Sheet1"); err != nil {
 		common.SysLog("bill export: delete default sheet: " + err.Error())
 	}
+	orderedPrefixes := []string{billCoverSheetName, billGrandSheetPrefix, billDailySheetPrefix,
+		billByDaySheetPrefix, billByTokenSheetPrefix, billByModelSheetPrefix}
+	rank := func(name string) int {
+		for idx, prefix := range orderedPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				return idx
+			}
+		}
+		return len(orderedPrefixes)
+	}
 	var summaries []string
 	firstOther := ""
 	for _, name := range f.GetSheetList() {
-		if strings.HasPrefix(name, billGrandSheetPrefix) || strings.HasPrefix(name, billDailySheetPrefix) {
+		if rank(name) < len(orderedPrefixes) {
 			summaries = append(summaries, name)
 		} else if firstOther == "" {
 			firstOther = name
 		}
 	}
+	// 同前缀内保持创建顺序（(2)(3)… 分片），前缀间按 orderedPrefixes 排列。
+	sort.SliceStable(summaries, func(i, j int) bool {
+		return rank(summaries[i]) < rank(summaries[j])
+	})
 	if firstOther != "" {
-		// Moving each summary before the first detail sheet keeps their
-		// creation order: 总对账单, 总对账单 (2)…, 明细对账单, 明细对账单 (2)…
 		for _, name := range summaries {
 			if err := f.MoveSheet(name, firstOther); err != nil {
 				common.SysLog("bill export: move sheet " + name + ": " + err.Error())
 			}
 		}
+	}
+	if idx, err := f.GetSheetIndex(billCoverSheetName); err == nil && idx >= 0 {
+		f.SetActiveSheet(idx)
+		return
 	}
 	if idx, err := f.GetSheetIndex(billGrandSheetPrefix); err == nil && idx >= 0 {
 		f.SetActiveSheet(idx)
