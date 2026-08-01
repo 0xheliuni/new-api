@@ -52,11 +52,11 @@ func TestWriteBillReferenceSheets(t *testing.T) {
 	if get(billByTokenSheetPrefix, "A1") != "令牌名称" || get(billByTokenSheetPrefix, "A2") != "tk1" || get(billByTokenSheetPrefix, "A3") != "tk2" {
 		t.Fatalf("byToken rows: %q/%q/%q", get(billByTokenSheetPrefix, "A1"), get(billByTokenSheetPrefix, "A2"), get(billByTokenSheetPrefix, "A3"))
 	}
-	if get(billByTokenSheetPrefix, "L1") != "首笔计费时间" || get(billByTokenSheetPrefix, "M1") != "末笔计费时间" {
-		t.Fatalf("byToken ts headers: %q/%q", get(billByTokenSheetPrefix, "L1"), get(billByTokenSheetPrefix, "M1"))
+	if get(billByTokenSheetPrefix, "K1") != "首笔计费时间" || get(billByTokenSheetPrefix, "L1") != "末笔计费时间" {
+		t.Fatalf("byToken ts headers: %q/%q", get(billByTokenSheetPrefix, "K1"), get(billByTokenSheetPrefix, "L1"))
 	}
-	if get(billByTokenSheetPrefix, "L2") != "2026-06-02 12:00:00" {
-		t.Fatalf("byToken first ts = %q", get(billByTokenSheetPrefix, "L2"))
+	if get(billByTokenSheetPrefix, "K2") != "2026-06-02 12:00:00" {
+		t.Fatalf("byToken first ts = %q", get(billByTokenSheetPrefix, "K2"))
 	}
 
 	// 按模型汇总
