@@ -30,7 +30,6 @@ import { useIsAdmin } from '@/hooks/use-admin'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectTrigger,
@@ -346,22 +345,51 @@ export function BillExportPage() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              <div className='flex h-8 items-center gap-1.5'>
-                <Switch checked={withDetail} onCheckedChange={setWithDetail} />
-                <Label className='text-muted-foreground text-xs'>
-                  {t('Include daily detail')}
-                </Label>
-              </div>
+              <Select
+                items={[
+                  { value: 'no', label: t('Exclude daily detail') },
+                  { value: 'yes', label: t('Include daily detail') },
+                ]}
+                value={withDetail ? 'yes' : 'no'}
+                onValueChange={(value) => setWithDetail(value === 'yes')}
+              >
+                <SelectTrigger className='h-8 w-36'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value='no'>
+                      {t('Exclude daily detail')}
+                    </SelectItem>
+                    <SelectItem value='yes'>
+                      {t('Include daily detail')}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
               {withDetail && (
-                <div className='flex h-8 items-center gap-1.5'>
-                  <Switch
-                    checked={splitModel}
-                    onCheckedChange={setSplitModel}
-                  />
-                  <Label className='text-muted-foreground text-xs'>
-                    {t('Split detail by model')}
-                  </Label>
-                </div>
+                <Select
+                  items={[
+                    { value: 'no', label: t('Detail not split by model') },
+                    { value: 'yes', label: t('Split detail by model') },
+                  ]}
+                  value={splitModel ? 'yes' : 'no'}
+                  onValueChange={(value) => setSplitModel(value === 'yes')}
+                >
+                  <SelectTrigger className='h-8 w-40'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value='no'>
+                        {t('Detail not split by model')}
+                      </SelectItem>
+                      <SelectItem value='yes'>
+                        {t('Split detail by model')}
+                      </SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               )}
               <Button
                 size='sm'

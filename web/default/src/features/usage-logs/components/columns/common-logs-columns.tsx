@@ -116,6 +116,12 @@ function buildDetailSegments(
 
   if (log.type !== 2) return []
 
+  // seedance 失败任务：报错信息置顶（红色），退款行已隐藏，错误必须在主行可见。
+  const failSegments: DetailSegment[] =
+    log.task_info?.status === 'FAILURE' && log.task_info.fail_reason
+      ? [{ text: log.task_info.fail_reason, danger: true }]
+      : []
+
   const isViolation = isViolationFeeLog(other)
   if (isViolation) {
     const segments: DetailSegment[] = []
@@ -133,9 +139,9 @@ function buildDetailSegments(
     return segments
   }
 
-  if (!other) return []
+  if (!other) return failSegments
 
-  const segments: DetailSegment[] = []
+  const segments: DetailSegment[] = [...failSegments]
 
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
   const formatPrice = (price: number) =>

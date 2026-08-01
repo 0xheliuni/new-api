@@ -406,7 +406,13 @@ function renderCompactDetailSummary(summarySegments) {
       {segments.map((segment, index) => (
         <Typography.Text
           key={`${segment.text}-${index}`}
-          type={segment.tone === 'secondary' ? 'tertiary' : undefined}
+          type={
+            segment.tone === 'danger'
+              ? 'danger'
+              : segment.tone === 'secondary'
+                ? 'tertiary'
+                : undefined
+          }
           size={segment.tone === 'secondary' ? 'small' : undefined}
           style={{
             display: 'block',
@@ -438,6 +444,12 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     return null;
   }
 
+  // seedance 失败任务：报错信息置顶（红色），退款行已隐藏，错误必须在主行可见。
+  const failSegments =
+    record.task_info?.status === 'FAILURE' && record.task_info.fail_reason
+      ? [{ text: record.task_info.fail_reason, tone: 'danger' }]
+      : [];
+
   if (
     other?.violation_fee === true ||
     Boolean(other?.violation_fee_code) ||
@@ -465,13 +477,16 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
 
   if (other?.billing_mode === 'tiered_expr') {
-    return { segments: renderTieredModelPriceSimple(summaryOpts) };
+    return { segments: [...failSegments, ...renderTieredModelPriceSimple(summaryOpts)] };
   }
 
   return {
-    segments: other?.claude
-      ? renderModelPriceSimple({ ...summaryOpts, provider: 'claude' })
-      : renderModelPriceSimple({ ...summaryOpts, provider: 'openai' }),
+    segments: [
+      ...failSegments,
+      ...(other?.claude
+        ? renderModelPriceSimple({ ...summaryOpts, provider: 'claude' })
+        : renderModelPriceSimple({ ...summaryOpts, provider: 'openai' })),
+    ],
   };
 }
 

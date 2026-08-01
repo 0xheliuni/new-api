@@ -3888,6 +3888,8 @@
     "分辨率": "Resolution",
     "宽高比": "Aspect Ratio",
     "请求数": "Request Count",
-    "刊例价金额(美元)": "List Amount (USD)"
+    "刊例价金额(美元)": "List Amount (USD)",
+    "不含每日明细": "Exclude daily detail",
+    "明细不分模型": "Detail not split by model"
   }
 }

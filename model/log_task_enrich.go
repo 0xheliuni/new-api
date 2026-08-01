@@ -83,9 +83,10 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 
 	// 兄弟结算/退款行（分页列表里被隐藏，这里按 request_id 补查取金额与原因）
 	type sibling struct {
-		typ   int
-		quota int
-		other map[string]interface{}
+		typ     int
+		quota   int
+		content string
+		other   map[string]interface{}
 	}
 	sibByReq := make(map[string][]sibling)
 	if len(reqIds) > 0 {
@@ -102,7 +103,7 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 				if err != nil {
 					m = nil
 				}
-				sibByReq[s.RequestId] = append(sibByReq[s.RequestId], sibling{typ: s.Type, quota: s.Quota, other: m})
+				sibByReq[s.RequestId] = append(sibByReq[s.RequestId], sibling{typ: s.Type, quota: s.Quota, content: s.Content, other: m})
 			}
 		}
 	}
@@ -142,6 +143,10 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 			}
 			if ti.FailReason == "" {
 				ti.FailReason, _ = s.other["reason"].(string)
+			}
+			// 差额退款行的原因写在 Content 而非 other.reason，兜底补取。
+			if ti.FailReason == "" && s.typ == LogTypeRefund {
+				ti.FailReason = s.content
 			}
 		}
 		if ti.FinalQuota < 0 {

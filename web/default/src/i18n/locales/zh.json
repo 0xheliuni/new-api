@@ -4675,6 +4675,8 @@
     "Summary bill query and export.": "汇总账单查询与导出。",
     "Export Summary Bill": "导出汇总账单",
     "Include daily detail": "附带每日明细账",
+    "Exclude daily detail": "不含每日明细",
+    "Detail not split by model": "明细不分模型",
     "Split detail by model": "明细分不同模型",
     "Bill mode": "导出口径",
     "Internal (split by channel & model)": "内部（分渠道分模型）",

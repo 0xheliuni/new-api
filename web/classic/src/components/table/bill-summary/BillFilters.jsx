@@ -127,16 +127,34 @@ const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t })
                 {t('对外客户（合并渠道）')}
               </Form.Select.Option>
             </Form.Select>
-            <Form.Switch
+            <Form.Select
               field='with_detail'
-              label={t('附带每日明细账')}
+              initValue={false}
+              pure
               size='small'
-            />
-            <Form.Switch
+              className='min-w-[140px]'
+            >
+              <Form.Select.Option value={false}>
+                {t('不含每日明细')}
+              </Form.Select.Option>
+              <Form.Select.Option value={true}>
+                {t('附带每日明细账')}
+              </Form.Select.Option>
+            </Form.Select>
+            <Form.Select
               field='detail_split_model'
-              label={t('明细分不同模型')}
+              initValue={false}
+              pure
               size='small'
-            />
+              className='min-w-[140px]'
+            >
+              <Form.Select.Option value={false}>
+                {t('明细不分模型')}
+              </Form.Select.Option>
+              <Form.Select.Option value={true}>
+                {t('明细分不同模型')}
+              </Form.Select.Option>
+            </Form.Select>
             <Button size='small' onClick={onExport}>
               {t('导出汇总账单')}
             </Button>

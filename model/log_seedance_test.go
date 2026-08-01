@@ -234,3 +234,28 @@ func TestEnrichSeedance_RequestParamsFromInput(t *testing.T) {
 	assert.Equal(t, "16:9", t3.Ratio, "size 1280x720 → 16:9")
 	assert.Equal(t, 8, t3.DurationS)
 }
+
+// task 已被清理时，失败原因从退款兄弟行兜底：other.reason 优先，缺失时取 Content
+// （差额退款行的 reason 写在 Content 而非 other.reason）。
+func TestEnrichSeedance_OrphanFailReasonFromSiblingContent(t *testing.T) {
+	clearLogsAndTasks(t)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-1-0", CreatedAt: 1000,
+		Quota: 100, RequestId: "oreq-1",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"gone-1","group_ratio":1}`,
+	}).Error)
+	// 退款兄弟行：other 无 reason，原因在 Content（负差额结算路径的写法）
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeRefund, ModelName: "doubao-seedance-1-0", CreatedAt: 1100,
+		Quota: 100, RequestId: "oreq-1", Content: "upstream error: output_video_censored",
+		Other: `{"billing_stage":"refund","task_id":"gone-1","pre_consumed_quota":100,"actual_quota":0}`,
+	}).Error)
+
+	logs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 100, 0, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	ti := logs[0].TaskInfo
+	require.NotNil(t, ti)
+	assert.Equal(t, "FAILURE", ti.Status)
+	assert.Equal(t, "upstream error: output_video_censored", ti.FailReason)
+}
