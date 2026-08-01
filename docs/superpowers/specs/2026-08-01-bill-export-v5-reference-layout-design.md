@@ -1,7 +1,7 @@
 # 账单导出 v5 — 对齐参考账单版式：请求数/计费记录、精确刊例价金额、阶梯计费刊例价修复、汇总封面与三维汇总表
 
 - 日期: 2026-08-01
-- 状态: 设计待用户确认
+- 状态: 已实现（2026-08-01，含测试）
 - 前置: `2026-07-30-bill-export-v2-design.md`、`2026-07-30-bill-export-v3-granularity-task-billing-design.md`、`2026-07-30-bill-export-v4-listprice-ratio-design.md`
 - 参考件: `接口文档/账单功能文档/Modex-AI_2026-07-20_至_2026-07-31_账单详情.xlsx`
 - 相关规则: CLAUDE.md Rule 1 (JSON wrapper)、Rule 2 (三库兼容，本次无 DB 改动)、Rule 5 (受保护标识)、Rule 7 (已读 `pkg/billingexpr/expr.md`)
