@@ -78,6 +78,13 @@ type logPricingInfo struct {
 	CacheCreationTokens1h int     `json:"cache_creation_tokens_1h"`
 	CacheCreationRatio1h  float64 `json:"cache_creation_ratio_1h"`
 
+	// Tiered-expression billing keys written by InjectTieredBillingInfo.
+	// expr_b64 is the base64 expression; matched_tier names the tier that
+	// actually billed this request (see pkg/billingexpr/expr.md).
+	BillingMode string `json:"billing_mode"`
+	ExprB64     string `json:"expr_b64"`
+	MatchedTier string `json:"matched_tier"`
+
 	// Async-task billing keys (seedance-style pre-consume → settle/refund),
 	// written by LogTaskConsumption / RecalculateTaskQuota / RefundTaskQuota.
 	IsTask           bool    `json:"is_task"`

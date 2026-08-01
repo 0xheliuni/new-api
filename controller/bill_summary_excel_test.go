@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
@@ -322,5 +323,51 @@ func TestBillSummaryAgg_PricingFirstSeenWins(t *testing.T) {
 	}
 	if !r.hasRatio || r.EffectiveRatio != 0.5 {
 		t.Fatalf("ratio = %v (has=%v), want 0.5 from newest log", r.EffectiveRatio, r.hasRatio)
+	}
+}
+
+// tiered_expr 日志：刊例价取匹配档 p 系数（真实 $/1M，不乘 2），不回退 model_ratio。
+func TestBillSummaryAgg_TieredExprListPrice(t *testing.T) {
+	expr := `len <= 200000 ? tier("standard", p * 3 + c * 15) : tier("long_context", p * 6 + c * 22.5)`
+	b64 := base64.StdEncoding.EncodeToString([]byte(expr))
+	agg := newBillSummaryAgg()
+	agg.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), Username: "alice", ChannelId: 3, TokenName: "tk", ModelName: "m-tier",
+			Quota: 100, Other: `{"billing_mode":"tiered_expr","expr_b64":"` + b64 + `","matched_tier":"long_context","model_ratio":0,"group_ratio":1}`},
+	})
+	r := agg.rows[agg.sortedKeys()[0]]
+	if !r.hasPrice || r.ListPriceUSD != 6 {
+		t.Fatalf("tiered list price = %v (has=%v), want 6 (matched tier p coefficient)", r.ListPriceUSD, r.hasPrice)
+	}
+}
+
+// tiered 行解析失败（expr_b64 损坏）不得回退 model_ratio×2，也不得阻止组内
+// 其他正常日志（更早的倍率计费日志）提供价格。
+func TestBillSummaryAgg_TieredExprBrokenNoFallbackWithinRow(t *testing.T) {
+	agg := newBillSummaryAgg()
+	agg.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), Username: "alice", ChannelId: 3, TokenName: "tk", ModelName: "m",
+			Quota: 100, Other: `{"billing_mode":"tiered_expr","expr_b64":"!!!not-base64!!!","model_ratio":10,"group_ratio":1}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), Username: "alice", ChannelId: 3, TokenName: "tk", ModelName: "m",
+			Quota: 100, Other: `{"model_ratio":8,"group_ratio":1}`},
+	})
+	r := agg.rows[agg.sortedKeys()[0]]
+	if !r.hasPrice || r.ListPriceUSD != 16 {
+		t.Fatalf("list price = %v (has=%v), want 16 from the older ratio log (tiered row must not contribute model_ratio×2)", r.ListPriceUSD, r.hasPrice)
+	}
+}
+
+// matched_tier 缺失 → 取第一档。
+func TestBillSummaryAgg_TieredExprDefaultsToFirstTier(t *testing.T) {
+	expr := `tier("only", p * 1.25 + c * 5)`
+	b64 := base64.StdEncoding.EncodeToString([]byte(expr))
+	agg := newBillSummaryAgg()
+	agg.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), Username: "alice", ChannelId: 3, TokenName: "tk", ModelName: "m",
+			Quota: 100, Other: `{"billing_mode":"tiered_expr","expr_b64":"` + b64 + `","group_ratio":1}`},
+	})
+	r := agg.rows[agg.sortedKeys()[0]]
+	if !r.hasPrice || r.ListPriceUSD != 1.25 {
+		t.Fatalf("list price = %v, want 1.25 (first tier fallback)", r.ListPriceUSD)
 	}
 }

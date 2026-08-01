@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"encoding/base64"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 )
 
 type billSummaryKey struct {
@@ -116,7 +118,8 @@ func (a *billSummaryAgg) addBatch(logs []*model.Log) {
 			row = &billSummaryRow{}
 			a.rows[key] = row
 		}
-		row.capturePricing(log)
+		info := parseLogPricingInfo(log)
+		row.capturePricing(info)
 		if log.Type == model.LogTypeRefund {
 			// 退款冲抵金额；退款日志无 tokens，不动 token 列。
 			row.Quota -= log.Quota
@@ -130,27 +133,49 @@ func (a *billSummaryAgg) addBatch(logs []*model.Log) {
 	}
 }
 
-// capturePricing 从日志 Other 提取刊例价与生效倍率。流式顺序为 created_at DESC，
-// 因此首个携带定价键的日志（组内最新一条）胜出，后续不再覆盖。
-func (r *billSummaryRow) capturePricing(log *model.Log) {
-	if (r.hasPrice && r.hasRatio) || strings.TrimSpace(log.Other) == "" {
-		return
+// parseLogPricingInfo decodes Log.Other once per log; nil when absent/broken.
+func parseLogPricingInfo(log *model.Log) *logPricingInfo {
+	if strings.TrimSpace(log.Other) == "" {
+		return nil
 	}
 	var info logPricingInfo
 	if err := common.UnmarshalJsonStr(log.Other, &info); err != nil {
+		return nil
+	}
+	return &info
+}
+
+// capturePricing 从已解析的日志定价信息提取刊例价与生效倍率。流式顺序为
+// created_at DESC，因此首个携带定价键的日志（组内最新一条）胜出，后续不再覆盖。
+// tiered_expr 日志的价格只能来自表达式匹配档（系数即真实 $/1M，不乘 2）；
+// 解析失败时该条不出价，也绝不回退 model_ratio×2（避免取到切换前的旧倍率价）。
+func (r *billSummaryRow) capturePricing(info *logPricingInfo) {
+	if info == nil || (r.hasPrice && r.hasRatio) {
 		return
 	}
 	if !r.hasPrice {
-		switch {
-		case info.VideoUnitPrice > 0:
-			r.ListPriceUSD = info.VideoUnitPrice
-			r.hasPrice = true
-		case info.ModelPrice > 0:
-			r.ListPriceUSD = info.ModelPrice
-			r.hasPrice = true
-		case info.ModelRatio > 0:
-			r.ListPriceUSD = info.ModelRatio * 2.0
-			r.hasPrice = true
+		if info.BillingMode == "tiered_expr" {
+			if raw, err := base64.StdEncoding.DecodeString(info.ExprB64); err == nil {
+				tiers := billingexpr.ParseTiers(string(raw))
+				if tier := billingexpr.MatchTier(tiers, info.MatchedTier); tier != nil {
+					if p, ok := tier.Prices["p"]; ok && p > 0 {
+						r.ListPriceUSD = p
+						r.hasPrice = true
+					}
+				}
+			}
+		} else {
+			switch {
+			case info.VideoUnitPrice > 0:
+				r.ListPriceUSD = info.VideoUnitPrice
+				r.hasPrice = true
+			case info.ModelPrice > 0:
+				r.ListPriceUSD = info.ModelPrice
+				r.hasPrice = true
+			case info.ModelRatio > 0:
+				r.ListPriceUSD = info.ModelRatio * 2.0
+				r.hasPrice = true
+			}
 		}
 	}
 	if !r.hasRatio {
