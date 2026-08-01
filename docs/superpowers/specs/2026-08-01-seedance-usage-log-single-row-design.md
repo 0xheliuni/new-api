@@ -1,0 +1,114 @@
+# seedance 使用记录单行化 + 任务态展示 — 设计文档
+
+- 日期: 2026-08-01
+- 状态: 已确认设计，待实现
+- 前置: `2026-07-12-seedance-task-billing-log-transparency-design.md`（三行透明化，request_id 关联）、`2026-06-25-dreamina-seedance2-video-billing-design.md`、`2026-07-28-seedance-thirdparty-video-channel-design.md`、`2026-07-31-task-upstream-error-passthrough-design.md`
+- 相关规则: CLAUDE.md Rule 1 (JSON wrapper)、Rule 2 (三库兼容——LIKE 过滤与迁移必须 SQLite/MySQL/PG 通过)、Rule 5 (受保护标识)
+
+## 1. 需求
+
+seedance 视频任务采用预扣费+多退少补，使用日志中一个任务出现 2~3 行（预扣消费 / 结算补扣 / 退款），用户观感差。改造为：
+
+1. **使用日志一个任务只显示一行**（预扣行为主行），settle/refund 行从列表隐藏（DB 不删）。
+2. 主行新增**完成状态列**（对齐任务日志页观感：StatusBadge + 进度条 + 百分比）。
+3. **费用列**：进行中→「生成中」灰标签；成功→最终实扣净额；失败→`$0` + 「已退款」角标。
+4. **详情弹窗**扩展 seedance 任务区块：分辨率档位（480p/720p/1080p/4K）、生成秒数、是否含参考视频、输出 tokens、单价、**专属倍率**（user_group_ratio 有效时优先展示并标注）、预扣→实扣结算过程、失败原因（脱敏后）、任务 ID、上游任务 ID（仅管理员）。
+5. **历史记录**也呈现新样式（含 2026-07-12 之前无 task_id/billing_stage 的旧日志——需一次性回填）。
+6. 账单导出**逐日明细 sheet** 同 request_id 的 seedance 多行合并为一行（净额+完整过程文字）；汇总类 sheet 与原始日志导出不变。
+
+## 2. 已确认决策
+
+| 主题 | 决策 |
+|---|---|
+| 合并层 | **A. 展示层合并**：DB 仍写三行（审计/账单/净额统计不动），查询/展示时折叠。历史记录自动生效。 |
+| 费用口径 | 进行中不显示预扣金额（详情内仍可见"预扣 $X，结算后多退少补"）；成功显示实扣净额；失败显示 $0+已退款。 |
+| 范围 | 模型名含 `seedance` 的视频任务日志（doubao-seedance-\*、dreamina-seedance-\*、第三方通道 59 同名模型）。Grok 视频、其它任务、聊天日志、原始日志导出不变。 |
+| 逐日明细 | 合并为一行：费用列净额，计费过程单元格保留各阶段完整文字。 |
+| 上游任务 ID | 仅管理员可见（沿用"客户端只拿公开 task id"隐私边界，`formatUserLogs` 同款处理）。 |
+| 刷新 | 不做自动轮询，与任务日志页一致手动刷新。 |
+| 退款筛选副作用 | 列表按"退款"类型筛选时不再出现 seedance 退款行（信息在主行详情内），接受。 |
+
+## 3. 架构
+
+### 3.1 后端：查询时排除 + 增强（`model/log.go` + 新 `model/log_task_enrich.go`）
+
+**列表排除**（`GetAllLogs`/`GetUserLogs` 的分页查询与 count，两处同规则）：
+
+- 追加条件：`NOT (model_name LIKE '%seedance%' AND (other LIKE '%"billing_stage":"settle"%' OR other LIKE '%"billing_stage":"refund"%'))`。
+- 纯字符串 LIKE，SQLite/MySQL/PG 通杀；`"billing_stage":"..."` 由 `common.Marshal` 生成、无空格，模式稳定。
+- 账单汇总导出的流式扫描（`GetAllLogsForExport`/`GetUserLogsForExport`）**不加**此过滤——净额、计费记录、请求数口径不变。
+
+**行增强**：对页内 `model_name` 含 `seedance` 且 `Other.billing_stage=="pre_consume"`（或回填后等价）的行：
+
+1. 解析各行 `Other.task_id`，**批量** `WHERE task_id IN (...)` 查 `tasks`（task_id 有索引）。
+2. 收集这些行的 `request_id`，**批量**查兄弟日志（settle/refund，request_id 有索引），仅取本页涉及的。
+3. `Log` 结构体挂临时字段（`gorm:"-"`，序列化为 `task_info`，omitempty）：
+
+```
+type LogTaskInfo struct {
+    Status         string  // SUBMITTED/QUEUED/IN_PROGRESS/SUCCESS/FAILURE/UNKNOWN
+    Progress       string  // "50%"
+    FailReason     string  // 已脱敏(MaskSensitiveInfo 已在写入 task 时做过)
+    UpstreamTaskId string  // 仅 admin 路径填充
+    FinalQuota     int     // 实扣净额(quota 单位)：预扣+settle−refund
+    OutputTokens   int     // video/completion tokens
+    ResolutionTier string  // 480p/720p/1080p/4k
+    DurationS      int     // 生成秒数,解析不到为 0(前端不显示)
+    HasInput       bool    // 是否含参考视频
+    EffectiveRatio float64 // user_group_ratio 有效优先,否则 group_ratio
+    IsUserRatio    bool    // true=专属倍率
+}
+```
+
+4. 数据优先级：task 行 → 兄弟日志 Other → 主行 Other。**task 已被清理的兜底**：有 refund 兄弟→FAILURE、有 settle→SUCCESS、都无→UNKNOWN（FinalQuota=预扣额）。
+5. `formatUserLogs`（self 路径）清空 `UpstreamTaskId`。
+
+### 3.2 历史回填（一次性启动迁移，`model/migration_seedance_backfill.go`）
+
+旧日志（三行透明化之前）`Other` 无 `task_id`/`billing_stage`，无法关联。按既有幂等迁移模式（options 表标记 `seedance_log_backfill_done`，完成即跳过）：
+
+- 分批（每批 500）遍历 `tasks` 表中 platform/action 为视频生成且模型含 seedance 的行，取 `private_data.request_id` + `task_id`。
+- 对每个 task，按 `request_id` 查其 seedance 日志行：
+  - type=2 且 Other 无 `billing_stage` 且无 `pre_consumed_quota` → 注入 `"billing_stage":"pre_consume","task_id":"..."`；
+  - type=2 且有 `pre_consumed_quota`（或 Content 为结算文案）→ `settle`；
+  - type=6 → `refund`。
+- `Other` 读改写全程 `common.UnmarshalJsonStr`/`common.Marshal`；UPDATE 只动 `other` 列；单行失败记日志继续，不中断启动。
+- `private_data.request_id` 为空的更早期任务跳过（该部分历史行维持旧样式，接受）。
+
+### 3.3 写入侧唯一增量：生成秒数
+
+- `service/task_billing.go` 的 `taskBillingOther` 增写 `video_duration_s`（settle 时从 TaskInfo/adaptor 可得的 Duration 秒数，取不到写 0 则省略）。
+- 三个 adaptor（doubao/sora/seedance3rd）`ParseTaskResult` 已有 Duration 字段的透传确认，缺的补上。
+- 历史记录的秒数在增强阶段从 `task.Data`（上游最终响应 JSON）尽力解析（`duration`/`seconds` 等键），解析不到详情里不显示该项。
+
+### 3.4 前端（`web/default/src/features/usage-logs/`）
+
+- **「状态」列**（新增，列设置可隐藏，非任务行留空）：`log.task_info` 存在时渲染——复用 `taskStatusMapper` 配色的 `StatusBadge` + `ui/progress` 细进度条 + 百分比文字。
+- **费用列**（common-logs-columns.tsx cost cell）：`task_info` 存在时按状态分支——进行中灰标签「生成中」；SUCCESS 显示 `FinalQuota` 金额；FAILURE 显示 `$0` + 「已退款」小角标；UNKNOWN 按现值显示。
+- **详情弹窗**：`VideoPricingBreakdown` 扩展为 seedance 任务区块，新增行：状态+进度、分辨率档位（复用现有 tierLabelMap）、生成秒数、是否含参考视频、输出 tokens、倍率行标注「专属倍率」/「分组倍率」、预扣→实扣→多退少补过程、失败原因、任务 ID、上游任务 ID（admin）。
+- i18n：新 key 补 zh（en 为源串），必要时其余 4 语言跟随现有惯例。
+
+### 3.5 账单导出逐日明细合并（`controller/bill_detail_excel.go`）
+
+`alignTaskPairs` 已把同 `request_id` 行相邻排列；在其后新增 `mergeSeedanceTaskRows`：模型含 seedance 且同 request_id 的 2~3 行折叠为主行——费用列写净额（消费−退款），「计费过程」单元格按时间序拼接各行 `buildBillingText` 全文（`预扣…\n实际结算…\n退款…`），类型列显示「消费」。其他模型行为不变。
+
+## 4. 测试计划（TDD）
+
+1. `model`：列表排除（settle/refund 隐藏、pre_consume 保留、非 seedance 不受影响、count 一致）；增强（成功/失败/进行中/task 被清理四态、admin/self 的 UpstreamTaskId 差异、批量查询不 N+1——用查询计数或直接断言单批 IN）。
+2. 回填迁移：三种 stage 推断、幂等（二跑无变更）、request_id 缺失跳过、坏 JSON 容错。
+3. `service`：settle 写入 `video_duration_s`。
+4. `controller`：逐日明细合并（2 行/3 行/失败全退、净额、过程文字完整、非 seedance 不合并）。
+5. 前端：`bun run build` + 状态列/费用列分支的组件渲染逻辑走查。
+6. 回归：账单汇总导出（v5 全套 sheet 数值不变）、`go build ./...`、bill 相关全部既有测试。
+
+## 5. 不做的事
+
+- 不删除/不合并 DB 中的 settle/refund 行；不改任务日志页；不改原始日志导出（bill-\*.xlsx/csv 逐行流水）；不做前端自动轮询；不动非 seedance 任务（Grok 视频等）；不动受保护标识（Rule 5）。
+
+## 6. 分阶段实施
+
+1. **Phase 1**：`model` 列表排除 + LogTaskInfo 增强（含测试）。
+2. **Phase 2**：历史回填迁移（含测试）。
+3. **Phase 3**：settle 写 `video_duration_s` + adaptor Duration 透传补齐。
+4. **Phase 4**：前端状态列/费用列/详情弹窗 + i18n + build。
+5. **Phase 5**：逐日明细合并 + 全量回归。
