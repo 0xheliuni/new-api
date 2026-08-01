@@ -36,8 +36,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import { Progress } from '@/components/ui/progress'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
+import { taskStatusMapper } from '../../lib/mappers'
 import {
   formatModelName,
   getFirstResponseTimeColor,
@@ -540,6 +542,33 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       meta: { mobileTitle: true },
     },
     {
+      // seedance 视频任务态：状态徽章 + 进度条（非任务行留空），观感对齐任务日志页。
+      id: 'task_status',
+      header: t('Status'),
+      cell: ({ row }) => {
+        const ti = row.original.task_info
+        if (!ti) return null
+        const pct = parseInt(ti.progress || '0', 10) || 0
+        return (
+          <div className='flex min-w-24 flex-col gap-1'>
+            <StatusBadge
+              label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
+              variant={taskStatusMapper.getVariant(ti.status)}
+              size='sm'
+              copyable={false}
+              className='-ml-1.5 w-fit'
+            />
+            <div className='flex items-center gap-1.5'>
+              <Progress value={pct} className='h-1 w-16' />
+              <span className='text-muted-foreground text-[11px] tabular-nums'>
+                {ti.progress || '0%'}
+              </span>
+            </div>
+          </div>
+        )
+      },
+    },
+    {
       accessorKey: 'use_time',
       header: t('Timing'),
       cell: ({ row }) => {
@@ -705,6 +734,41 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const quota = row.getValue('quota') as number
         const other = parseLogOther(log.other)
         const isSubscription = other?.billing_source === 'subscription'
+
+        // seedance 任务三态费用：进行中不显示预扣金额；成功显示实扣净额；
+        // 失败显示 $0 + 已退款角标；UNKNOWN 落回普通显示。
+        const ti = log.task_info
+        if (ti && ti.status !== 'UNKNOWN' && !isSubscription) {
+          if (ti.status === 'SUCCESS' || ti.status === 'FAILURE') {
+            const netStr = splitQuotaDisplay(formatLogQuota(ti.final_quota))
+            return (
+              <div className='flex flex-col gap-0.5'>
+                <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
+                  {netStr.prefix && <span className='mr-1'>{netStr.prefix}</span>}
+                  <span>{netStr.amount}</span>
+                </span>
+                {ti.status === 'FAILURE' && (
+                  <StatusBadge
+                    label={t('Refunded')}
+                    variant='red'
+                    size='sm'
+                    copyable={false}
+                    className='w-fit'
+                  />
+                )}
+              </div>
+            )
+          }
+          return (
+            <StatusBadge
+              label={t('Generating')}
+              variant='neutral'
+              size='sm'
+              copyable={false}
+              pulse
+            />
+          )
+        }
 
         if (isSubscription) {
           return (

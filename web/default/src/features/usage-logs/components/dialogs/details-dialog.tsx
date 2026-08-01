@@ -43,6 +43,7 @@ import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import type { UsageLog } from '../../data/schema'
+import { taskStatusMapper } from '../../lib/mappers'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -468,6 +469,68 @@ interface DetailsDialogProps {
   isAdmin: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+// seedance 视频任务区块：单行化视图的详情——状态/进度、请求参数（档位/秒数/
+// 参考视频）、输出 tokens、生效倍率（专属优先）、预扣→实扣、失败原因、
+// 任务 ID 与上游任务 ID（后端仅对 admin 返回）。
+function SeedanceTaskSection(props: { log: UsageLog }) {
+  const { t } = useTranslation()
+  const ti = props.log.task_info
+  if (!ti) return null
+
+  const tierLabelMap: Record<string, string> = {
+    base: t('480p / 720p'),
+    '1080p': '1080p',
+    '4k': '4K',
+  }
+  const pct = parseInt(ti.progress || '0', 10) || 0
+  const rows: Array<{ label: string; value: string }> = []
+  if (ti.resolution_tier) {
+    rows.push({
+      label: t('Resolution Tier'),
+      value: tierLabelMap[ti.resolution_tier] ?? ti.resolution_tier,
+    })
+  }
+  if (ti.duration_s && ti.duration_s > 0) {
+    rows.push({ label: t('Duration (s)'), value: String(ti.duration_s) })
+  }
+  rows.push({ label: t('Reference Video'), value: ti.has_input ? t('Yes') : t('No') })
+  if (ti.output_tokens && ti.output_tokens > 0) {
+    rows.push({ label: t('Output Tokens'), value: ti.output_tokens.toLocaleString() })
+  }
+  if (ti.effective_ratio && ti.effective_ratio > 0) {
+    rows.push({
+      label: ti.is_user_ratio ? t('User Exclusive Ratio') : t('Group Ratio'),
+      value: `${ti.effective_ratio.toFixed(4)}x`,
+    })
+  }
+  rows.push({
+    label: `${t('Pre-charged')} → ${t('Final Charged')}`,
+    value: `${formatLogQuota(ti.pre_quota)} → ${formatLogQuota(ti.final_quota)}`,
+  })
+  if (ti.fail_reason) {
+    rows.push({ label: t('Fail Reason'), value: ti.fail_reason })
+  }
+  if (ti.task_id) {
+    rows.push({ label: t('Task ID'), value: ti.task_id })
+  }
+  if (ti.upstream_task_id) {
+    rows.push({ label: t('Upstream Task ID'), value: ti.upstream_task_id })
+  }
+
+  return (
+    <DetailSection label={t('Video Task')}>
+      <DetailRow
+        label={t('Status')}
+        value={`${t(taskStatusMapper.getLabel(ti.status, ti.status))} · ${ti.progress || `${pct}%`}`}
+        mono
+      />
+      {rows.map((row, idx) => (
+        <DetailRow key={idx} label={row.label} value={row.value} mono />
+      ))}
+    </DetailSection>
+  )
 }
 
 export function DetailsDialog(props: DetailsDialogProps) {
@@ -1032,6 +1095,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
               isAdmin={props.isAdmin}
             />
           )}
+
+          {/* seedance task single-row view: status/progress/params/settlement */}
+          {isConsume && <SeedanceTaskSection log={props.log} />}
 
           {/* Video pricing breakdown (dreamina-seedance2 etc.) */}
           {isConsume && other && !isViolation && (
