@@ -81,12 +81,22 @@ type LogTaskInfo struct {
 - 三个 adaptor（doubao/sora/seedance3rd）`ParseTaskResult` 已有 Duration 字段的透传确认，缺的补上。
 - 历史记录的秒数在增强阶段从 `task.Data`（上游最终响应 JSON）尽力解析（`duration`/`seconds` 等键），解析不到详情里不显示该项。
 
-### 3.4 前端（`web/default/src/features/usage-logs/`）
+### 3.4 前端 — 默认主题（`web/default/src/features/usage-logs/`）
 
 - **「状态」列**（新增，列设置可隐藏，非任务行留空）：`log.task_info` 存在时渲染——复用 `taskStatusMapper` 配色的 `StatusBadge` + `ui/progress` 细进度条 + 百分比文字。
 - **费用列**（common-logs-columns.tsx cost cell）：`task_info` 存在时按状态分支——进行中灰标签「生成中」；SUCCESS 显示 `FinalQuota` 金额；FAILURE 显示 `$0` + 「已退款」小角标；UNKNOWN 按现值显示。
 - **详情弹窗**：`VideoPricingBreakdown` 扩展为 seedance 任务区块，新增行：状态+进度、分辨率档位（复用现有 tierLabelMap）、生成秒数、是否含参考视频、输出 tokens、倍率行标注「专属倍率」/「分组倍率」、预扣→实扣→多退少补过程、失败原因、任务 ID、上游任务 ID（admin）。
 - i18n：新 key 补 zh（en 为源串），必要时其余 4 语言跟随现有惯例。
+
+### 3.4b 前端 — Classic 主题（`web/classic/src/`）
+
+新旧两个前端都要改，展示口径完全一致（数据都来自同一 `task_info` 字段）：
+
+- **「状态」列**：`components/table/usage-logs/UsageLogsColumnDefs.jsx` 新增列——Semi Design `Tag`（状态配色对齐 `task-logs/TaskLogsColumnDefs.jsx` 的状态映射）+ `Progress` 组件（参照 TaskLogsColumnDefs.jsx:445 的用法）+ 百分比。
+- **费用列**：同默认主题三态分支（生成中/实扣净额/$0+已退款）。
+- **详情/计费过程**：`helpers/render.jsx` 的视频计费渲染（renderTaskBillingProcess 等）扩展同样的 seedance 任务区块字段（档位/秒数/参考视频/输出 tokens/专属倍率/失败原因/任务 ID/上游 ID admin）。
+- i18n：`web/classic/src/i18n/` 按其现有惯例补 key。
+- 构建验证：classic 使用 Vite（`web/classic` 内 `bun run build` 或其 package.json 实际脚本）。
 
 ### 3.5 账单导出逐日明细合并（`controller/bill_detail_excel.go`）
 
@@ -98,7 +108,7 @@ type LogTaskInfo struct {
 2. 回填迁移：三种 stage 推断、幂等（二跑无变更）、request_id 缺失跳过、坏 JSON 容错。
 3. `service`：settle 写入 `video_duration_s`。
 4. `controller`：逐日明细合并（2 行/3 行/失败全退、净额、过程文字完整、非 seedance 不合并）。
-5. 前端：`bun run build` + 状态列/费用列分支的组件渲染逻辑走查。
+5. 前端：默认主题 `bun run build` + classic 主题构建均通过；两主题状态列/费用列分支的组件渲染逻辑走查。
 6. 回归：账单汇总导出（v5 全套 sheet 数值不变）、`go build ./...`、bill 相关全部既有测试。
 
 ## 5. 不做的事
@@ -110,5 +120,6 @@ type LogTaskInfo struct {
 1. **Phase 1**：`model` 列表排除 + LogTaskInfo 增强（含测试）。
 2. **Phase 2**：历史回填迁移（含测试）。
 3. **Phase 3**：settle 写 `video_duration_s` + adaptor Duration 透传补齐。
-4. **Phase 4**：前端状态列/费用列/详情弹窗 + i18n + build。
-5. **Phase 5**：逐日明细合并 + 全量回归。
+4. **Phase 4**：默认主题前端（状态列/费用列/详情弹窗 + i18n + build）。
+5. **Phase 4b**：Classic 主题前端（同口径列与详情改造 + i18n + build）。
+6. **Phase 5**：逐日明细合并 + 全量回归。
