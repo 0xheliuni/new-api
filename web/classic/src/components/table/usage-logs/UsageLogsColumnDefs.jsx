@@ -714,27 +714,6 @@ export const getLogsColumns = ({
       },
     },
     {
-      // seedance 视频任务态：状态 Tag + 进度条（非任务行留空），观感对齐任务日志页。
-      key: COLUMN_KEYS.TASK_STATUS,
-      title: t('状态'),
-      dataIndex: 'task_info',
-      render: (taskInfo) => {
-        if (!taskInfo) return <></>;
-        const pct = parseInt(taskInfo.progress || '0', 10) || 0;
-        return (
-          <div style={{ minWidth: 90 }}>
-            {renderSeedanceTaskStatus(taskInfo.status, t)}
-            <Progress
-              percent={pct}
-              showInfo
-              aria-label='task progress'
-              style={{ marginTop: 4 }}
-            />
-          </div>
-        );
-      },
-    },
-    {
       key: COLUMN_KEYS.USE_TIME,
       title: t('用时/首字'),
       dataIndex: 'use_time',
@@ -830,12 +809,17 @@ export const getLogsColumns = ({
       title: t('输出'),
       dataIndex: 'completion_tokens',
       render: (text, record, index) => {
-        return parseInt(text) > 0 &&
+        // seedance 视频任务：输出 tokens 从 task_info 补齐（预扣行本身为 0）。
+        const tokens =
+          parseInt(text) > 0
+            ? parseInt(text)
+            : record.task_info?.output_tokens || 0;
+        return tokens > 0 &&
           (record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||
             record.type === 6) ? (
-          <>{<span> {text} </span>}</>
+          <>{<span> {tokens} </span>}</>
         ) : (
           <></>
         );
@@ -959,6 +943,40 @@ export const getLogsColumns = ({
           }
         }
         return isAdminUser ? <div>{content}</div> : <></>;
+      },
+    },
+    {
+      // seedance 视频任务态：圆形进度环（环心百分比）+ 中文状态（非任务行留空）。
+      // 位于详情列之前，普通用户可见。
+      key: COLUMN_KEYS.TASK_STATUS,
+      title: t('状态'),
+      dataIndex: 'task_info',
+      render: (taskInfo) => {
+        if (!taskInfo) return <></>;
+        let pct = parseInt(taskInfo.progress || '0', 10) || 0;
+        if (taskInfo.status === 'SUCCESS') pct = 100;
+        const colorMap = {
+          SUCCESS: 'var(--semi-color-success)',
+          FAILURE: 'var(--semi-color-danger)',
+          IN_PROGRESS: 'var(--semi-color-info)',
+          SUBMITTED: 'var(--semi-color-warning)',
+          QUEUED: 'var(--semi-color-warning)',
+        };
+        return (
+          <Space>
+            <Progress
+              percent={pct}
+              type='circle'
+              size='small'
+              width={36}
+              stroke={colorMap[taskInfo.status] || 'var(--semi-color-tertiary)'}
+              showInfo
+              format={(p) => `${p}%`}
+              aria-label='task progress'
+            />
+            {renderSeedanceTaskStatus(taskInfo.status, t)}
+          </Space>
+        );
       },
     },
     {

@@ -3884,6 +3884,10 @@
     "参考视频": "Reference Video",
     "输出 tokens": "Output tokens",
     "预扣 → 实扣": "Pre-charged → Final",
-    "上游任务ID": "Upstream Task ID"
+    "上游任务ID": "Upstream Task ID",
+    "分辨率": "Resolution",
+    "宽高比": "Aspect Ratio",
+    "请求数": "Request Count",
+    "刊例价金额(美元)": "List Amount (USD)"
   }
 }

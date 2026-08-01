@@ -565,11 +565,17 @@ export const useLogsData = () => {
           '1080p': '1080p',
           '4k': '4K',
         };
-        if (taskInfo.resolution_tier) {
+        // 请求参数真实值（来自用户原始请求）优先；缺失时回退计费档位。
+        if (taskInfo.resolution) {
+          expandDataLocal.push({ key: t('分辨率'), value: taskInfo.resolution });
+        } else if (taskInfo.resolution_tier) {
           expandDataLocal.push({
             key: t('分辨率档位'),
             value: tierLabelMap[taskInfo.resolution_tier] || taskInfo.resolution_tier,
           });
+        }
+        if (taskInfo.ratio) {
+          expandDataLocal.push({ key: t('宽高比'), value: taskInfo.ratio });
         }
         if (taskInfo.duration_s > 0) {
           expandDataLocal.push({ key: t('生成秒数'), value: `${taskInfo.duration_s}s` });

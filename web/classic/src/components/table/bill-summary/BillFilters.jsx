@@ -18,35 +18,131 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Form, Button, Space } from '@douyinfe/semi-ui';
+import { Form, Button } from '@douyinfe/semi-ui';
+import { IconSearch } from '@douyinfe/semi-icons';
 
+// 账单筛选工具栏：布局对齐使用日志页（紧凑网格 + pure/small 控件 + 底部操作行）。
 const BillFilters = ({ formApiRef, isAdminUser, onQuery, onExport, loading, t }) => {
   return (
-    <Form getFormApi={(api) => (formApiRef.current = api)} layout='horizontal'>
-      <Form.Select field='granularity' label={t('统计粒度')} initValue='day'>
-        <Form.Select.Option value='day'>{t('按天')}</Form.Select.Option>
-        <Form.Select.Option value='week'>{t('按周')}</Form.Select.Option>
-        <Form.Select.Option value='month'>{t('按月')}</Form.Select.Option>
-      </Form.Select>
-      <Form.DatePicker field='start_time' label={t('开始时间')} type='dateTime' />
-      <Form.DatePicker field='end_time' label={t('结束时间')} type='dateTime' />
-      {isAdminUser && <Form.Input field='username' label={t('用户名')} />}
-      {isAdminUser && <Form.Input field='channel' label={t('渠道ID')} />}
-      <Form.Input field='token_name' label={t('令牌名称')} />
-      <Form.Input field='model_name' label={t('模型名称')} />
-      <Form.Input field='exchange_rate' label={t('汇率')} placeholder='7.3' />
-      <Form.Select field='bill_mode' label={t('导出口径')} initValue='internal'>
-        <Form.Select.Option value='internal'>{t('内部（分渠道分模型）')}</Form.Select.Option>
-        <Form.Select.Option value='external'>{t('对外客户（合并渠道）')}</Form.Select.Option>
-      </Form.Select>
-      <Form.Switch field='with_detail' label={t('附带每日明细账')} />
-      <Form.Switch field='detail_split_model' label={t('明细分不同模型')} />
-      <Space>
-        <Button theme='solid' loading={loading} onClick={onQuery}>
-          {t('查询')}
-        </Button>
-        <Button onClick={onExport}>{t('导出汇总账单')}</Button>
-      </Space>
+    <Form
+      getFormApi={(api) => (formApiRef.current = api)}
+      allowEmpty={true}
+      autoComplete='off'
+      layout='vertical'
+    >
+      <div className='flex flex-col gap-2'>
+        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2'>
+          <Form.DatePicker
+            field='start_time'
+            className='w-full'
+            type='dateTime'
+            placeholder={t('开始时间')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.DatePicker
+            field='end_time'
+            className='w-full'
+            type='dateTime'
+            placeholder={t('结束时间')}
+            showClear
+            pure
+            size='small'
+          />
+          {isAdminUser && (
+            <>
+              <Form.Input
+                field='username'
+                prefix={<IconSearch />}
+                placeholder={t('用户名')}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='channel'
+                prefix={<IconSearch />}
+                placeholder={t('渠道ID')}
+                showClear
+                pure
+                size='small'
+              />
+            </>
+          )}
+          <Form.Input
+            field='token_name'
+            prefix={<IconSearch />}
+            placeholder={t('令牌名称')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Input
+            field='model_name'
+            prefix={<IconSearch />}
+            placeholder={t('模型名称')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Input
+            field='exchange_rate'
+            placeholder={t('汇率')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Select
+            field='granularity'
+            placeholder={t('统计粒度')}
+            initValue='day'
+            className='w-full'
+            pure
+            size='small'
+          >
+            <Form.Select.Option value='day'>{t('按天')}</Form.Select.Option>
+            <Form.Select.Option value='week'>{t('按周')}</Form.Select.Option>
+            <Form.Select.Option value='month'>{t('按月')}</Form.Select.Option>
+          </Form.Select>
+        </div>
+
+        {/* 操作按钮区域（导出配置收拢到右侧） */}
+        <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
+          <Button theme='solid' size='small' loading={loading} onClick={onQuery}>
+            {t('查询')}
+          </Button>
+          <div className='flex flex-wrap items-center gap-2'>
+            <Form.Select
+              field='bill_mode'
+              initValue='internal'
+              pure
+              size='small'
+              className='min-w-[180px]'
+            >
+              <Form.Select.Option value='internal'>
+                {t('内部（分渠道分模型）')}
+              </Form.Select.Option>
+              <Form.Select.Option value='external'>
+                {t('对外客户（合并渠道）')}
+              </Form.Select.Option>
+            </Form.Select>
+            <Form.Switch
+              field='with_detail'
+              label={t('附带每日明细账')}
+              size='small'
+            />
+            <Form.Switch
+              field='detail_split_model'
+              label={t('明细分不同模型')}
+              size='small'
+            />
+            <Button size='small' onClick={onExport}>
+              {t('导出汇总账单')}
+            </Button>
+          </div>
+        </div>
+      </div>
     </Form>
   );
 };
