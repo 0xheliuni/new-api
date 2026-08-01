@@ -161,3 +161,76 @@ func TestEnrichSeedance_InProgressAndOrphan(t *testing.T) {
 	assert.Equal(t, "SUCCESS", byReq["req-4"].TaskInfo.Status, "task 缺失时由 settle 兄弟推断")
 	assert.Equal(t, 120, byReq["req-4"].TaskInfo.FinalQuota)
 }
+
+// 请求参数真实值：优先从 Properties.Input（用户原始请求）取
+// resolution/ratio/duration；顶层与 metadata 嵌套均支持；sora 的 size/seconds 推导。
+func TestEnrichSeedance_RequestParamsFromInput(t *testing.T) {
+	clearLogsAndTasks(t)
+	require.NoError(t, DB.Create(&Task{
+		TaskID: "vp1", UserId: 1, Status: TaskStatusSuccess, Progress: "100%", Quota: 100,
+		Properties: Properties{
+			Input:           `{"model":"doubao-seedance-1-0","prompt":"cat","resolution":"720p","ratio":"16:9","duration":5}`,
+			OriginModelName: "doubao-seedance-1-0",
+		},
+		PrivateData: TaskPrivateData{RequestId: "preq-1"},
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-1-0", CreatedAt: 1000,
+		Quota: 100, RequestId: "preq-1",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"vp1","group_ratio":1}`,
+	}).Error)
+	// metadata 嵌套形态
+	require.NoError(t, DB.Create(&Task{
+		TaskID: "vp2", UserId: 1, Status: TaskStatusSuccess, Progress: "100%", Quota: 100,
+		Properties: Properties{
+			Input:           `{"model":"doubao-seedance-1-0","prompt":"dog","metadata":{"resolution":"1080p","ratio":"9:16"},"seconds":10}`,
+			OriginModelName: "doubao-seedance-1-0",
+		},
+		PrivateData: TaskPrivateData{RequestId: "preq-2"},
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-1-0", CreatedAt: 2000,
+		Quota: 100, RequestId: "preq-2",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"vp2","group_ratio":1}`,
+	}).Error)
+	// sora 形态：size + seconds
+	require.NoError(t, DB.Create(&Task{
+		TaskID: "vp3", UserId: 1, Status: TaskStatusSuccess, Progress: "100%", Quota: 100,
+		Properties: Properties{
+			Input:           `{"model":"doubao-seedance-2-0","prompt":"bird","size":"1280x720","seconds":"8"}`,
+			OriginModelName: "doubao-seedance-2-0",
+		},
+		PrivateData: TaskPrivateData{RequestId: "preq-3"},
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-2-0", CreatedAt: 3000,
+		Quota: 100, RequestId: "preq-3",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"vp3","group_ratio":1}`,
+	}).Error)
+
+	logs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 100, 0, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, logs, 3)
+	byReq := map[string]*Log{}
+	for _, l := range logs {
+		byReq[l.RequestId] = l
+	}
+
+	t1 := byReq["preq-1"].TaskInfo
+	require.NotNil(t, t1)
+	assert.Equal(t, "720p", t1.Resolution)
+	assert.Equal(t, "16:9", t1.Ratio)
+	assert.Equal(t, 5, t1.DurationS)
+
+	t2 := byReq["preq-2"].TaskInfo
+	require.NotNil(t, t2)
+	assert.Equal(t, "1080p", t2.Resolution)
+	assert.Equal(t, "9:16", t2.Ratio)
+	assert.Equal(t, 10, t2.DurationS)
+
+	t3 := byReq["preq-3"].TaskInfo
+	require.NotNil(t, t3)
+	assert.Equal(t, "720p", t3.Resolution, "size 1280x720 → 短边 720p")
+	assert.Equal(t, "16:9", t3.Ratio, "size 1280x720 → 16:9")
+	assert.Equal(t, 8, t3.DurationS)
+}

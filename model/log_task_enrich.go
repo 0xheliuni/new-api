@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,10 @@ type LogTaskInfo struct {
 	FinalQuota     int     `json:"final_quota"`
 	OutputTokens   int     `json:"output_tokens,omitempty"`
 	ResolutionTier string  `json:"resolution_tier,omitempty"`
+	// Resolution/Ratio/DurationS 为用户请求的原始参数（"720p"/"16:9"/5），
+	// 从 task.Properties.Input 解析（请求值优先，task.Data 兜底）。
+	Resolution     string  `json:"resolution,omitempty"`
+	Ratio          string  `json:"ratio,omitempty"`
 	DurationS      int     `json:"duration_s,omitempty"`
 	HasInput       bool    `json:"has_input"`
 	EffectiveRatio float64 `json:"effective_ratio,omitempty"`
@@ -152,9 +157,15 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 			if includeUpstreamId {
 				ti.UpstreamTaskId = tk.GetUpstreamTaskID()
 			}
-			dur, outTok := parseTaskVideoMeta(tk.Data)
+			// 请求参数真实值优先（Properties.Input = 用户原始请求 JSON）
+			res, ratio, dur := parseTaskRequestParams(tk.Properties.Input)
+			ti.Resolution, ti.Ratio = res, ratio
 			if dur > 0 {
 				ti.DurationS = dur
+			}
+			metaDur, outTok := parseTaskVideoMeta(tk.Data)
+			if ti.DurationS == 0 && metaDur > 0 {
+				ti.DurationS = metaDur
 			}
 			if ti.OutputTokens == 0 && outTok > 0 {
 				ti.OutputTokens = outTok
@@ -170,6 +181,100 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 		}
 		c.log.TaskInfo = ti
 	}
+}
+
+// parseTaskRequestParams 从 task.Properties.Input（用户原始请求 JSON）解析
+// 请求的分辨率/宽高比/时长。支持顶层 resolution/ratio/duration/seconds、
+// metadata.resolution/metadata.ratio 嵌套，以及 sora 形态的 size("1280x720")
+// 推导（短边→"720p"、约分→"16:9"）。截断标记或解析失败返回零值。
+func parseTaskRequestParams(input string) (resolution, ratio string, durationS int) {
+	if strings.TrimSpace(input) == "" || strings.Contains(input, `"_truncated"`) {
+		return "", "", 0
+	}
+	var m map[string]interface{}
+	if err := common.UnmarshalJsonStr(input, &m); err != nil {
+		return "", "", 0
+	}
+	str := func(src map[string]interface{}, key string) string {
+		if src == nil {
+			return ""
+		}
+		s, _ := src[key].(string)
+		return strings.TrimSpace(s)
+	}
+	toInt := func(v interface{}) int {
+		switch n := v.(type) {
+		case float64:
+			if n > 0 {
+				return int(n)
+			}
+		case string:
+			if p, err := strconv.Atoi(strings.TrimSpace(n)); err == nil && p > 0 {
+				return p
+			}
+		}
+		return 0
+	}
+	meta, _ := m["metadata"].(map[string]interface{})
+
+	resolution = str(m, "resolution")
+	if resolution == "" {
+		resolution = str(meta, "resolution")
+	}
+	ratio = str(m, "ratio")
+	if ratio == "" {
+		ratio = str(meta, "ratio")
+	}
+	durationS = toInt(m["duration"])
+	if durationS == 0 {
+		durationS = toInt(m["seconds"])
+	}
+	if durationS == 0 && meta != nil {
+		durationS = toInt(meta["duration"])
+	}
+
+	// sora 形态：size "1280x720" → 分辨率短边 + 约分宽高比
+	if resolution == "" || ratio == "" {
+		if size := str(m, "size"); size != "" {
+			if w, h, ok := parseVideoSize(size); ok {
+				if resolution == "" {
+					short := h
+					if w < h {
+						short = w
+					}
+					resolution = strconv.Itoa(short) + "p"
+				}
+				if ratio == "" {
+					g := gcdInt(w, h)
+					ratio = fmt.Sprintf("%d:%d", w/g, h/g)
+				}
+			}
+		}
+	}
+	return resolution, ratio, durationS
+}
+
+func parseVideoSize(size string) (w, h int, ok bool) {
+	parts := strings.SplitN(strings.ToLower(strings.TrimSpace(size)), "x", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	w, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
+func gcdInt(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a == 0 {
+		return 1
+	}
+	return a
 }
 
 // parseTaskVideoMeta 从 task.Data(脱敏后的上游最终响应 JSON)尽力解析生成秒数与
