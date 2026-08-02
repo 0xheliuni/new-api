@@ -25,6 +25,7 @@ import {
   showInfo,
   showSuccess,
   verifyJSON,
+  isRoot,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import { CHANNEL_OPTIONS, MODEL_FETCHABLE_CHANNEL_TYPES } from '../../../../constants';
@@ -46,6 +47,7 @@ import {
   Col,
   Highlight,
   Input,
+  InputNumber,
   Tooltip,
   Collapse,
   Dropdown,
@@ -226,6 +228,12 @@ const EditChannelModal = (props) => {
     byteplus_moderation_skip: true,
     // 第三方 Seedance 渠道（渠道类型 59）素材库预上传总开关
     seedance3rd_asset_enabled: false,
+    // 供应商设置（仅 root 可见/编辑，非 root 通过 originalChannelSettingRef 保留原值）
+    cost_ratio: 0,
+    cost_mode: 'ratio',
+    cost_discount: 0,
+    is_aggregator: false,
+    sub_suppliers: [],
   };
   const [batch, setBatch] = useState(false);
   const [multiToSingle, setMultiToSingle] = useState(false);
@@ -530,6 +538,12 @@ const EditChannelModal = (props) => {
     proxy: '',
     pass_through_body_enabled: false,
     system_prompt: '',
+    // 供应商设置：始终加载（不受 isRoot() 门控），确保非 root 保存时原值原样透传
+    cost_ratio: 0,
+    cost_mode: 'ratio',
+    cost_discount: 0,
+    is_aggregator: false,
+    sub_suppliers: [],
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
@@ -911,6 +925,20 @@ const EditChannelModal = (props) => {
           data.system_prompt = parsedSettings.system_prompt || '';
           data.system_prompt_override =
             parsedSettings.system_prompt_override || false;
+          // 供应商设置：始终解析（不受 isRoot() 门控），确保非 root 保存时原值原样透传
+          data.cost_ratio = Number(parsedSettings.cost_ratio) || 0;
+          data.cost_mode =
+            parsedSettings.cost_mode === 'discount' ? 'discount' : 'ratio';
+          data.cost_discount = Number(parsedSettings.cost_discount) || 0;
+          data.is_aggregator = parsedSettings.is_aggregator === true;
+          data.sub_suppliers = Array.isArray(parsedSettings.sub_suppliers)
+            ? parsedSettings.sub_suppliers
+                .filter((s) => s && typeof s === 'object')
+                .map((s) => ({
+                  name: String(s.name || ''),
+                  cost_ratio: Number(s.cost_ratio) || 0,
+                }))
+            : [];
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           originalChannelSettingRef.current = {};
@@ -920,6 +948,11 @@ const EditChannelModal = (props) => {
           data.pass_through_body_enabled = false;
           data.system_prompt = '';
           data.system_prompt_override = false;
+          data.cost_ratio = 0;
+          data.cost_mode = 'ratio';
+          data.cost_discount = 0;
+          data.is_aggregator = false;
+          data.sub_suppliers = [];
         }
       } else {
         originalChannelSettingRef.current = {};
@@ -929,6 +962,11 @@ const EditChannelModal = (props) => {
         data.pass_through_body_enabled = false;
         data.system_prompt = '';
         data.system_prompt_override = false;
+        data.cost_ratio = 0;
+        data.cost_mode = 'ratio';
+        data.cost_discount = 0;
+        data.is_aggregator = false;
+        data.sub_suppliers = [];
       }
 
       if (data.settings) {
@@ -1070,6 +1108,11 @@ const EditChannelModal = (props) => {
         pass_through_body_enabled: data.pass_through_body_enabled,
         system_prompt: data.system_prompt,
         system_prompt_override: data.system_prompt_override || false,
+        cost_ratio: data.cost_ratio,
+        cost_mode: data.cost_mode,
+        cost_discount: data.cost_discount,
+        is_aggregator: data.is_aggregator,
+        sub_suppliers: data.sub_suppliers,
       });
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
@@ -1455,6 +1498,11 @@ const EditChannelModal = (props) => {
       pass_through_body_enabled: false,
       system_prompt: '',
       system_prompt_override: false,
+      cost_ratio: 0,
+      cost_mode: 'ratio',
+      cost_discount: 0,
+      is_aggregator: false,
+      sub_suppliers: [],
     });
     // 重置密钥模式状态
     setKeyMode('append');
@@ -1818,6 +1866,10 @@ const EditChannelModal = (props) => {
     }
 
     // 生成渠道额外设置JSON
+    // 供应商设置（cost_ratio/cost_mode/cost_discount/is_aggregator/sub_suppliers）
+    // 一律取自 channelSettings 状态而非 localInputs：非 root 用户不会渲染这些表单
+    // 字段，channelSettings 仍在 loadChannel() 时被无条件填充为渠道原值，这样
+    // 无论当前用户是否为 root，保存都会原样透传/正确写回。
     const channelExtraSettings = {
       force_format: localInputs.force_format || false,
       thinking_to_content: localInputs.thinking_to_content || false,
@@ -1825,6 +1877,18 @@ const EditChannelModal = (props) => {
       pass_through_body_enabled: localInputs.pass_through_body_enabled || false,
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
+      cost_ratio: Number(channelSettings.cost_ratio) || 0,
+      cost_mode: channelSettings.cost_mode === 'discount' ? 'discount' : 'ratio',
+      cost_discount: Number(channelSettings.cost_discount) || 0,
+      is_aggregator: channelSettings.is_aggregator === true,
+      sub_suppliers: Array.isArray(channelSettings.sub_suppliers)
+        ? channelSettings.sub_suppliers
+            .map((s) => ({
+              name: String(s?.name || '').trim(),
+              cost_ratio: Number(s?.cost_ratio) || 0,
+            }))
+            .filter((s) => s.name)
+        : [],
     };
     // 以原始完整 setting 对象为底做合并，保留表单未感知的键（如 cost_ratio），
     // 避免本表单只知道的几个键覆盖写回时把其它键冲掉
@@ -1954,6 +2018,12 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
     delete localInputs.is_enterprise_account;
+    // 供应商设置的顶层临时字段不应发送给后端（已写入 setting JSON）
+    delete localInputs.cost_ratio;
+    delete localInputs.cost_mode;
+    delete localInputs.cost_discount;
+    delete localInputs.is_aggregator;
+    delete localInputs.sub_suppliers;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
@@ -3898,6 +3968,180 @@ const EditChannelModal = (props) => {
                     showClear
                   />
                 </Card>
+
+                {/* Supplier Settings Card - root only; values load unconditionally via loadChannel() */}
+                {isRoot() && (
+                  <Card className='!rounded-2xl shadow-sm border-0'>
+                    <div className='flex items-center mb-4'>
+                      <Avatar size='small' color='purple' className='mr-2 shadow-md'>
+                        <IconSetting size={16} />
+                      </Avatar>
+                      <div>
+                        <Text className='text-lg font-medium'>
+                          {t('供应商设置')}
+                        </Text>
+                        <div className='text-xs text-gray-600'>
+                          {t('成本计价方式、聚合渠道状态与子供应商')}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Form.Select
+                      field='cost_mode'
+                      label={t('计价方式')}
+                      optionList={[
+                        { label: t('成本倍率（人民币:美元）'), value: 'ratio' },
+                        { label: t('成本折扣'), value: 'discount' },
+                      ]}
+                      style={{ width: '100%' }}
+                      value={inputs.cost_mode || 'ratio'}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('cost_mode', value)
+                      }
+                    />
+
+                    {inputs.cost_mode === 'discount' ? (
+                      <Form.InputNumber
+                        field='cost_discount'
+                        label={t('成本折扣')}
+                        min={0}
+                        step={0.01}
+                        style={{ width: '100%' }}
+                        value={inputs.cost_discount ?? 0}
+                        onNumberChange={(value) =>
+                          handleChannelSettingsChange('cost_discount', value)
+                        }
+                        extraText={t('例如 0.8 表示刊例价打 8 折计入成本')}
+                      />
+                    ) : (
+                      <Form.InputNumber
+                        field='cost_ratio'
+                        label={t('成本倍率（人民币:美元）')}
+                        min={0}
+                        step={0.01}
+                        style={{ width: '100%' }}
+                        value={inputs.cost_ratio ?? 0}
+                        onNumberChange={(value) =>
+                          handleChannelSettingsChange('cost_ratio', value)
+                        }
+                        extraText={t(
+                          '用于成本核算。留空则按未填写处理，成本按 0 计并在报表警示',
+                        )}
+                      />
+                    )}
+
+                    <Form.Switch
+                      field='is_aggregator'
+                      label={t('聚合渠道')}
+                      checkedText={t('开')}
+                      uncheckedText={t('关')}
+                      value={inputs.is_aggregator === true}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('is_aggregator', value)
+                      }
+                      extraText={t('该渠道会路由到多个上游子供应商')}
+                    />
+
+                    {inputs.is_aggregator && (
+                      <div className='mt-2'>
+                        <div className='flex items-center justify-between mb-2'>
+                          <Text className='text-sm font-medium'>
+                            {t('子供应商')}
+                          </Text>
+                          <Tooltip content={t('聚合系统接口接入后可用')}>
+                            <span style={{ display: 'inline-block' }}>
+                              <Button
+                                size='small'
+                                type='tertiary'
+                                disabled
+                                style={{ pointerEvents: 'none' }}
+                              >
+                                {t('从上游同步')}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </div>
+
+                        {(inputs.sub_suppliers || []).length === 0 && (
+                          <Text type='tertiary' size='small'>
+                            {t('尚未配置子供应商')}
+                          </Text>
+                        )}
+
+                        {(inputs.sub_suppliers || []).map((row, idx) => (
+                          <div
+                            key={idx}
+                            className='flex items-center gap-2 mb-2'
+                          >
+                            <Input
+                              placeholder={t('名称')}
+                              value={row.name}
+                              onChange={(value) => {
+                                const next = [...(inputs.sub_suppliers || [])];
+                                next[idx] = { ...next[idx], name: value };
+                                handleChannelSettingsChange(
+                                  'sub_suppliers',
+                                  next,
+                                );
+                              }}
+                              style={{ flex: 1 }}
+                            />
+                            <InputNumber
+                              placeholder={t('倍率')}
+                              min={0}
+                              step={0.01}
+                              value={row.cost_ratio}
+                              onChange={(value) => {
+                                const next = [...(inputs.sub_suppliers || [])];
+                                next[idx] = { ...next[idx], cost_ratio: value };
+                                handleChannelSettingsChange(
+                                  'sub_suppliers',
+                                  next,
+                                );
+                              }}
+                              style={{ width: 120 }}
+                            />
+                            <Button
+                              icon={<IconClose />}
+                              type='tertiary'
+                              theme='borderless'
+                              onClick={() => {
+                                const next = (
+                                  inputs.sub_suppliers || []
+                                ).filter((_, i) => i !== idx);
+                                handleChannelSettingsChange(
+                                  'sub_suppliers',
+                                  next,
+                                );
+                              }}
+                            />
+                          </div>
+                        ))}
+
+                        <Button
+                          type='tertiary'
+                          theme='outline'
+                          size='small'
+                          onClick={() => {
+                            const next = [
+                              ...(inputs.sub_suppliers || []),
+                              { name: '', cost_ratio: 0 },
+                            ];
+                            handleChannelSettingsChange('sub_suppliers', next);
+                          }}
+                        >
+                          {t('添加子供应商')}
+                        </Button>
+
+                        <div className='mt-2'>
+                          <Text type='tertiary' size='small'>
+                            {t('报表成本按渠道级计价计算')}
+                          </Text>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                )}
 
                 {/* Advanced Settings Toggle / Collapse */}
                 {isMobile ? (

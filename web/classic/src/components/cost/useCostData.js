@@ -23,6 +23,8 @@ import dayjs from 'dayjs';
 import { API, showError } from '../../helpers';
 
 const DEFAULT_PAGE_SIZE = 20;
+// 默认汇率：与后端 operation_setting.USDExchangeRate 未显式传参时的兜底一致的展示默认值
+const DEFAULT_EXCHANGE_RATE = 6.8;
 
 // 默认时间范围：近 7 天
 const getDefaultDateRange = () => [
@@ -30,11 +32,19 @@ const getDefaultDateRange = () => [
   dayjs().endOf('day').toDate(),
 ];
 
+const getDefaultFilters = () => ({
+  dateRange: getDefaultDateRange(),
+  username: '',
+  channel: undefined,
+  modelName: '',
+  exchangeRate: DEFAULT_EXCHANGE_RATE,
+});
+
 export const useCostData = () => {
   const { t } = useTranslation();
 
   // ========== 查询条件 ==========
-  const [dateRange, setDateRangeState] = useState(getDefaultDateRange);
+  const [filters, setFilters] = useState(getDefaultFilters);
   const [activeTab, setActiveTabState] = useState('users'); // users | models | channels
   const [activePage, setActivePage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -51,18 +61,28 @@ export const useCostData = () => {
   });
   const [tableLoading, setTableLoading] = useState(false);
 
+  const { dateRange, username, channel, modelName, exchangeRate } = filters;
   const startTimestamp = Math.floor((dateRange[0]?.getTime() || 0) / 1000);
   const endTimestamp = Math.floor((dateRange[1]?.getTime() || 0) / 1000);
+  const effectiveExchangeRate =
+    Number(exchangeRate) > 0 ? Number(exchangeRate) : DEFAULT_EXCHANGE_RATE;
+  const effectiveChannel = Number(channel) > 0 ? Number(channel) : 0;
+
+  const commonParams = {
+    start_timestamp: startTimestamp,
+    end_timestamp: endTimestamp,
+    username: username || undefined,
+    channel: effectiveChannel || undefined,
+    model_name: modelName || undefined,
+    exchange_rate: effectiveExchangeRate,
+  };
 
   // ========== 加载函数 ==========
   const loadOverview = useCallback(async () => {
     setOverviewLoading(true);
     try {
       const res = await API.get('/api/cost/overview', {
-        params: {
-          start_timestamp: startTimestamp,
-          end_timestamp: endTimestamp,
-        },
+        params: commonParams,
       });
       const { success, message, data } = res.data;
       if (success) {
@@ -75,15 +95,15 @@ export const useCostData = () => {
     } finally {
       setOverviewLoading(false);
     }
-  }, [startTimestamp, endTimestamp]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startTimestamp, endTimestamp, username, effectiveChannel, modelName, effectiveExchangeRate]);
 
   const loadDimension = useCallback(async () => {
     setTableLoading(true);
     try {
       const res = await API.get(`/api/cost/${activeTab}`, {
         params: {
-          start_timestamp: startTimestamp,
-          end_timestamp: endTimestamp,
+          ...commonParams,
           p: activePage,
           page_size: pageSize,
         },
@@ -99,7 +119,18 @@ export const useCostData = () => {
     } finally {
       setTableLoading(false);
     }
-  }, [activeTab, activePage, pageSize, startTimestamp, endTimestamp]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeTab,
+    activePage,
+    pageSize,
+    startTimestamp,
+    endTimestamp,
+    username,
+    effectiveChannel,
+    modelName,
+    effectiveExchangeRate,
+  ]);
 
   useEffect(() => {
     loadOverview();
@@ -121,12 +152,44 @@ export const useCostData = () => {
     setActivePage(1);
   };
 
-  // 由查询表单提交时调用，提交后统一刷新
-  const applyDateRange = (range) => {
-    if (Array.isArray(range) && range.length === 2 && range[0] && range[1]) {
-      setDateRangeState(range);
-      setActivePage(1);
-    }
+  // 由查询表单提交时调用（查询按钮），提交后统一刷新并回到第 1 页
+  const applyFilters = (values) => {
+    if (!values) return;
+    setFilters((prev) => {
+      const next = { ...prev };
+      if (
+        Array.isArray(values.dateRange) &&
+        values.dateRange.length === 2 &&
+        values.dateRange[0] &&
+        values.dateRange[1]
+      ) {
+        next.dateRange = values.dateRange;
+      }
+      if ('username' in values) next.username = values.username || '';
+      if ('channel' in values) next.channel = values.channel;
+      if ('modelName' in values) next.modelName = values.modelName || '';
+      if ('exchangeRate' in values) {
+        next.exchangeRate =
+          Number(values.exchangeRate) > 0
+            ? Number(values.exchangeRate)
+            : DEFAULT_EXCHANGE_RATE;
+      }
+      return next;
+    });
+    setActivePage(1);
+  };
+
+  // 重置按钮：恢复默认筛选条件并重新查询
+  const resetFilters = () => {
+    setFilters(getDefaultFilters());
+    setActivePage(1);
+  };
+
+  // 「只看该渠道」：设置渠道筛选并切到供应商维度 tab
+  const filterByChannel = (channelId) => {
+    setFilters((prev) => ({ ...prev, channel: channelId }));
+    setActiveTabState('channels');
+    setActivePage(1);
   };
 
   const refresh = () => {
@@ -136,8 +199,11 @@ export const useCostData = () => {
 
   return {
     t,
-    dateRange,
-    applyDateRange,
+    filters,
+    applyFilters,
+    resetFilters,
+    filterByChannel,
+    defaultFilters: getDefaultFilters(),
     activeTab,
     setActiveTab,
     activePage,

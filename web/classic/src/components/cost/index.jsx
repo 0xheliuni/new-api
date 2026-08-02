@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Card, Form, Button, Banner } from '@douyinfe/semi-ui';
+import React, { useRef } from 'react';
+import { Card, Form, Button, Banner, Space } from '@douyinfe/semi-ui';
 import CardPro from '../common/ui/CardPro';
 import CostCharts from './CostCharts';
 import CostTables from './CostTables';
@@ -38,8 +38,11 @@ const CostAccounting = () => {
   const costData = useCostData();
   const {
     t,
-    dateRange,
-    applyDateRange,
+    filters,
+    applyFilters,
+    resetFilters,
+    filterByChannel,
+    defaultFilters,
     activeTab,
     setActiveTab,
     activePage,
@@ -53,6 +56,7 @@ const CostAccounting = () => {
     refresh,
   } = costData;
   const isMobile = useIsMobile();
+  const filterFormApiRef = useRef(null);
 
   const totals = overview?.totals || {};
   const unpricedCount = overview?.unpriced_channel_count || 0;
@@ -115,67 +119,131 @@ const CostAccounting = () => {
     </div>
   );
 
-  const searchArea = (
-    <Form
-      initValues={{ dateRange }}
-      onSubmit={(values) => applyDateRange(values.dateRange)}
-      allowEmpty={true}
-      layout='vertical'
-      trigger='change'
-      stopValidateWithError={false}
-    >
-      <div className='flex flex-col sm:flex-row gap-2 items-start sm:items-end'>
-        <Form.DatePicker
-          field='dateRange'
-          type='dateTimeRange'
-          className='w-full sm:w-auto'
-          placeholder={[t('开始时间'), t('结束时间')]}
-          presets={DATE_RANGE_PRESETS.map((preset) => ({
-            text: t(preset.text),
-            start: preset.start(),
-            end: preset.end(),
-          }))}
-          showClear
-          pure
-          size='small'
-        />
-        <Button type='tertiary' htmlType='submit' loading={overviewLoading} size='small'>
-          {t('查询')}
-        </Button>
-      </div>
-    </Form>
+  const filterArea = (
+    <Card bordered className='!rounded-2xl mb-4'>
+      <Form
+        initValues={filters}
+        onSubmit={(values) => applyFilters(values)}
+        allowEmpty={true}
+        layout='vertical'
+        trigger='change'
+        stopValidateWithError={false}
+        getFormApi={(api) => (filterFormApiRef.current = api)}
+      >
+        <div className='flex flex-col sm:flex-row flex-wrap gap-2 items-start sm:items-end'>
+          <Form.DatePicker
+            field='dateRange'
+            type='dateTimeRange'
+            label={t('时间范围')}
+            className='w-full sm:w-auto'
+            placeholder={[t('开始时间'), t('结束时间')]}
+            presets={DATE_RANGE_PRESETS.map((preset) => ({
+              text: t(preset.text),
+              start: preset.start(),
+              end: preset.end(),
+            }))}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Input
+            field='username'
+            label={t('用户名称')}
+            placeholder={t('用户名称')}
+            className='w-full sm:w-auto'
+            showClear
+            size='small'
+          />
+          <Form.InputNumber
+            field='channel'
+            label={t('渠道ID')}
+            placeholder={t('渠道ID')}
+            className='w-full sm:w-auto'
+            min={0}
+            size='small'
+          />
+          <Form.Input
+            field='modelName'
+            label={t('模型名称')}
+            placeholder={t('模型名称')}
+            className='w-full sm:w-auto'
+            showClear
+            size='small'
+          />
+          <Form.InputNumber
+            field='exchangeRate'
+            label={t('汇率')}
+            placeholder='6.8'
+            className='w-full sm:w-auto'
+            min={0}
+            step={0.01}
+            prefix='$1 ='
+            suffix='CNY'
+            size='small'
+          />
+          <Space>
+            <Button
+              theme='solid'
+              type='primary'
+              htmlType='submit'
+              loading={overviewLoading}
+              size='small'
+            >
+              {t('查询')}
+            </Button>
+            <Button
+              type='tertiary'
+              size='small'
+              onClick={() => {
+                filterFormApiRef.current?.setValues(defaultFilters);
+                resetFilters();
+              }}
+            >
+              {t('重置')}
+            </Button>
+          </Space>
+        </div>
+      </Form>
+    </Card>
   );
 
   return (
-    <CardPro
-      type='type2'
-      statsArea={statsArea}
-      searchArea={searchArea}
-      paginationArea={createCardProPagination({
-        currentPage: activePage,
-        pageSize,
-        total: pageData?.total || 0,
-        onPageChange: handlePageChange,
-        onPageSizeChange: handlePageSizeChange,
-        isMobile,
-        t,
-      })}
-      t={t}
-    >
-      <CostCharts trend={overview?.trend} costStack={overview?.cost_stack} t={t} />
-      <CostTables
+    <>
+      {filterArea}
+      <CardPro
+        type='type2'
+        statsArea={statsArea}
+        paginationArea={createCardProPagination({
+          currentPage: activePage,
+          pageSize,
+          total: pageData?.total || 0,
+          onPageChange: handlePageChange,
+          onPageSizeChange: handlePageSizeChange,
+          isMobile,
+          t,
+        })}
         t={t}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        pageData={pageData}
-        tableLoading={tableLoading}
-        activePage={activePage}
-        pageSize={pageSize}
-        handlePageChange={handlePageChange}
-        handlePageSizeChange={handlePageSizeChange}
-        onRatioUpdated={refresh}
-      />
-    </CardPro>
+      >
+        <CostCharts trend={overview?.trend} costStack={overview?.cost_stack} t={t} />
+        <CostTables
+          t={t}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          pageData={pageData}
+          tableLoading={tableLoading}
+          activePage={activePage}
+          pageSize={pageSize}
+          handlePageChange={handlePageChange}
+          handlePageSizeChange={handlePageSizeChange}
+          onRatioUpdated={refresh}
+          onFilterByChannel={(channelId) => {
+            filterByChannel(channelId);
+            filterFormApiRef.current?.setValue('channel', channelId);
+          }}
+          exchangeRate={filters.exchangeRate}
+        />
+      </CardPro>
+    </>
   );
 };
 
