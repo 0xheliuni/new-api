@@ -165,7 +165,7 @@ func buildCostOverview(cube *costCube, channels map[int]*model.ChannelCostInfo, 
 	unpriced := make(map[int]bool)
 	for k, r := range cube.rows {
 		ratio, chName := effectiveChannelRatio(channels, k.ChannelId, rate)
-		m := costMoneyFromParts(r.Quota, r.ListQuota, r.RefundQuota, r.PromptTokens, r.CompletionTokens, r.RequestCount, ratio, rate)
+		m := costMoneyFromRow(r, ratio, rate)
 		ov.Totals.add(m)
 		if ratio <= 0 {
 			unpriced[k.ChannelId] = true

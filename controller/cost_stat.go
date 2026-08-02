@@ -27,6 +27,12 @@ type costCubeRow struct {
 	PromptTokens     int
 	CompletionTokens int
 	RequestCount     int // 消费且非 settle 补扣行（任务多行只按 pre_consume 计 1 次）
+
+	ErrorCount          int     // LogTypeError 行计数（同一用户/模型/渠道/日桶）
+	CacheReadTokens     int     // 累计缓存读取 tokens（消费非退款行）
+	CacheCreationTokens int     // 累计缓存创建 tokens（legacy + 5m + 1h 合计）
+	FrtSumMs            float64 // 首字延迟毫秒累加（仅 info.Frt > 0 的行）
+	FrtCount            int     // 参与 FrtSumMs 累加的行数
 }
 
 type costCube struct {
@@ -39,7 +45,7 @@ func newCostCube() *costCube {
 
 func (c *costCube) addBatch(logs []*model.Log) {
 	for _, log := range logs {
-		if log.Type != model.LogTypeConsume && log.Type != model.LogTypeRefund {
+		if log.Type != model.LogTypeConsume && log.Type != model.LogTypeRefund && log.Type != model.LogTypeError {
 			continue
 		}
 		key := costCubeKey{
@@ -53,6 +59,10 @@ func (c *costCube) addBatch(logs []*model.Log) {
 		if row == nil {
 			row = &costCubeRow{}
 			c.rows[key] = row
+		}
+		if log.Type == model.LogTypeError {
+			row.ErrorCount++
+			continue
 		}
 		info := parseLogPricingInfo(log)
 		listQ := logListQuota(log, info)
@@ -69,6 +79,12 @@ func (c *costCube) addBatch(logs []*model.Log) {
 		row.ListQuota += listQ
 		row.PromptTokens += log.PromptTokens
 		row.CompletionTokens += log.CompletionTokens
+		row.CacheReadTokens += getCacheTokensFromOther(log, "cache_tokens")
+		row.CacheCreationTokens += getCacheCreationTokensFromOther(log)
+		if info != nil && info.Frt > 0 {
+			row.FrtSumMs += info.Frt
+			row.FrtCount++
+		}
 	}
 }
 
@@ -92,6 +108,16 @@ type costMoney struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	RequestCount     int `json:"request_count"`
+
+	CacheReadTokens     int     `json:"cache_read_tokens"`
+	CacheCreationTokens int     `json:"cache_creation_tokens"`
+	TotalTokens         int     `json:"total_tokens"`
+	ErrorCount          int     `json:"error_count"`
+	FrtSumMs            float64 `json:"frt_sum_ms"`
+	FrtCount            int     `json:"frt_count"`
+	SuccessRate         float64 `json:"success_rate"`
+	CacheRate           float64 `json:"cache_rate"`
+	AvgTtftMs           float64 `json:"avg_ttft_ms"`
 }
 
 // costBreakdownRow 维度折叠行下的子明细（折叠掉本维度与 Day，保留其余两个维度）。
@@ -119,17 +145,24 @@ type costDimensionRow struct {
 	BreakdownTruncated int                `json:"breakdown_truncated,omitempty"`
 }
 
-// costMoneyFromParts 统一金额换算：
+// costMoneyFromRow 统一金额换算：
 // revenue_usd = 实付/QuotaPerUnit；cost_cny = 刊例USD × 渠道倍率；
 // profit = revenue_cny − cost_cny；收入为 0 时利润率置 0。
-func costMoneyFromParts(actualQuota, listQuota, refundQuota float64, pt, ct, rc int, ratio, exchangeRate float64) costMoney {
+// 同时派生 v2 指标：total_tokens、success_rate、cache_rate、avg_ttft_ms
+// （零分母兜底规则见 deriveCostMoneyRates）。
+func costMoneyFromRow(r *costCubeRow, ratio, exchangeRate float64) costMoney {
 	m := costMoney{
-		RevenueUsd:       roundTo6(actualQuota / common.QuotaPerUnit),
-		ListUsd:          roundTo6(listQuota / common.QuotaPerUnit),
-		RefundUsd:        roundTo6(refundQuota / common.QuotaPerUnit),
-		PromptTokens:     pt,
-		CompletionTokens: ct,
-		RequestCount:     rc,
+		RevenueUsd:          roundTo6(r.Quota / common.QuotaPerUnit),
+		ListUsd:             roundTo6(r.ListQuota / common.QuotaPerUnit),
+		RefundUsd:           roundTo6(r.RefundQuota / common.QuotaPerUnit),
+		PromptTokens:        r.PromptTokens,
+		CompletionTokens:    r.CompletionTokens,
+		RequestCount:        r.RequestCount,
+		CacheReadTokens:     r.CacheReadTokens,
+		CacheCreationTokens: r.CacheCreationTokens,
+		ErrorCount:          r.ErrorCount,
+		FrtSumMs:            r.FrtSumMs,
+		FrtCount:            r.FrtCount,
 	}
 	m.RevenueCny = roundTo6(m.RevenueUsd * exchangeRate)
 	m.CostCny = roundTo6(m.ListUsd * ratio)
@@ -137,7 +170,31 @@ func costMoneyFromParts(actualQuota, listQuota, refundQuota float64, pt, ct, rc 
 	if m.RevenueCny != 0 {
 		m.ProfitRate = roundTo6(m.ProfitCny / m.RevenueCny)
 	}
+	m.deriveRates()
 	return m
+}
+
+// deriveRates 重新计算 v2 派生指标：total_tokens 恒为 prompt+completion；
+// success_rate 在请求+错误数为 0 时兜底为 1；cache_rate 在 prompt tokens 为
+// 0 时兜底为 0；avg_ttft_ms 在无 frt 采样时兜底为 0。add() 汇总原始字段后
+// 必须重新调用本方法，不能直接对派生字段做加法。
+func (m *costMoney) deriveRates() {
+	m.TotalTokens = m.PromptTokens + m.CompletionTokens
+	if m.RequestCount+m.ErrorCount == 0 {
+		m.SuccessRate = 1
+	} else {
+		m.SuccessRate = roundTo6(float64(m.RequestCount) / float64(m.RequestCount+m.ErrorCount))
+	}
+	if m.PromptTokens == 0 {
+		m.CacheRate = 0
+	} else {
+		m.CacheRate = roundTo6(float64(m.CacheReadTokens) / float64(m.PromptTokens))
+	}
+	if m.FrtCount == 0 {
+		m.AvgTtftMs = 0
+	} else {
+		m.AvgTtftMs = roundTo6(m.FrtSumMs / float64(m.FrtCount))
+	}
 }
 
 func (m *costMoney) add(o costMoney) {
@@ -150,11 +207,17 @@ func (m *costMoney) add(o costMoney) {
 	m.PromptTokens += o.PromptTokens
 	m.CompletionTokens += o.CompletionTokens
 	m.RequestCount += o.RequestCount
+	m.CacheReadTokens += o.CacheReadTokens
+	m.CacheCreationTokens += o.CacheCreationTokens
+	m.ErrorCount += o.ErrorCount
+	m.FrtSumMs = roundTo6(m.FrtSumMs + o.FrtSumMs)
+	m.FrtCount += o.FrtCount
 	if m.RevenueCny != 0 {
 		m.ProfitRate = roundTo6(m.ProfitCny / m.RevenueCny)
 	} else {
 		m.ProfitRate = 0
 	}
+	m.deriveRates()
 }
 
 // effectiveChannelRatio 依据计价方式换算有效倍率（CNY:USD）：
@@ -185,7 +248,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 
 	for k, r := range cube.rows {
 		ratio, chName := effectiveChannelRatio(channels, k.ChannelId, exchangeRate)
-		m := costMoneyFromParts(r.Quota, r.ListQuota, r.RefundQuota, r.PromptTokens, r.CompletionTokens, r.RequestCount, ratio, exchangeRate)
+		m := costMoneyFromRow(r, ratio, exchangeRate)
 
 		var gk groupKey
 		switch dim {

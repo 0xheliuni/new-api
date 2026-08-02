@@ -76,12 +76,12 @@ func TestCostCube_SeedanceRefundScenarios(t *testing.T) {
 	}
 }
 
-// 非消费/退款类型忽略；无 other 的旧日志刊例=实付兜底。
+// 非消费/退款/错误类型忽略（如充值）；无 other 的旧日志刊例=实付兜底。
+// LogTypeError 的计数行为见 TestCostCube_ErrorAndMetrics（v2 起错误行不再被忽略）。
 func TestCostCube_IgnoresOtherTypesAndLegacyLogs(t *testing.T) {
 	c := newCostCube()
 	c.addBatch([]*model.Log{
 		{Type: model.LogTypeTopup, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "a", Quota: 999},
-		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "a", Quota: 5},
 		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "a",
 			ChannelId: 7, ModelName: "m", Quota: 50, Other: ``},
 	})
@@ -250,9 +250,106 @@ func TestFoldCostCube_DimensionTotalsAgree(t *testing.T) {
 
 // 收入为 0 时利润率必须为 0（不得 NaN/Inf）。
 func TestCostMoney_ZeroRevenueRate(t *testing.T) {
-	m := costMoneyFromParts(0, 0, 0, 0, 0, 0, 2.5, 7.0)
+	m := costMoneyFromRow(&costCubeRow{}, 2.5, 7.0)
 	if m.ProfitRate != 0 {
 		t.Fatalf("rate = %v, want 0", m.ProfitRate)
+	}
+}
+
+// TestCostCube_ErrorAndMetrics 覆盖 v2 立方体新增指标：错误计数、缓存 tokens、
+// 首字延迟（TTFT）。同一用户/模型/渠道/日桶下：2 条消费 + 1 条错误 + 1 条退款，
+// 折叠后 SuccessRate = 2/(2+1)，CacheRate = 40/合计prompt，AvgTtftMs 只取
+// frt>0 的行（第二条消费 frt=-1000 视为未记录，不计入 FrtCount/FrtSumMs）。
+func TestCostCube_ErrorAndMetrics(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 200, PromptTokens: 100, CompletionTokens: 20,
+			Other: `{"group_ratio":1,"cache_tokens":40,"cache_creation_tokens":5,"cache_creation_tokens_5m":3,"frt":120.5}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, PromptTokens: 50, CompletionTokens: 10,
+			Other: `{"group_ratio":1,"frt":-1000}`},
+		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 11), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o"},
+		{Type: model.LogTypeRefund, CreatedAt: tsOn("2026-06-01", 12), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 50, Other: `{"group_ratio":1}`},
+	})
+
+	rows := foldCostCube(c, costDimUser, testChannels(), 7.0)
+	var alice *costDimensionRow
+	for i := range rows {
+		if rows[i].Username == "alice" {
+			alice = &rows[i]
+		}
+	}
+	if alice == nil {
+		t.Fatal("alice missing")
+	}
+	if alice.ErrorCount != 1 {
+		t.Fatalf("error_count = %d, want 1", alice.ErrorCount)
+	}
+	if alice.CacheReadTokens != 40 {
+		t.Fatalf("cache_read_tokens = %d, want 40", alice.CacheReadTokens)
+	}
+	if alice.CacheCreationTokens != 8 {
+		t.Fatalf("cache_creation_tokens = %d, want 8", alice.CacheCreationTokens)
+	}
+	if alice.FrtCount != 1 {
+		t.Fatalf("frt_count = %d, want 1", alice.FrtCount)
+	}
+	if alice.FrtSumMs != 120.5 {
+		t.Fatalf("frt_sum_ms = %v, want 120.5", alice.FrtSumMs)
+	}
+	wantSuccessRate := roundTo6(2.0 / 3.0)
+	if alice.SuccessRate != wantSuccessRate {
+		t.Fatalf("success_rate = %v, want %v", alice.SuccessRate, wantSuccessRate)
+	}
+	wantCacheRate := roundTo6(40.0 / 150.0)
+	if alice.CacheRate != wantCacheRate {
+		t.Fatalf("cache_rate = %v, want %v", alice.CacheRate, wantCacheRate)
+	}
+	if alice.AvgTtftMs != 120.5 {
+		t.Fatalf("avg_ttft_ms = %v, want 120.5", alice.AvgTtftMs)
+	}
+	if alice.TotalTokens != 180 {
+		t.Fatalf("total_tokens = %d, want 180", alice.TotalTokens)
+	}
+}
+
+// TestCostMoneyDerivedRates 覆盖三条零分母兜底规则：
+// 请求+错误数为 0 → SuccessRate=1；PromptTokens=0 → CacheRate=0；
+// FrtCount=0 → AvgTtftMs=0。并附一组非零分母的正常路径校验公式本身正确。
+func TestCostMoneyDerivedRates(t *testing.T) {
+	m1 := costMoneyFromRow(&costCubeRow{}, 2.5, 7.0)
+	if m1.SuccessRate != 1 {
+		t.Fatalf("success_rate = %v, want 1", m1.SuccessRate)
+	}
+	if m1.CacheRate != 0 {
+		t.Fatalf("cache_rate = %v, want 0", m1.CacheRate)
+	}
+	if m1.AvgTtftMs != 0 {
+		t.Fatalf("avg_ttft_ms = %v, want 0", m1.AvgTtftMs)
+	}
+
+	m2 := costMoneyFromRow(&costCubeRow{PromptTokens: 0, CacheReadTokens: 10}, 2.5, 7.0)
+	if m2.CacheRate != 0 {
+		t.Fatalf("cache_rate = %v, want 0", m2.CacheRate)
+	}
+
+	m3 := costMoneyFromRow(&costCubeRow{FrtCount: 0, FrtSumMs: 999}, 2.5, 7.0)
+	if m3.AvgTtftMs != 0 {
+		t.Fatalf("avg_ttft_ms = %v, want 0", m3.AvgTtftMs)
+	}
+
+	m4 := costMoneyFromRow(&costCubeRow{RequestCount: 3, ErrorCount: 1, PromptTokens: 100, CacheReadTokens: 25, FrtCount: 2, FrtSumMs: 200}, 2.5, 7.0)
+	if want := roundTo6(3.0 / 4.0); m4.SuccessRate != want {
+		t.Fatalf("success_rate = %v, want %v", m4.SuccessRate, want)
+	}
+	if want := roundTo6(25.0 / 100.0); m4.CacheRate != want {
+		t.Fatalf("cache_rate = %v, want %v", m4.CacheRate, want)
+	}
+	if want := roundTo6(200.0 / 2.0); m4.AvgTtftMs != want {
+		t.Fatalf("avg_ttft_ms = %v, want %v", m4.AvgTtftMs, want)
 	}
 }
 

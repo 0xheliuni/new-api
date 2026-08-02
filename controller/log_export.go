@@ -77,6 +77,7 @@ type logPricingInfo struct {
 	CacheCreationRatio5m  float64 `json:"cache_creation_ratio_5m"`
 	CacheCreationTokens1h int     `json:"cache_creation_tokens_1h"`
 	CacheCreationRatio1h  float64 `json:"cache_creation_ratio_1h"`
+	Frt                   float64 `json:"frt"` // 首字延迟毫秒；<=0 视为未记录
 
 	// Tiered-expression billing keys written by InjectTieredBillingInfo.
 	// expr_b64 is the base64 expression; matched_tier names the tier that
