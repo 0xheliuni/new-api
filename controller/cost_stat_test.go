@@ -196,3 +196,43 @@ func TestCostMoney_ZeroRevenueRate(t *testing.T) {
 		t.Fatalf("rate = %v, want 0", m.ProfitRate)
 	}
 }
+
+// 多个 0 收入行 RevenueCny 相同（并列），map 迭代顺序本身是随机的；
+// foldCostCube 必须用身份字段（Username/ModelName/ChannelId）兜底排序，
+// 保证同一份数据多次调用结果顺序一致（分页/缓存依赖稳定顺序）。
+func TestFoldCostCube_DeterministicOrderOnTies(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 10, Username: "zed",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 0},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 11, Username: "amy",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 0},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 12, Username: "mike",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 0},
+	})
+	chs := testChannels()
+
+	var first []string
+	for i := 0; i < 5; i++ {
+		rows := foldCostCube(c, costDimUser, chs, 7.0)
+		if len(rows) != 3 {
+			t.Fatalf("rows = %d, want 3", len(rows))
+		}
+		names := make([]string, len(rows))
+		for j, r := range rows {
+			names[j] = r.Username
+		}
+		if i == 0 {
+			first = names
+			if names[0] != "amy" || names[1] != "mike" || names[2] != "zed" {
+				t.Fatalf("expected alphabetical tiebreak, got %v", names)
+			}
+			continue
+		}
+		for j := range names {
+			if names[j] != first[j] {
+				t.Fatalf("order changed across calls: run0=%v run%d=%v", first, i, names)
+			}
+		}
+	}
+}

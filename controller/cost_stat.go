@@ -243,7 +243,19 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 		for bk, m := range breakdowns[gk] {
 			bds = append(bds, bd{bk, m})
 		}
-		sort.Slice(bds, func(i, j int) bool { return bds[i].m.RevenueCny > bds[j].m.RevenueCny })
+		sort.Slice(bds, func(i, j int) bool {
+			a, b := bds[i], bds[j]
+			if a.m.RevenueCny != b.m.RevenueCny {
+				return a.m.RevenueCny > b.m.RevenueCny
+			}
+			if a.key.Username != b.key.Username {
+				return a.key.Username < b.key.Username
+			}
+			if a.key.ModelName != b.key.ModelName {
+				return a.key.ModelName < b.key.ModelName
+			}
+			return a.key.ChannelId < b.key.ChannelId
+		})
 		if len(bds) > costBreakdownCap {
 			row.BreakdownTruncated = len(bds) - costBreakdownCap
 			bds = bds[:costBreakdownCap]
@@ -258,6 +270,18 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 		}
 		rows = append(rows, *row)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].RevenueCny > rows[j].RevenueCny })
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.RevenueCny != b.RevenueCny {
+			return a.RevenueCny > b.RevenueCny
+		}
+		if a.Username != b.Username {
+			return a.Username < b.Username
+		}
+		if a.ModelName != b.ModelName {
+			return a.ModelName < b.ModelName
+		}
+		return a.ChannelId < b.ChannelId
+	})
 	return rows
 }
