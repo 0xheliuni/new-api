@@ -157,12 +157,17 @@ func (m *costMoney) add(o costMoney) {
 	}
 }
 
-// channelRatio 渠道倍率；未知渠道/未填 → 0（成本按 0 计，Priced=false）。
-func channelRatio(channels map[int]*model.ChannelCostInfo, id int) (ratio float64, name string) {
-	if ci := channels[id]; ci != nil {
-		return ci.CostRatio, ci.Name
+// effectiveChannelRatio 依据计价方式换算有效倍率（CNY:USD）：
+// ratio 模式取 CostRatio；discount 模式取 CostDiscount×exchangeRate；未知渠道/未填 → 0。
+func effectiveChannelRatio(channels map[int]*model.ChannelCostInfo, id int, exchangeRate float64) (ratio float64, name string) {
+	ci := channels[id]
+	if ci == nil {
+		return 0, ""
 	}
-	return 0, ""
+	if ci.CostMode == "discount" {
+		return ci.CostDiscount * exchangeRate, ci.Name
+	}
+	return ci.CostRatio, ci.Name
 }
 
 // foldCostCube 沿 dim 折叠立方体。每行金额先在 (渠道) 粒度换算再累加，
@@ -179,7 +184,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 	userSets := make(map[groupKey]map[int]bool)
 
 	for k, r := range cube.rows {
-		ratio, chName := channelRatio(channels, k.ChannelId)
+		ratio, chName := effectiveChannelRatio(channels, k.ChannelId, exchangeRate)
 		m := costMoneyFromParts(r.Quota, r.ListQuota, r.RefundQuota, r.PromptTokens, r.CompletionTokens, r.RequestCount, ratio, exchangeRate)
 
 		var gk groupKey
@@ -261,7 +266,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 			bds = bds[:costBreakdownCap]
 		}
 		for _, b := range bds {
-			_, chName := channelRatio(channels, b.key.ChannelId)
+			_, chName := effectiveChannelRatio(channels, b.key.ChannelId, exchangeRate)
 			row.Breakdown = append(row.Breakdown, costBreakdownRow{
 				Username: b.key.Username, ModelName: b.key.ModelName,
 				ChannelId: b.key.ChannelId, ChannelName: chName,

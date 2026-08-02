@@ -1107,11 +1107,18 @@ func CountChannelsGroupByType() (map[int64]int64, error) {
 	return counts, nil
 }
 
-// ChannelCostInfo 成本核算用的渠道摘要：名称 + 成本倍率（CNY:USD，0=未填写）。
+// ChannelCostInfo 成本核算用的渠道摘要：名称 + 计价方式相关字段。
+// CostRatio：ratio 模式倍率（CNY:USD，0=未填写）。
+// CostMode：""/"ratio"=按倍率；"discount"=按成本折扣（CostDiscount × 查询汇率）。
+// IsAggregator/SubSuppliers：聚合渠道标记与子供应商配置（仅配置与展示，成本核算暂不拆分）。
 type ChannelCostInfo struct {
-	Id        int
-	Name      string
-	CostRatio float64
+	Id           int
+	Name         string
+	CostRatio    float64
+	CostMode     string
+	CostDiscount float64
+	IsAggregator bool
+	SubSuppliers []dto.ChannelSubSupplier
 }
 
 // GetAllChannelCostInfos 一次性载入全部渠道的成本信息（主库），供成本报表在
@@ -1128,6 +1135,10 @@ func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {
 			var s dto.ChannelSettings
 			if err := common.UnmarshalJsonStr(*ch.Setting, &s); err == nil {
 				info.CostRatio = s.CostRatio
+				info.CostMode = s.CostMode
+				info.CostDiscount = s.CostDiscount
+				info.IsAggregator = s.IsAggregator
+				info.SubSuppliers = s.SubSuppliers
 			}
 		}
 		infos[ch.Id] = info

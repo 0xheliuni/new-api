@@ -99,6 +99,65 @@ func testChannels() map[int]*model.ChannelCostInfo {
 	return map[int]*model.ChannelCostInfo{
 		3: {Id: 3, Name: "openai-a", CostRatio: 2.5},
 		7: {Id: 7, Name: "nopriced", CostRatio: 0},
+		9: {Id: 9, Name: "disc", CostMode: "discount", CostDiscount: 0.8},
+	}
+}
+
+// effectiveChannelRatio：ratio 模式取 CostRatio；discount 模式取 CostDiscount×汇率；
+// 未知渠道/未填 → 0。
+func TestEffectiveChannelRatio(t *testing.T) {
+	chs := testChannels()
+	cases := []struct {
+		name      string
+		id        int
+		rate      float64
+		wantRatio float64
+		wantName  string
+	}{
+		{"ratio-mode", 3, 7.0, 2.5, "openai-a"},
+		{"discount-mode", 9, 6.8, 0.8 * 6.8, "disc"},
+		{"unknown-channel", 999, 6.8, 0, ""},
+		{"discount-mode-zero-discount", 10, 6.8, 0, "zero-disc"},
+	}
+	chs[10] = &model.ChannelCostInfo{Id: 10, Name: "zero-disc", CostMode: "discount", CostDiscount: 0}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ratio, name := effectiveChannelRatio(chs, tc.id, tc.rate)
+			if diff := ratio - tc.wantRatio; diff > 1e-9 || diff < -1e-9 {
+				t.Fatalf("ratio = %v, want %v", ratio, tc.wantRatio)
+			}
+			if name != tc.wantName {
+				t.Fatalf("name = %q, want %q", name, tc.wantName)
+			}
+		})
+	}
+}
+
+// discount 模式渠道折叠：quota 500 / group_ratio 1 → list=500；
+// cost_cny = 500/500000 * 0.8 * 6.8 = 0.00544；Priced=true。
+func TestFoldCostCube_DiscountModeChannel(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 9, ModelName: "gpt-4o", Quota: 500, PromptTokens: 1, CompletionTokens: 1,
+			Other: `{"model_ratio":1,"group_ratio":1}`},
+	})
+	rows := foldCostCube(c, costDimChannel, testChannels(), 6.8)
+	var ch9 *costDimensionRow
+	for i := range rows {
+		if rows[i].ChannelId == 9 {
+			ch9 = &rows[i]
+		}
+	}
+	if ch9 == nil {
+		t.Fatal("channel 9 missing")
+	}
+	want := roundTo6(500 / 500000.0 * 0.8 * 6.8)
+	if ch9.CostCny != want {
+		t.Fatalf("cost_cny = %v, want %v", ch9.CostCny, want)
+	}
+	if !ch9.Priced {
+		t.Fatalf("priced = false, want true")
 	}
 }
 

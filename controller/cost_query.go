@@ -164,7 +164,7 @@ func buildCostOverview(cube *costCube, channels map[int]*model.ChannelCostInfo, 
 	stack := make(map[string]*costStackPoint) // key: day|channelId
 	unpriced := make(map[int]bool)
 	for k, r := range cube.rows {
-		ratio, chName := channelRatio(channels, k.ChannelId)
+		ratio, chName := effectiveChannelRatio(channels, k.ChannelId, rate)
 		m := costMoneyFromParts(r.Quota, r.ListQuota, r.RefundQuota, r.PromptTokens, r.CompletionTokens, r.RequestCount, ratio, rate)
 		ov.Totals.add(m)
 		if ratio <= 0 {
