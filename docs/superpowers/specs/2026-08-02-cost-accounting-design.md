@@ -248,3 +248,52 @@ type UpstreamAdapter interface {
 | 4 | 未填倍率渠道 | 成本按 0 计 + 黄色警示 + 顶部提示条 |
 | 5 | 售卖汇率 | 复用全局 `USDExchangeRate`；不同客户折扣已体现在实付额度（分组倍率）中，无需另设 |
 | 6 | 缓存 token 明细展示 | 一期不单列（缓存折扣已在刊例/实付重算中计价）；缓存命中量等运营指标二期由聚合系统 API 提供 |
+
+---
+
+# 附录 A：v2 迭代设计（2026-08-03）
+
+## A1. 筛选与汇率（两套前端一致）
+
+- 筛选栏从弹窗改为**页面最上方的内联筛选行**（置于 KPI 卡之上）：时间范围（预设+自定义）、用户名称、渠道 ID、模型名称、**汇率输入框（默认 6.8，即 $1 = ¥6.8）**、查询按钮。
+- 后端 `buildCostCube` 已支持 username/model_name，新增转发 `channel` 参数（`GetAllLogsForExport` 第 7 参）；`exchange_rate` 参数沿用 `billSummaryRate` 已有覆盖逻辑。结果缓存 key 必须纳入 channel 过滤条件。
+- 前端汇率输入框初始值 6.8，始终随查询发送。
+
+## A2. 渠道「供应商设置」区块（渠道编辑页新分区，仅超管可见）
+
+`dto.ChannelSettings` 扩展（沿用 setting JSON，零迁移）：
+
+```go
+CostMode     string  `json:"cost_mode,omitempty"`     // "" / "ratio"（默认，倍率 CNY:USD） / "discount"（成本折扣）
+CostDiscount float64 `json:"cost_discount,omitempty"` // 折扣模式：成本¥ = 刊例$ × 折扣 × 当前查询汇率（已确认）
+IsAggregator bool    `json:"is_aggregator,omitempty"` // 聚合渠道标记
+SubSuppliers []ChannelSubSupplier `json:"sub_suppliers,omitempty"` // {name, cost_ratio}，可手动增删，二期可从聚合系统 API 同步
+```
+
+- 前端渠道编辑页新增「供应商设置」分区：计价方式下拉（成本倍率 / 成本折扣）+ 对应数值输入；聚合渠道开关；开启后显示子供应商列表编辑器（名称+倍率，可增删）+「从上游同步」按钮（二期实装，一期禁用态提示）。
+- **成本口径（已确认）**：报表成本仍按渠道级倍率/折扣计算；子供应商仅作配置存储+展示（日志无法把单次请求归属到子供应商），二期接 API 后出真实对照列。
+- 有效倍率：`ratio 模式 → cost_ratio`；`discount 模式 → cost_discount × 查询汇率`。未填（两模式数值均为 0）仍按 0 计并警示。
+
+## A3. 指标扩展（立方体新增列）
+
+`costCubeRow` 新增：`ErrorCount`（type=5 行计数，注意 channel_id=0 归入"未知渠道"桶）、`CacheReadTokens`（other.cache_tokens）、`CacheCreationTokens`（cache_creation_tokens 含 _5m/_1h，复用 log_export.go 现有 helper）、`FrtSumMs/FrtCount`（other.frt 毫秒，仅 >0 计入）。
+
+`costMoney` DTO 新增（原始可加和字段 + 派生字段都下发，便于前端行内合并重算）：
+
+```
+cache_read_tokens, cache_creation_tokens, error_count, frt_sum_ms, frt_count   // 可加和
+total_tokens = prompt + completion                                              // 派生
+success_rate = request_count / (request_count + error_count)（分母 0 → 1）
+cache_rate   = cache_read_tokens / prompt_tokens（分母 0 → 0）
+avg_ttft_ms  = frt_sum_ms / frt_count（分母 0 → 0）
+```
+
+## A4. 明细列与行内合并操作（三维度对齐）
+
+- 顶层行与展开明细列统一为：**身份列 | 成本(¥) | 收入($/¥) | 利润(¥) | 刊例($) | 请求数 | 利润率 | 总tokens（点击弹窗：输入/输出/缓存读取/缓存创建） | 成功率 | 缓存率 | 平均TTFT**，默认按收入（用户使用金额）降序。
+- 展开明细默认最细粒度（另外两维交叉）；行内新增「操作」下拉：**明细 / 合并模型 / 合并渠道**（用户维度）、**明细 / 合并用户 / 合并渠道**（模型维度）、**明细 / 合并用户 / 合并模型**（供应商维度）。合并在前端本地进行：可加和字段求和后重新派生比率（后端已下发原始 sum/count 字段保证精确）。
+- 明细行提供「只看该渠道」快捷操作：将该渠道 ID 写入顶部筛选并切到供应商维度。
+
+## A5. 页脚
+
+不改代码（CLAUDE.md Rule 5 保护品牌信息）。使用系统自带 Footer 设置（系统设置 → 通用 → Footer，支持 HTML，两套前端运行时整体替换默认页脚），操作说明随交付提供。已获用户确认。
