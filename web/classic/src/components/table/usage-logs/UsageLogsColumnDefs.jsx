@@ -24,7 +24,6 @@ import {
   Tag,
   Tooltip,
   Popover,
-  Progress,
   Typography,
 } from '@douyinfe/semi-ui';
 import {
@@ -490,24 +489,6 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   };
 }
 
-// seedance 任务状态 Tag（配色对齐任务日志页 renderStatus）。
-function renderSeedanceTaskStatus(status, t) {
-  const map = {
-    SUCCESS: { color: 'green', label: '成功' },
-    FAILURE: { color: 'red', label: '失败' },
-    IN_PROGRESS: { color: 'blue', label: '执行中' },
-    SUBMITTED: { color: 'yellow', label: '队列中' },
-    QUEUED: { color: 'orange', label: '排队中' },
-    NOT_START: { color: 'grey', label: '未启动' },
-  };
-  const item = map[status] || { color: 'white', label: '未知' };
-  return (
-    <Tag color={item.color} shape='circle' size='small'>
-      {t(item.label)}
-    </Tag>
-  );
-}
-
 export const getLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -968,38 +949,29 @@ export const getLogsColumns = ({
       dataIndex: 'task_info',
       render: (taskInfo) => {
         if (!taskInfo) return <></>;
-        let pct = parseInt(taskInfo.progress || '0', 10) || 0;
-        if (taskInfo.status === 'SUCCESS') pct = 100;
-        const colorMap = {
-          SUCCESS: 'var(--semi-color-success)',
-          FAILURE: 'var(--semi-color-danger)',
-          IN_PROGRESS: 'var(--semi-color-info)',
-          SUBMITTED: 'var(--semi-color-warning)',
-          QUEUED: 'var(--semi-color-warning)',
+        // 四态中文彩色 Tag（排队中/生成中/成功/失败），进行中附带百分比。
+        const pct = parseInt(taskInfo.progress || '0', 10) || 0;
+        const map = {
+          SUCCESS: { color: 'green', label: t('成功') },
+          FAILURE: { color: 'red', label: t('失败') },
+          IN_PROGRESS: {
+            color: 'blue',
+            label: pct > 0 ? `${t('生成中')} ${pct}%` : t('生成中'),
+          },
+          SUBMITTED: {
+            color: 'amber',
+            label: pct > 0 ? `${t('排队中')} ${pct}%` : t('排队中'),
+          },
+          QUEUED: {
+            color: 'amber',
+            label: pct > 0 ? `${t('排队中')} ${pct}%` : t('排队中'),
+          },
         };
-        // 终态环心显示中文状态（成功/失败），进行中显示百分比 + 旁侧状态 Tag。
-        const isTerminal =
-          taskInfo.status === 'SUCCESS' || taskInfo.status === 'FAILURE';
-        const centerText =
-          taskInfo.status === 'SUCCESS'
-            ? t('成功')
-            : taskInfo.status === 'FAILURE'
-              ? t('失败')
-              : `${pct}%`;
+        const item = map[taskInfo.status] || { color: 'grey', label: t('未知') };
         return (
-          <Space>
-            <Progress
-              percent={pct}
-              type='circle'
-              size='small'
-              width={40}
-              stroke={colorMap[taskInfo.status] || 'var(--semi-color-tertiary)'}
-              showInfo
-              format={() => centerText}
-              aria-label='task progress'
-            />
-            {!isTerminal && renderSeedanceTaskStatus(taskInfo.status, t)}
-          </Space>
+          <Tag color={item.color} shape='circle' size='small'>
+            {item.label}
+          </Tag>
         );
       },
     },

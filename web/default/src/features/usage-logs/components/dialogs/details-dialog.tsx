@@ -43,8 +43,7 @@ import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import type { UsageLog } from '../../data/schema'
-import { taskStatusMapper } from '../../lib/mappers'
-import { TaskProgressRing } from '../task-progress-ring'
+import { TaskStatusBadge } from '../task-progress-ring'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -528,10 +527,7 @@ function SeedanceTaskSection(props: { log: UsageLog }) {
   return (
     <DetailSection label={t('Video Task')}>
       <div className='flex items-center gap-2 py-1'>
-        <TaskProgressRing status={ti.status} progress={ti.progress} size={30} />
-        <span className='text-sm'>
-          {t(taskStatusMapper.getLabel(ti.status, ti.status))}
-        </span>
+        <TaskStatusBadge status={ti.status} progress={ti.progress} />
       </div>
       {rows.map((row, idx) => (
         <DetailRow key={idx} label={row.label} value={row.value} mono />

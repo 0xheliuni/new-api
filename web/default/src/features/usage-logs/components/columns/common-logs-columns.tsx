@@ -38,8 +38,7 @@ import {
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
-import { taskStatusMapper } from '../../lib/mappers'
-import { TaskProgressRing } from '../task-progress-ring'
+import { TaskStatusBadge } from '../task-progress-ring'
 import {
   formatModelName,
   getFirstResponseTimeColor,
@@ -793,29 +792,14 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
     },
 
     {
-      // seedance 视频任务态：圆形进度环（环心百分比）+ 中文状态（非任务行留空）。
-      // 位于详情列之前，普通用户可见。
+      // seedance 视频任务态：四态中文彩色徽章（排队中/生成中/成功/失败），
+      // 非任务行留空。位于详情列之前，普通用户可见。
       id: 'task_status',
       header: t('Status'),
       cell: ({ row }) => {
         const ti = row.original.task_info
         if (!ti) return null
-        const isTerminal = ti.status === 'SUCCESS' || ti.status === 'FAILURE'
-        return (
-          <div className='flex items-center gap-2'>
-            <TaskProgressRing status={ti.status} progress={ti.progress} />
-            {!isTerminal && (
-              <StatusBadge
-                label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
-                variant={taskStatusMapper.getVariant(ti.status)}
-                size='sm'
-                copyable={false}
-                showDot={false}
-                type='text'
-              />
-            )}
-          </div>
-        )
+        return <TaskStatusBadge status={ti.status} progress={ti.progress} />
       },
     },
 

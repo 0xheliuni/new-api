@@ -17,102 +17,75 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /**
- * TaskProgressRing — circular progress indicator for seedance video tasks.
- * Ring color follows task status (success=green, failure=red, running=blue,
- * queued=amber, unknown=grey). Terminal states show the localized status text
- * in the ring center (成功/失败); running states show the percent.
+ * TaskStatusBadge — colored Chinese status pill for seedance video tasks.
+ * Four states: 排队中 (amber) / 生成中 (blue, with percent) / 成功 (green) /
+ * 失败 (red). Unknown statuses fall back to a grey pill.
  */
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
-const STATUS_RING_COLORS: Record<string, string> = {
-  SUCCESS: 'stroke-emerald-500',
-  FAILURE: 'stroke-rose-500',
-  IN_PROGRESS: 'stroke-blue-500',
-  SUBMITTED: 'stroke-amber-500',
-  QUEUED: 'stroke-amber-500',
-  NOT_START: 'stroke-muted-foreground/40',
-  UNKNOWN: 'stroke-muted-foreground/40',
+type StatusStyle = { labelKey: string; className: string }
+
+const STATUS_STYLES: Record<string, StatusStyle> = {
+  SUCCESS: {
+    labelKey: 'Success',
+    className:
+      'border-emerald-200/60 bg-emerald-50/60 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400',
+  },
+  FAILURE: {
+    labelKey: 'Failed',
+    className:
+      'border-rose-200/60 bg-rose-50/60 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-400',
+  },
+  IN_PROGRESS: {
+    labelKey: 'Generating',
+    className:
+      'border-blue-200/60 bg-blue-50/60 text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-400',
+  },
+  SUBMITTED: {
+    labelKey: 'Queued',
+    className:
+      'border-amber-200/60 bg-amber-50/60 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400',
+  },
+  QUEUED: {
+    labelKey: 'Queued',
+    className:
+      'border-amber-200/60 bg-amber-50/60 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400',
+  },
 }
 
-const STATUS_TEXT_COLORS: Record<string, string> = {
-  SUCCESS: 'text-emerald-600 dark:text-emerald-400',
-  FAILURE: 'text-rose-600 dark:text-rose-400',
-  IN_PROGRESS: 'text-blue-600 dark:text-blue-400',
-  SUBMITTED: 'text-amber-600 dark:text-amber-400',
-  QUEUED: 'text-amber-600 dark:text-amber-400',
+const UNKNOWN_STYLE: StatusStyle = {
+  labelKey: 'Unknown',
+  className: 'border-border/60 bg-muted/40 text-muted-foreground',
 }
 
-interface TaskProgressRingProps {
+interface TaskStatusBadgeProps {
   status: string
-  /** e.g. "50%" — SUCCESS always renders as 100% */
+  /** e.g. "50%" — appended for the in-progress state */
   progress?: string
-  /** ring diameter in px */
-  size?: number
   className?: string
 }
 
-export function TaskProgressRing(props: TaskProgressRingProps) {
+export function TaskStatusBadge(props: TaskStatusBadgeProps) {
   const { t } = useTranslation()
-  const { status, progress, size = 34, className } = props
-  let pct = parseInt(progress || '0', 10) || 0
-  if (status === 'SUCCESS') pct = 100
-  pct = Math.max(0, Math.min(100, pct))
+  const { status, progress, className } = props
+  const style = STATUS_STYLES[status] || UNKNOWN_STYLE
 
-  // 终态环心显示中文状态（成功/失败），进行中显示百分比。
-  const centerLabel =
-    status === 'SUCCESS'
-      ? t('Success')
-      : status === 'FAILURE'
-        ? t('Failed')
-        : `${pct}%`
-
-  const strokeWidth = 3
-  const radius = (size - strokeWidth) / 2
-  const circumference = 2 * Math.PI * radius
-  const dashOffset = circumference * (1 - pct / 100)
+  let label = t(style.labelKey)
+  if (status === 'IN_PROGRESS' || status === 'SUBMITTED' || status === 'QUEUED') {
+    const pct = parseInt(progress || '0', 10) || 0
+    if (pct > 0) label = `${label} ${pct}%`
+  }
 
   return (
-    <div
-      className={cn('relative inline-flex shrink-0', className)}
-      style={{ width: size, height: size }}
-      role='progressbar'
-      aria-valuenow={pct}
-      aria-valuemin={0}
-      aria-valuemax={100}
+    <span
+      className={cn(
+        'inline-flex h-6 w-fit items-center rounded-md border px-2 text-xs font-medium whitespace-nowrap tabular-nums',
+        style.className,
+        className
+      )}
     >
-      <svg width={size} height={size} className='-rotate-90'>
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill='none'
-          strokeWidth={strokeWidth}
-          className='stroke-muted/60'
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill='none'
-          strokeWidth={strokeWidth}
-          strokeLinecap='round'
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
-          className={cn(
-            'transition-[stroke-dashoffset]',
-            STATUS_RING_COLORS[status] || STATUS_RING_COLORS.UNKNOWN
-          )}
-        />
-      </svg>
-      <span
-        className={cn(
-          'absolute inset-0 flex items-center justify-center text-[9px] font-semibold tabular-nums',
-          STATUS_TEXT_COLORS[status] || 'text-muted-foreground'
-        )}
-      >
-        {centerLabel}
-      </span>
-    </div>
+      {label}
+    </span>
   )
 }
