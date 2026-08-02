@@ -210,7 +210,7 @@ type UpstreamAdapter interface {
 
 - **时间筛选**：复制 `models-filter-dialog.tsx` 模式 —— 预设（今天/昨天/近 7 天/近 30 天/本月）+ 两个 `DateTimePicker` 自定义；写入 URL，可分享。
 - **明细跳转**：各维度行提供「查看日志」链接，带时间与 user/channel/model 过滤参数跳转现有日志页。
-- **渠道编辑页**同步新增「成本倍率 CNY:USD」输入框（`ChannelSettings` 表单区）。
+- **渠道编辑页**同步新增「成本倍率 CNY:USD」输入框（`ChannelSettings` 表单区，`isRoot()` 时才渲染）。
 
 ### 6.3 样式方案（遵循 dataviz 规范）
 
@@ -244,7 +244,7 @@ type UpstreamAdapter interface {
 |---|---|---|
 | 1 | 利润口径 | ✅ 已确认：收入$ × 售卖汇率(USDExchangeRate) − 刊例$ × 渠道倍率，全 CNY 相减 |
 | 2 | 供应商建模 | ✅ 已确认：供应商 = 渠道，倍率逐渠道填写；聚合系统背后供应商二期经 API 下钻 |
-| 3 | 倍率可见性 | 默认存 `ChannelSettings`（普通管理员在渠道编辑页可见可改）。若要求倍率对非 Root 保密，需改用独立 root-only 表 —— 待确认 |
+| 3 | 倍率可见性 | ✅ 已确认：倍率存 `ChannelSettings`；成本核算页面仅 Root 可见（路由守卫 + 侧边栏隐藏），渠道编辑页的「成本倍率」输入框前端加 `isRoot()` 判断对管理员隐藏。注：管理员经渠道 API 响应仍可能看到 setting JSON 内的数字，用户已接受此程度 |
 | 4 | 未填倍率渠道 | 成本按 0 计 + 黄色警示 + 顶部提示条 |
 | 5 | 售卖汇率 | 复用全局 `USDExchangeRate`；不同客户折扣已体现在实付额度（分组倍率）中，无需另设 |
 | 6 | 缓存 token 明细展示 | 一期不单列（缓存折扣已在刊例/实付重算中计价）；缓存命中量等运营指标二期由聚合系统 API 提供 |
