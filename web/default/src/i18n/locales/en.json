@@ -4710,6 +4710,14 @@
     "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}": "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}",
     "Sub-supplier": "Sub-supplier",
     "Report cost uses the channel-level pricing": "Report cost uses the channel-level pricing",
-    "Pricing Mode": "Pricing Mode"
+    "Pricing Mode": "Pricing Mode",
+    "Supplier Settings": "Supplier Settings",
+    "Cost pricing mode, aggregator status, and sub-suppliers": "Cost pricing mode, aggregator status, and sub-suppliers",
+    "Aggregator Channel": "Aggregator Channel",
+    "This channel routes to multiple upstream sub-suppliers": "This channel routes to multiple upstream sub-suppliers",
+    "Add supplier": "Add supplier",
+    "Sync from upstream": "Sync from upstream",
+    "Available after aggregator API integration": "Available after aggregator API integration",
+    "No sub-suppliers configured yet.": "No sub-suppliers configured yet."
   }
 }

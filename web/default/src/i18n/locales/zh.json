@@ -4744,6 +4744,14 @@
     "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}": "折扣 {{d}} × 汇率 {{r}} → 刊例价 $1 记成本 ¥{{cny}}",
     "Sub-supplier": "子供应商",
     "Report cost uses the channel-level pricing": "报表成本按渠道级定价计算",
-    "Pricing Mode": "计价方式"
+    "Pricing Mode": "计价方式",
+    "Supplier Settings": "供应商设置",
+    "Cost pricing mode, aggregator status, and sub-suppliers": "成本计价方式、聚合渠道状态与子供应商",
+    "Aggregator Channel": "聚合渠道",
+    "This channel routes to multiple upstream sub-suppliers": "该渠道会路由到多个上游子供应商",
+    "Add supplier": "添加子供应商",
+    "Sync from upstream": "从上游同步",
+    "Available after aggregator API integration": "聚合系统接口接入后可用",
+    "No sub-suppliers configured yet.": "尚未配置子供应商"
   }
 }

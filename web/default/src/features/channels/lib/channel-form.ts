@@ -184,6 +184,19 @@ export const channelFormSchema = z
     system_prompt_override: z.boolean().optional(),
     // Cost accounting ratio (stored in setting JSON, not sent directly)
     cost_ratio: z.number().optional(),
+    // Supplier settings: pricing mode, discount, aggregator, sub-suppliers
+    // (stored in setting JSON, not sent directly)
+    cost_mode: z.enum(['ratio', 'discount']).optional(),
+    cost_discount: z.number().optional(),
+    is_aggregator: z.boolean().optional(),
+    sub_suppliers: z
+      .array(
+        z.object({
+          name: z.string(),
+          cost_ratio: z.number().optional(),
+        })
+      )
+      .optional(),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -339,6 +352,10 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   system_prompt: '',
   system_prompt_override: false,
   cost_ratio: undefined,
+  cost_mode: 'ratio',
+  cost_discount: undefined,
+  is_aggregator: false,
+  sub_suppliers: [],
   // Type-specific settings
   is_enterprise_account: false,
   vertex_key_type: 'json',
@@ -386,6 +403,10 @@ export function transformChannelToFormDefaults(
     system_prompt: '',
     system_prompt_override: false,
     cost_ratio: undefined as number | undefined,
+    cost_mode: 'ratio' as 'ratio' | 'discount',
+    cost_discount: undefined as number | undefined,
+    is_aggregator: false,
+    sub_suppliers: [] as Array<{ name: string; cost_ratio?: number }>,
   }
 
   if (channel.setting) {
@@ -402,6 +423,26 @@ export function transformChannelToFormDefaults(
           typeof parsed.cost_ratio === 'number' && parsed.cost_ratio > 0
             ? parsed.cost_ratio
             : undefined,
+        cost_mode: parsed.cost_mode === 'discount' ? 'discount' : 'ratio',
+        cost_discount:
+          typeof parsed.cost_discount === 'number' && parsed.cost_discount > 0
+            ? parsed.cost_discount
+            : undefined,
+        is_aggregator: parsed.is_aggregator === true,
+        sub_suppliers: Array.isArray(parsed.sub_suppliers)
+          ? parsed.sub_suppliers
+              .filter(
+                (item: unknown) =>
+                  item && typeof item === 'object' && !Array.isArray(item)
+              )
+              .map((item: Record<string, unknown>) => ({
+                name: typeof item.name === 'string' ? item.name : '',
+                cost_ratio:
+                  typeof item.cost_ratio === 'number'
+                    ? item.cost_ratio
+                    : undefined,
+              }))
+          : [],
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -544,6 +585,33 @@ function buildSettingJSON(formData: ChannelFormValues): string {
     formData.cost_ratio > 0
   ) {
     settingObj.cost_ratio = formData.cost_ratio
+  }
+  if (formData.cost_mode === 'discount') {
+    settingObj.cost_mode = 'discount'
+  }
+  if (
+    typeof formData.cost_discount === 'number' &&
+    Number.isFinite(formData.cost_discount) &&
+    formData.cost_discount > 0
+  ) {
+    settingObj.cost_discount = formData.cost_discount
+  }
+  if (formData.is_aggregator === true) {
+    settingObj.is_aggregator = true
+  }
+  const subSuppliers = (formData.sub_suppliers || [])
+    .map((supplier) => ({
+      name: (supplier.name || '').trim(),
+      cost_ratio:
+        typeof supplier.cost_ratio === 'number' &&
+        Number.isFinite(supplier.cost_ratio) &&
+        supplier.cost_ratio > 0
+          ? supplier.cost_ratio
+          : undefined,
+    }))
+    .filter((supplier) => supplier.name.length > 0)
+  if (subSuppliers.length > 0) {
+    settingObj.sub_suppliers = subSuppliers
   }
   return JSON.stringify(settingObj)
 }

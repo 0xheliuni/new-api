@@ -88,6 +88,14 @@ export interface ChannelSettings {
   system_prompt_override?: boolean
   // Cost accounting: CNY per USD of upstream list-price usage. 0/absent = unset.
   cost_ratio?: number
+  // Supplier settings: pricing mode ('' | 'ratio' defaults to cost_ratio behavior; 'discount' uses cost_discount).
+  cost_mode?: '' | 'ratio' | 'discount'
+  // Cost accounting: discount multiplier applied to upstream list-price rate. 0/absent = unset.
+  cost_discount?: number
+  // Whether this channel aggregates multiple upstream sub-suppliers.
+  is_aggregator?: boolean
+  // Sub-supplier breakdown for aggregator channels.
+  sub_suppliers?: Array<{ name: string; cost_ratio?: number }>
 }
 
 export interface ChannelOtherSettings {
