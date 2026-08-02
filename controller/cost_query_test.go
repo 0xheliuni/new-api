@@ -2,6 +2,9 @@ package controller
 
 import (
 	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 func TestBuildCostOverview_TrendAndStackAndWarning(t *testing.T) {
@@ -44,5 +47,133 @@ func TestPaginateCostRows(t *testing.T) {
 	// 总计行独立于分页
 	if page.Summary.RevenueCny != page2.Summary.RevenueCny {
 		t.Fatal("summary must be page-independent")
+	}
+}
+
+// TestClampCostRange 覆盖 spec §5.2(4) 的时间跨度护栏：370 天上限，
+// start/end 缺省（<=0）时的兜底行为。
+func TestClampCostRange(t *testing.T) {
+	const day = int64(24 * 3600)
+	now := int64(2000000000) // 固定基准时间，避免测试依赖真实 time.Now()
+
+	cases := []struct {
+		name       string
+		start, end int64
+		wantStart  int64
+		wantEnd    int64
+	}{
+		{
+			name:  "zero end falls back to now",
+			start: now - 10*day, end: 0,
+			wantStart: now - 10*day, wantEnd: now,
+		},
+		{
+			name:  "zero start clamps to end-370d",
+			start: 0, end: now,
+			wantStart: now - costCubeMaxRangeSeconds, wantEnd: now,
+		},
+		{
+			name:  "negative start clamps to end-370d",
+			start: -1, end: now,
+			wantStart: now - costCubeMaxRangeSeconds, wantEnd: now,
+		},
+		{
+			name:  "span over 370d clamps start",
+			start: now - 400*day, end: now,
+			wantStart: now - costCubeMaxRangeSeconds, wantEnd: now,
+		},
+		{
+			name:  "normal span within 370d is untouched",
+			start: now - 30*day, end: now,
+			wantStart: now - 30*day, wantEnd: now,
+		},
+		{
+			name:  "both zero falls back to now and 370d window",
+			start: 0, end: 0,
+			wantStart: now - costCubeMaxRangeSeconds, wantEnd: now,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStart, gotEnd := clampCostRange(tc.start, tc.end, now)
+			if gotStart != tc.wantStart || gotEnd != tc.wantEnd {
+				t.Fatalf("clampCostRange(%d, %d, %d) = (%d, %d), want (%d, %d)",
+					tc.start, tc.end, now, gotStart, gotEnd, tc.wantStart, tc.wantEnd)
+			}
+		})
+	}
+}
+
+// TestCostCubeCacheGetPut 验证缓存命中/未命中/过期逻辑。
+// 通过手工构造 entry.at（而非 time.Sleep）注入"过去"的时间戳来模拟过期，
+// 保持测试快速且确定。
+func TestCostCubeCacheGetPut(t *testing.T) {
+	key := "test-key-" + t.Name()
+	defer costCubeCache.Delete(key)
+
+	if _, ok := costCubeCacheGet(key); ok {
+		t.Fatal("expected miss before any put")
+	}
+
+	fresh := &costCubeCacheEntry{cube: newCostCube(), channels: map[int]*model.ChannelCostInfo{}, rate: 7.0, at: time.Now()}
+	costCubeCachePut(key, fresh)
+	got, ok := costCubeCacheGet(key)
+	if !ok {
+		t.Fatal("expected hit right after put")
+	}
+	if got.rate != 7.0 {
+		t.Fatalf("rate = %v, want 7.0", got.rate)
+	}
+
+	// 模拟过期：直接把时间戳写到 61 秒前（超过 60 秒 TTL）
+	expired := &costCubeCacheEntry{cube: newCostCube(), channels: map[int]*model.ChannelCostInfo{}, rate: 7.0, at: time.Now().Add(-61 * time.Second)}
+	costCubeCache.Store(key, expired)
+	if _, ok := costCubeCacheGet(key); ok {
+		t.Fatal("expected miss for expired entry")
+	}
+	// costCubeCacheGet 命中过期项后应主动清理
+	if _, ok := costCubeCache.Load(key); ok {
+		t.Fatal("expired entry should have been evicted from the map")
+	}
+}
+
+// TestCostCubeCachePutEvictsOldestWhenFull 验证条目数超过上限时会淘汰最旧的一条，
+// 防止无界增长。
+func TestCostCubeCachePutEvictsOldestWhenFull(t *testing.T) {
+	prefix := "evict-test-" + t.Name() + "-"
+	defer func() {
+		for i := 0; i < costCubeCacheMaxEntries+2; i++ {
+			costCubeCache.Delete(prefix + string(rune('a'+i)))
+		}
+	}()
+
+	base := time.Now()
+	var oldestKey string
+	for i := 0; i < costCubeCacheMaxEntries; i++ {
+		k := prefix + string(rune('a'+i))
+		if i == 0 {
+			oldestKey = k
+		}
+		entry := &costCubeCacheEntry{
+			cube: newCostCube(), channels: map[int]*model.ChannelCostInfo{}, rate: 1.0,
+			// 递增时间戳，确保第一个是最旧的
+			at: base.Add(time.Duration(i) * time.Millisecond),
+		}
+		costCubeCachePut(k, entry)
+	}
+
+	// 再插入一条，触发对已满缓存的淘汰
+	newKey := prefix + string(rune('a'+costCubeCacheMaxEntries))
+	costCubeCachePut(newKey, &costCubeCacheEntry{
+		cube: newCostCube(), channels: map[int]*model.ChannelCostInfo{}, rate: 1.0,
+		at: base.Add(time.Duration(costCubeCacheMaxEntries) * time.Millisecond),
+	})
+
+	if _, ok := costCubeCache.Load(oldestKey); ok {
+		t.Fatal("oldest entry should have been evicted once cache was full")
+	}
+	if _, ok := costCubeCache.Load(newKey); !ok {
+		t.Fatal("newly inserted entry should be present")
 	}
 }

@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -39,14 +42,107 @@ type costPageDTO struct {
 	Summary  costMoney          `json:"summary"`
 }
 
+// costCubeMaxRangeSeconds 时间跨度上限：370 天。超出的查询会把 start 钳制到
+// end - 370 天，避免一次请求把全部历史日志流式扫描一遍（spec §5.2(4)）。
+const costCubeMaxRangeSeconds = int64(370 * 24 * 3600)
+
+// clampCostRange 归一化查询时间范围：
+//   - end<=0（未传）时取当前时间；
+//   - start<=0（未传）或跨度超过 370 天时，把 start 钳制为 end-370天。
+//
+// 提取成纯函数便于单元测试，不依赖 gin.Context / time.Now。
+func clampCostRange(start, end, now int64) (int64, int64) {
+	if end <= 0 {
+		end = now
+	}
+	if start <= 0 || end-start > costCubeMaxRangeSeconds {
+		start = end - costCubeMaxRangeSeconds
+	}
+	return start, end
+}
+
+// costCubeCacheEntry 缓存一次 buildCostCube 的完整产出（立方体 + 渠道倍率映射 + 汇率）。
+type costCubeCacheEntry struct {
+	cube     *costCube
+	channels map[int]*model.ChannelCostInfo
+	rate     float64
+	at       time.Time
+}
+
+// costCubeCache 一期护栏：60 秒内相同查询参数直接复用结果，避免同一页面（总览 +
+// 三个维度表）多次点击重复流式扫描整段日志。一期仅内存缓存（不接 Redis），
+// 使用 sync.Map 做简单的进程内存储；写入时顺带清理过期项并在条目数超过上限时
+// 淘汰最旧的一条，避免无界增长。
+var costCubeCache sync.Map
+
+const (
+	costCubeCacheTTL        = 60 * time.Second
+	costCubeCacheMaxEntries = 32
+)
+
+// costCubeCacheKey 由归一化后的查询参数拼接生成缓存键。
+func costCubeCacheKey(start, end int64, modelName, username string, rate float64) string {
+	return fmt.Sprintf("%d|%d|%s|%s|%.6f", start, end, modelName, username, rate)
+}
+
+func costCubeCacheGet(key string) (*costCubeCacheEntry, bool) {
+	v, ok := costCubeCache.Load(key)
+	if !ok {
+		return nil, false
+	}
+	entry := v.(*costCubeCacheEntry)
+	if time.Since(entry.at) > costCubeCacheTTL {
+		costCubeCache.Delete(key)
+		return nil, false
+	}
+	return entry, true
+}
+
+func costCubeCachePut(key string, entry *costCubeCacheEntry) {
+	// 清理过期项，同时统计存活条目数，超过上限时淘汰其中最旧的一条
+	// （简单策略，非严格 LRU，够用即可）。
+	var oldestKey any
+	var oldestAt time.Time
+	count := 0
+	costCubeCache.Range(func(k, v any) bool {
+		e, _ := v.(*costCubeCacheEntry)
+		if e == nil || time.Since(e.at) > costCubeCacheTTL {
+			costCubeCache.Delete(k)
+			return true
+		}
+		count++
+		if oldestKey == nil || e.at.Before(oldestAt) {
+			oldestKey = k
+			oldestAt = e.at
+		}
+		return true
+	})
+	if count >= costCubeCacheMaxEntries && oldestKey != nil {
+		costCubeCache.Delete(oldestKey)
+	}
+	costCubeCache.Store(key, entry)
+}
+
 // buildCostCube 流式扫描日志构建立方体，同时载入渠道倍率映射与汇率。
+// 命中 60 秒内相同参数的缓存时直接复用，否则重新扫描并写入缓存。
 func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, float64, error) {
 	start, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	end, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	start, end = clampCostRange(start, end, time.Now().Unix())
+
+	modelName := c.Query("model_name")
+	username := c.Query("username")
+	rate := billSummaryRate(c)
+
+	cacheKey := costCubeCacheKey(start, end, modelName, username, rate)
+	if entry, ok := costCubeCacheGet(cacheKey); ok {
+		return entry.cube, entry.channels, entry.rate, nil
+	}
+
 	cube := newCostCube()
 	maxRows := model.LogExportMaxRows("xlsx")
 	_, err := model.GetAllLogsForExport(model.LogTypeUnknown, start, end,
-		c.Query("model_name"), c.Query("username"), "", 0, "", "", maxRows,
+		modelName, username, "", 0, "", "", maxRows,
 		func(batch []*model.Log) error {
 			cube.addBatch(batch)
 			return nil
@@ -58,7 +154,8 @@ func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, f
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return cube, channels, billSummaryRate(c), nil
+	costCubeCachePut(cacheKey, &costCubeCacheEntry{cube: cube, channels: channels, rate: rate, at: time.Now()})
+	return cube, channels, rate, nil
 }
 
 func buildCostOverview(cube *costCube, channels map[int]*model.ChannelCostInfo, rate float64) costOverviewDTO {
