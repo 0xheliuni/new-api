@@ -86,6 +86,8 @@ export interface ChannelSettings {
   pass_through_body_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
+  // Cost accounting: CNY per USD of upstream list-price usage. 0/absent = unset.
+  cost_ratio?: number
 }
 
 export interface ChannelOtherSettings {

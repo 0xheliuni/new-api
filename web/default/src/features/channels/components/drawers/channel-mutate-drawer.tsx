@@ -47,6 +47,8 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -216,6 +218,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    values.cost_ratio != null ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -301,6 +304,8 @@ export function ChannelMutateDrawer({
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const isCostRatioVisible = (currentUser?.role ?? 0) >= ROLE.SUPER_ADMIN
 
   // Fetch channel details if editing
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
@@ -3409,6 +3414,41 @@ export function ChannelMutateDrawer({
                           </FormItem>
                         )}
                       />
+
+                      {isCostRatioVisible && (
+                        <FormField
+                          control={form.control}
+                          name='cost_ratio'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Cost Ratio (CNY per USD)')}
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type='number'
+                                  min={0}
+                                  step={0.01}
+                                  placeholder={t('e.g., 6.5')}
+                                  value={field.value ?? ''}
+                                  onChange={(e) => {
+                                    const raw = e.target.value
+                                    field.onChange(
+                                      raw === '' ? undefined : Number(raw)
+                                    )
+                                  }}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                {t(
+                                  'Used by cost accounting. Leave empty if unknown.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       <FormField
                         control={form.control}
