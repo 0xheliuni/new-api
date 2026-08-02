@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -137,12 +138,21 @@ type costDimensionRow struct {
 	ModelName   string  `json:"model_name,omitempty"`
 	ChannelId   int     `json:"channel_id,omitempty"`
 	ChannelName string  `json:"channel_name,omitempty"`
-	CostRatio   float64 `json:"cost_ratio,omitempty"`
-	Priced      bool    `json:"priced"`
-	UserCount   int     `json:"user_count,omitempty"`
+	// CostRatio 为渠道原始配置倍率（ratio 模式即生效倍率；discount 模式恒为 0，
+	// 生效倍率见 EffectiveRatio）。
+	CostRatio float64 `json:"cost_ratio,omitempty"`
+	Priced    bool    `json:"priced"`
+	UserCount int     `json:"user_count,omitempty"`
 	costMoney
 	Breakdown          []costBreakdownRow `json:"breakdown,omitempty"`
 	BreakdownTruncated int                `json:"breakdown_truncated,omitempty"`
+
+	// 以下字段仅渠道维度（costDimChannel）填充，供前端按计价模式渲染。
+	CostMode       string                   `json:"cost_mode,omitempty"`
+	CostDiscount   float64                  `json:"cost_discount,omitempty"`
+	EffectiveRatio float64                  `json:"effective_ratio,omitempty"`
+	IsAggregator   bool                     `json:"is_aggregator,omitempty"`
+	SubSuppliers   []dto.ChannelSubSupplier `json:"sub_suppliers,omitempty"`
 }
 
 // costMoneyFromRow 统一金额换算：
@@ -264,8 +274,15 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 			row = &costDimensionRow{UserId: gk.UserId, Username: gk.Username, ModelName: gk.ModelName, ChannelId: gk.ChannelId}
 			if dim == costDimChannel {
 				row.ChannelName = chName
-				row.CostRatio = ratio
+				row.EffectiveRatio = ratio
 				row.Priced = ratio > 0
+				if ci := channels[gk.ChannelId]; ci != nil {
+					row.CostRatio = ci.CostRatio
+					row.CostMode = ci.CostMode
+					row.CostDiscount = ci.CostDiscount
+					row.IsAggregator = ci.IsAggregator
+					row.SubSuppliers = ci.SubSuppliers
+				}
 				userSets[gk] = make(map[int]bool)
 			}
 			groups[gk] = row

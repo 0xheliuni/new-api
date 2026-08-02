@@ -80,9 +80,10 @@ const (
 	costCubeCacheMaxEntries = 32
 )
 
-// costCubeCacheKey 由归一化后的查询参数拼接生成缓存键。
-func costCubeCacheKey(start, end int64, modelName, username string, rate float64) string {
-	return fmt.Sprintf("%d|%d|%s|%s|%.6f", start, end, modelName, username, rate)
+// costCubeCacheKey 由归一化后的查询参数拼接生成缓存键（含 channel 过滤参数，
+// 不同渠道筛选不应互相命中彼此的缓存）。
+func costCubeCacheKey(start, end int64, modelName, username string, rate float64, channel int) string {
+	return fmt.Sprintf("%d|%d|%s|%s|%.6f|%d", start, end, modelName, username, rate, channel)
 }
 
 func costCubeCacheGet(key string) (*costCubeCacheEntry, bool) {
@@ -133,8 +134,9 @@ func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, f
 	modelName := c.Query("model_name")
 	username := c.Query("username")
 	rate := billSummaryRate(c)
+	channel, _ := strconv.Atoi(c.Query("channel"))
 
-	cacheKey := costCubeCacheKey(start, end, modelName, username, rate)
+	cacheKey := costCubeCacheKey(start, end, modelName, username, rate, channel)
 	if entry, ok := costCubeCacheGet(cacheKey); ok {
 		return entry.cube, entry.channels, entry.rate, nil
 	}
@@ -142,7 +144,7 @@ func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, f
 	cube := newCostCube()
 	maxRows := model.LogExportMaxRows("xlsx")
 	_, err := model.GetAllLogsForExport(model.LogTypeUnknown, start, end,
-		modelName, username, "", 0, "", "", maxRows,
+		modelName, username, "", channel, "", "", maxRows,
 		func(batch []*model.Log) error {
 			cube.addBatch(batch)
 			return nil

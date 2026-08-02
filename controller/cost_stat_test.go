@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -99,7 +100,8 @@ func testChannels() map[int]*model.ChannelCostInfo {
 	return map[int]*model.ChannelCostInfo{
 		3: {Id: 3, Name: "openai-a", CostRatio: 2.5},
 		7: {Id: 7, Name: "nopriced", CostRatio: 0},
-		9: {Id: 9, Name: "disc", CostMode: "discount", CostDiscount: 0.8},
+		9: {Id: 9, Name: "disc", CostMode: "discount", CostDiscount: 0.8, IsAggregator: true,
+			SubSuppliers: []dto.ChannelSubSupplier{{Name: "sub-a", CostRatio: 6.0}}},
 	}
 }
 
@@ -158,6 +160,52 @@ func TestFoldCostCube_DiscountModeChannel(t *testing.T) {
 	}
 	if !ch9.Priced {
 		t.Fatalf("priced = false, want true")
+	}
+}
+
+// TestFoldCostCube_ChannelDimSupplierExtras 渠道维度行需要透传计价模式相关的展示
+// 信息：cost_ratio 保持原始配置值（折扣渠道为 0），effective_ratio 携带折扣渠道的
+// 实际生效倍率，另附 cost_mode/cost_discount/is_aggregator/sub_suppliers，供前端
+// 按计价模式渲染（channel 9 为 discount 模式 + 聚合商 + 一个子供应商）。
+func TestFoldCostCube_ChannelDimSupplierExtras(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 9, ModelName: "gpt-4o", Quota: 500, PromptTokens: 1, CompletionTokens: 1,
+			Other: `{"model_ratio":1,"group_ratio":1}`},
+	})
+	chs := testChannels()
+	rows := foldCostCube(c, costDimChannel, chs, 6.8)
+	var ch9 *costDimensionRow
+	for i := range rows {
+		if rows[i].ChannelId == 9 {
+			ch9 = &rows[i]
+		}
+	}
+	if ch9 == nil {
+		t.Fatal("channel 9 missing")
+	}
+	if ch9.CostRatio != 0 {
+		t.Fatalf("cost_ratio = %v, want 0 (raw configured value for discount-mode channel)", ch9.CostRatio)
+	}
+	wantEffective := 0.8 * 6.8
+	if diff := ch9.EffectiveRatio - wantEffective; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("effective_ratio = %v, want %v", ch9.EffectiveRatio, wantEffective)
+	}
+	if ch9.CostMode != "discount" {
+		t.Fatalf("cost_mode = %q, want %q", ch9.CostMode, "discount")
+	}
+	if ch9.CostDiscount != 0.8 {
+		t.Fatalf("cost_discount = %v, want 0.8", ch9.CostDiscount)
+	}
+	if !ch9.IsAggregator {
+		t.Fatal("is_aggregator = false, want true")
+	}
+	if len(ch9.SubSuppliers) != 1 || ch9.SubSuppliers[0].Name != "sub-a" || ch9.SubSuppliers[0].CostRatio != 6.0 {
+		t.Fatalf("sub_suppliers = %+v", ch9.SubSuppliers)
+	}
+	if !ch9.Priced {
+		t.Fatal("priced = false, want true (effective ratio > 0)")
 	}
 }
 

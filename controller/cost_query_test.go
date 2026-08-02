@@ -105,6 +105,27 @@ func TestClampCostRange(t *testing.T) {
 	}
 }
 
+// TestCostCubeCacheKey_ChannelDiffers 验证 channel 过滤参数参与缓存键生成：
+// 不同 channel 值必须落在不同的缓存条目上，否则切换渠道筛选会误命中旧缓存。
+func TestCostCubeCacheKey_ChannelDiffers(t *testing.T) {
+	base := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 0)
+	withCh3 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3)
+	withCh9 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 9)
+	if base == withCh3 {
+		t.Fatal("expected different cache keys for channel=0 vs channel=3")
+	}
+	if withCh3 == withCh9 {
+		t.Fatal("expected different cache keys for channel=3 vs channel=9")
+	}
+	if base == withCh9 {
+		t.Fatal("expected different cache keys for channel=0 vs channel=9")
+	}
+	// 其余参数不变时同一 channel 值必须产生同一个键（缓存才能命中）。
+	if costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3) != withCh3 {
+		t.Fatal("expected identical cache key for identical params")
+	}
+}
+
 // TestCostCubeCacheGetPut 验证缓存命中/未命中/过期逻辑。
 // 通过手工构造 entry.at（而非 time.Sleep）注入"过去"的时间戳来模拟过期，
 // 保持测试快速且确定。
