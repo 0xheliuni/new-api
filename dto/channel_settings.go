@@ -7,6 +7,8 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled bool    `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string  `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool    `json:"system_prompt_override,omitempty"`
+	// CostRatio 渠道成本倍率（CNY : USD）。成本核算用：上游每消耗刊例 $1 记成本 ¥CostRatio。
+	// 0/缺省 = 未填写（成本按 0 计并在报表警示），不代表上游免费。
 	CostRatio              float64 `json:"cost_ratio,omitempty"`
 }
 
