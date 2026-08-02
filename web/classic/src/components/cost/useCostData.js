@@ -70,6 +70,8 @@ export const useCostData = () => {
       } else {
         showError(message);
       }
+    } catch (e) {
+      showError(t('请求失败'));
     } finally {
       setOverviewLoading(false);
     }
@@ -92,6 +94,8 @@ export const useCostData = () => {
       } else {
         showError(message);
       }
+    } catch (e) {
+      showError(t('请求失败'));
     } finally {
       setTableLoading(false);
     }

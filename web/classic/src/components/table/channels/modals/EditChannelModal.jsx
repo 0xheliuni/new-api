@@ -444,6 +444,9 @@ const EditChannelModal = (props) => {
   const initialModelsRef = useRef([]);
   const initialModelMappingRef = useRef('');
   const initialStatusCodeMappingRef = useRef('');
+  // 保存 setting 字段完整解析后的对象（含未知/后端专用键，如 cost_ratio），
+  // 避免表单只感知的已知键覆盖写回时把未知键冲掉
+  const originalChannelSettingRef = useRef({});
   const doubaoCodingPlanDeprecationMessage =
     'Doubao Coding Plan 不再允许新增。根据火山方舟文档，Coding 套餐额度仅适用于 AI Coding 产品内调用，不适用于单独 API 调用；在非 AI Coding 产品中使用对应的 Base URL 和 API Key 可能被视为违规，并可能导致订阅停用或账号封禁。';
   const canKeepDeprecatedDoubaoCodingPlan =
@@ -544,8 +547,12 @@ const EditChannelModal = (props) => {
     // 同步更新inputs状态
     setInputs((prev) => ({ ...prev, [key]: value }));
 
-    // 生成setting JSON并更新
-    const newSettings = { ...channelSettings, [key]: value };
+    // 生成setting JSON并更新（以完整原始对象为底，保留 cost_ratio 等未知键）
+    const newSettings = {
+      ...originalChannelSettingRef.current,
+      ...channelSettings,
+      [key]: value,
+    };
     const settingsJson = JSON.stringify(newSettings);
     handleInputChange('setting', settingsJson);
   };
@@ -889,6 +896,12 @@ const EditChannelModal = (props) => {
       if (data.setting) {
         try {
           const parsedSettings = JSON.parse(data.setting);
+          // 保留完整解析结果（含 cost_ratio 等表单未感知的键），
+          // 提交时以此为基础合并已知键，避免覆盖写回时丢失未知键
+          originalChannelSettingRef.current =
+            parsedSettings && typeof parsedSettings === 'object' && !Array.isArray(parsedSettings)
+              ? parsedSettings
+              : {};
           data.force_format = parsedSettings.force_format || false;
           data.thinking_to_content =
             parsedSettings.thinking_to_content || false;
@@ -900,6 +913,7 @@ const EditChannelModal = (props) => {
             parsedSettings.system_prompt_override || false;
         } catch (error) {
           console.error('解析渠道设置失败:', error);
+          originalChannelSettingRef.current = {};
           data.force_format = false;
           data.thinking_to_content = false;
           data.proxy = '';
@@ -908,6 +922,7 @@ const EditChannelModal = (props) => {
           data.system_prompt_override = false;
         }
       } else {
+        originalChannelSettingRef.current = {};
         data.force_format = false;
         data.thinking_to_content = false;
         data.proxy = '';
@@ -1415,6 +1430,7 @@ const EditChannelModal = (props) => {
       initialModelsRef.current = [];
       initialModelMappingRef.current = '';
       initialStatusCodeMappingRef.current = '';
+      originalChannelSettingRef.current = {};
     }
   }, [isEdit, props.visible]);
 
@@ -1810,7 +1826,12 @@ const EditChannelModal = (props) => {
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
     };
-    localInputs.setting = JSON.stringify(channelExtraSettings);
+    // 以原始完整 setting 对象为底做合并，保留表单未感知的键（如 cost_ratio），
+    // 避免本表单只知道的几个键覆盖写回时把其它键冲掉
+    localInputs.setting = JSON.stringify({
+      ...originalChannelSettingRef.current,
+      ...channelExtraSettings,
+    });
 
     // 处理 settings 字段（包括企业账户设置和字段透传控制）
     let settings = {};
