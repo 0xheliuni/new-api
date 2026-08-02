@@ -3890,6 +3890,26 @@
     "请求数": "Request Count",
     "刊例价金额(美元)": "List Amount (USD)",
     "不含每日明细": "Exclude daily detail",
-    "明细不分模型": "Detail not split by model"
+    "明细不分模型": "Detail not split by model",
+    "成本核算": "Cost Accounting",
+    "用户维度": "By User",
+    "模型维度": "By Model",
+    "供应商维度": "By Channel",
+    "收入": "Revenue",
+    "成本": "Cost",
+    "利润": "Profit",
+    "利润率": "Profit Rate",
+    "刊例价": "List Price",
+    "输入 tokens": "Input tokens",
+    "用户数": "Users",
+    "成本倍率（人民币:美元）": "Cost Ratio (CNY per USD)",
+    "未填写": "Not Set",
+    "明细": "Detail",
+    "还有 {{count}} 项未展示": "{{count}} more items not shown",
+    "{{count}} 个渠道未填成本倍率，其成本按 0 计": "{{count}} channel(s) have no cost ratio set; their cost is counted as 0",
+    "倍率 {{r}} → 上游每消耗刊例 $1 记成本 ¥{{cny}}": "Ratio {{r}} → every $1 of upstream list-price usage costs ¥{{cny}}",
+    "请输入不小于 0 的倍率": "Please enter a ratio of 0 or greater",
+    "收支趋势（¥）": "Revenue/Cost Trend (¥)",
+    "渠道成本堆叠（¥）": "Cost by Channel (¥)"
   }
 }

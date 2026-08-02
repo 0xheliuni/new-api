@@ -50,6 +50,7 @@ const routerMap = {
   playground: '/console/playground',
   personal: '/console/personal',
   bill: '/console/bill',
+  cost: '/console/cost',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -193,6 +194,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('系统设置'),
         itemKey: 'setting',
         to: '/setting',
+        className: isRoot() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('成本核算'),
+        itemKey: 'cost',
+        to: '/cost',
         className: isRoot() ? '' : 'tableHiddle',
       },
     ];
