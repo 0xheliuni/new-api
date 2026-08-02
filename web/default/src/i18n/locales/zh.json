@@ -1010,6 +1010,7 @@
     "Core Features": "核心功能",
     "Core pricing": "核心定价",
     "Cost": "费用",
+    "Cost Accounting": "成本核算",
     "Cost in USD per request, regardless of tokens used.": "每请求的美元费用，不考虑使用的令牌数。",
     "Cost Tracking": "成本跟踪",
     "Count must be between {{min}} and {{max}}": "计数必须介于{{min}}和{{max}}之间",
