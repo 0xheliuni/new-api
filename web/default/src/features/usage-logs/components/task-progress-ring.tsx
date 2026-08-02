@@ -19,8 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * TaskProgressRing — circular progress indicator for seedance video tasks.
  * Ring color follows task status (success=green, failure=red, running=blue,
- * queued=amber, unknown=grey); percent text sits in the ring center.
+ * queued=amber, unknown=grey). Terminal states show the localized status text
+ * in the ring center (成功/失败); running states show the percent.
  */
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 const STATUS_RING_COLORS: Record<string, string> = {
@@ -51,10 +53,19 @@ interface TaskProgressRingProps {
 }
 
 export function TaskProgressRing(props: TaskProgressRingProps) {
+  const { t } = useTranslation()
   const { status, progress, size = 34, className } = props
   let pct = parseInt(progress || '0', 10) || 0
   if (status === 'SUCCESS') pct = 100
   pct = Math.max(0, Math.min(100, pct))
+
+  // 终态环心显示中文状态（成功/失败），进行中显示百分比。
+  const centerLabel =
+    status === 'SUCCESS'
+      ? t('Success')
+      : status === 'FAILURE'
+        ? t('Failed')
+        : `${pct}%`
 
   const strokeWidth = 3
   const radius = (size - strokeWidth) / 2
@@ -96,11 +107,11 @@ export function TaskProgressRing(props: TaskProgressRingProps) {
       </svg>
       <span
         className={cn(
-          'absolute inset-0 flex items-center justify-center font-mono text-[9px] font-semibold tabular-nums',
+          'absolute inset-0 flex items-center justify-center text-[9px] font-semibold tabular-nums',
           STATUS_TEXT_COLORS[status] || 'text-muted-foreground'
         )}
       >
-        {pct}%
+        {centerLabel}
       </span>
     </div>
   )

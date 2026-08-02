@@ -800,17 +800,20 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       cell: ({ row }) => {
         const ti = row.original.task_info
         if (!ti) return null
+        const isTerminal = ti.status === 'SUCCESS' || ti.status === 'FAILURE'
         return (
           <div className='flex items-center gap-2'>
             <TaskProgressRing status={ti.status} progress={ti.progress} />
-            <StatusBadge
-              label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
-              variant={taskStatusMapper.getVariant(ti.status)}
-              size='sm'
-              copyable={false}
-              showDot={false}
-              type='text'
-            />
+            {!isTerminal && (
+              <StatusBadge
+                label={t(taskStatusMapper.getLabel(ti.status, ti.status || 'Submitting'))}
+                variant={taskStatusMapper.getVariant(ti.status)}
+                size='sm'
+                copyable={false}
+                showDot={false}
+                type='text'
+              />
+            )}
           </div>
         )
       },

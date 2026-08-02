@@ -235,8 +235,66 @@ func TestEnrichSeedance_RequestParamsFromInput(t *testing.T) {
 	assert.Equal(t, 8, t3.DurationS)
 }
 
-// task 已被清理时，失败原因从退款兄弟行兜底：other.reason 优先，缺失时取 Content
-// （差额退款行的 reason 写在 Content 而非 other.reason）。
+// 成功任务绝不显示失败原因：差额退款（settle 方向、带 actual_quota）的
+// Content 是"token重算：..."结算说明，不是失败原因，不得捕获；
+// 任务状态为 SUCCESS 时失败原因必须为空。
+func TestEnrichSeedance_SuccessNeverHasFailReason(t *testing.T) {
+	clearLogsAndTasks(t)
+	require.NoError(t, DB.Create(&Task{
+		TaskID: "ok-1", UserId: 1, Status: TaskStatusSuccess, Progress: "100%", Quota: 1252,
+		PrivateData: TaskPrivateData{RequestId: "ok-req-1"},
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-2-0-mini-260615", CreatedAt: 1000,
+		Quota: 2875, RequestId: "ok-req-1",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"ok-1","group_ratio":1}`,
+	}).Error)
+	// 多退少补的退款行：reason 在 Content，带 actual_quota（结算调整，非失败）
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeRefund, ModelName: "doubao-seedance-2-0-mini-260615", CreatedAt: 1100,
+		Quota: 1623, RequestId: "ok-req-1",
+		Content: "token重算：tokens=108900, modelRatio=11.50, groupRatio=1.00, otherMultiplier=1.0000",
+		Other:   `{"billing_stage":"refund","task_id":"ok-1","pre_consumed_quota":2875,"actual_quota":1252}`,
+	}).Error)
+
+	logs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 100, 0, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	ti := logs[0].TaskInfo
+	require.NotNil(t, ti)
+	assert.Equal(t, "SUCCESS", ti.Status)
+	assert.Empty(t, ti.FailReason, "成功任务不得携带失败原因（token重算是结算说明）")
+	assert.Equal(t, 1252, ti.FinalQuota)
+}
+
+// orphan（task 已清理）+ 结算调整退款：同样不得把"token重算"当失败原因，
+// 状态由 settle 语义推断为成功。
+func TestEnrichSeedance_OrphanSettleRefundNotFailure(t *testing.T) {
+	clearLogsAndTasks(t)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeConsume, ModelName: "doubao-seedance-1-0", CreatedAt: 1000,
+		Quota: 2875, RequestId: "orph-1",
+		Other: `{"is_task":true,"billing_stage":"pre_consume","task_id":"gone-s","group_ratio":1}`,
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Type: LogTypeRefund, ModelName: "doubao-seedance-1-0", CreatedAt: 1100,
+		Quota: 1623, RequestId: "orph-1",
+		Content: "token重算：tokens=108900",
+		Other:   `{"billing_stage":"refund","task_id":"gone-s","pre_consumed_quota":2875,"actual_quota":1252}`,
+	}).Error)
+
+	logs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 100, 0, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	ti := logs[0].TaskInfo
+	require.NotNil(t, ti)
+	assert.Equal(t, "SUCCESS", ti.Status, "带 actual_quota 的退款是多退少补，任务实为成功")
+	assert.Empty(t, ti.FailReason)
+	assert.Equal(t, 1252, ti.FinalQuota)
+}
+
+// task 已被清理时，全额失败退款（无 actual_quota）的原因从退款兄弟行兜底：
+// other.reason 优先，缺失时取 Content。
 func TestEnrichSeedance_OrphanFailReasonFromSiblingContent(t *testing.T) {
 	clearLogsAndTasks(t)
 	require.NoError(t, LOG_DB.Create(&Log{

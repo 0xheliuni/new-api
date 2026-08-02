@@ -131,8 +131,15 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 
 		hasSettle, hasRefund := false, false
 		for _, s := range sibByReq[c.log.RequestId] {
+			// 带 actual_quota(>0) 的退款是多退少补的结算调整（任务实为成功），
+			// 其 Content 是"token重算：..."结算说明，不是失败原因。
+			isSettleAdjust := num(s.other, "actual_quota") > 0
 			if s.typ == LogTypeRefund {
-				hasRefund = true
+				if isSettleAdjust {
+					hasSettle = true
+				} else {
+					hasRefund = true
+				}
 				ti.FinalQuota -= s.quota
 			} else {
 				hasSettle = true
@@ -144,8 +151,8 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 			if ti.FailReason == "" {
 				ti.FailReason, _ = s.other["reason"].(string)
 			}
-			// 差额退款行的原因写在 Content 而非 other.reason，兜底补取。
-			if ti.FailReason == "" && s.typ == LogTypeRefund {
+			// 全额失败退款的原因写在 Content 而非 other.reason，兜底补取。
+			if ti.FailReason == "" && s.typ == LogTypeRefund && !isSettleAdjust {
 				ti.FailReason = s.content
 			}
 		}
@@ -183,6 +190,10 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 			case hasSettle:
 				ti.Status = string(TaskStatusSuccess)
 			}
+		}
+		// 成功任务绝不携带失败原因（结算说明不是失败）。
+		if ti.Status == string(TaskStatusSuccess) {
+			ti.FailReason = ""
 		}
 		c.log.TaskInfo = ti
 	}

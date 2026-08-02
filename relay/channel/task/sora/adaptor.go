@@ -177,9 +177,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
 			if newBody, err := common.Marshal(bodyMap); err == nil {
+				// 持久化上游请求体到 task.Properties.Input：使用日志据此展示
+				// 用户请求的 分辨率/宽高比/秒数 等真实参数。
+				info.UpstreamRequestBody = newBody
 				return bytes.NewReader(newBody), nil
 			}
 		}
+		info.UpstreamRequestBody = cachedBody
 		return bytes.NewReader(cachedBody), nil
 	}
 

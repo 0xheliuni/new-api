@@ -977,19 +977,28 @@ export const getLogsColumns = ({
           SUBMITTED: 'var(--semi-color-warning)',
           QUEUED: 'var(--semi-color-warning)',
         };
+        // 终态环心显示中文状态（成功/失败），进行中显示百分比 + 旁侧状态 Tag。
+        const isTerminal =
+          taskInfo.status === 'SUCCESS' || taskInfo.status === 'FAILURE';
+        const centerText =
+          taskInfo.status === 'SUCCESS'
+            ? t('成功')
+            : taskInfo.status === 'FAILURE'
+              ? t('失败')
+              : `${pct}%`;
         return (
           <Space>
             <Progress
               percent={pct}
               type='circle'
               size='small'
-              width={36}
+              width={40}
               stroke={colorMap[taskInfo.status] || 'var(--semi-color-tertiary)'}
               showInfo
-              format={(p) => `${p}%`}
+              format={() => centerText}
               aria-label='task progress'
             />
-            {renderSeedanceTaskStatus(taskInfo.status, t)}
+            {!isTerminal && renderSeedanceTaskStatus(taskInfo.status, t)}
           </Space>
         );
       },
