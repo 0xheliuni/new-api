@@ -4732,6 +4732,18 @@
     "… and {{n}} more rows omitted": "… 其余 {{n}} 行已省略",
     "{{count}} channels have no cost ratio set; their cost is counted as 0": "{{count}} 个渠道未填成本倍率，其成本按 0 计",
     "Ratio {{r}} → every $1 of list-price usage costs ¥{{cny}}": "倍率 {{r}} → 上游每消耗刊例 $1 记成本 ¥{{cny}}",
-    "e.g., 6.5": "例如 6.5"
+    "e.g., 6.5": "例如 6.5",
+    "Cache Rate": "缓存率",
+    "Detail": "明细",
+    "Merge users": "合并用户",
+    "Merge models": "合并模型",
+    "Merge channels": "合并渠道",
+    "View channel only": "只看该渠道",
+    "Aggregator": "聚合渠道",
+    "Cost Discount": "成本折扣",
+    "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}": "折扣 {{d}} × 汇率 {{r}} → 刊例价 $1 记成本 ¥{{cny}}",
+    "Sub-supplier": "子供应商",
+    "Report cost uses the channel-level pricing": "报表成本按渠道级定价计算",
+    "Pricing Mode": "计价方式"
   }
 }

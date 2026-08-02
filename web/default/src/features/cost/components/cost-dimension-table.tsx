@@ -18,12 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Fragment, type ReactNode, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { getRouteApi } from '@tanstack/react-router'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { formatNumber } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -36,18 +45,28 @@ import {
 } from '@/components/ui/table'
 import { StaticDataTable } from '@/components/data-table'
 import { getCostByDimension } from '../api'
+import { DEFAULT_EXCHANGE_RATE } from './cost-filter'
 import type {
   CostBreakdownRow,
+  CostChannelSubSupplier,
   CostDimension,
   CostDimensionRow,
   CostMoney,
 } from '../types'
-import { formatCny, formatRate, formatUsd } from '../lib'
+import {
+  formatAvgTtft,
+  formatCny,
+  formatDiscountLabel,
+  formatRate,
+  formatUsd,
+  mergeBreakdown,
+  type CostBreakdownGroupBy,
+} from '../lib'
 import { EditRatioDialog } from './edit-ratio-dialog'
+import { TokensDetailDialog } from './tokens-detail-dialog'
 
 const PAGE_SIZE = 20
-const NON_CHANNEL_COLSPAN = 11
-const CHANNEL_COLSPAN = 10
+const route = getRouteApi('/_authenticated/cost/')
 
 interface CostDimensionTableProps {
   dim: CostDimension
@@ -81,15 +100,88 @@ function MoneyCell({
   )
 }
 
-function ProfitCell({ value }: { value: number }) {
+/**
+ * Metric column definitions shared verbatim between the top-level dimension
+ * rows and their breakdown sub-rows, so both render the exact same set of
+ * columns in the exact same order (v2 requirement).
+ */
+interface MetricColumnSpec {
+  id: string
+  header: ReactNode
+  cellClassName?: string | ((row: CostMoney) => string | undefined)
+  cell: (row: CostMoney) => ReactNode
+}
+
+function renderRevenueCell(row: CostMoney) {
   return (
-    <MoneyCell className={value >= 0 ? 'text-success' : 'text-destructive'}>
-      {formatCny(value)}
-    </MoneyCell>
+    <div className='flex flex-col items-end leading-tight'>
+      <span>{formatUsd(row.revenue_usd)}</span>
+      <span className='text-muted-foreground text-[11px]'>
+        {formatCny(row.revenue_cny)}
+      </span>
+    </div>
   )
 }
 
-type IdentityField = 'username' | 'model_name' | 'channel'
+function buildMetricColumns(
+  t: ReturnType<typeof useTranslation>['t']
+): MetricColumnSpec[] {
+  return [
+    { id: 'cost_cny', header: t('Cost ¥'), cell: (row) => formatCny(row.cost_cny) },
+    { id: 'revenue', header: t('Revenue'), cell: renderRevenueCell },
+    {
+      id: 'profit_cny',
+      header: t('Profit ¥'),
+      cellClassName: (row) =>
+        row.profit_cny >= 0 ? 'text-success' : 'text-destructive',
+      cell: (row) => formatCny(row.profit_cny),
+    },
+    { id: 'list_usd', header: t('List $'), cell: (row) => formatUsd(row.list_usd) },
+    {
+      id: 'request_count',
+      header: t('Requests'),
+      cell: (row) => formatNumber(row.request_count),
+    },
+    { id: 'profit_rate', header: t('Rate'), cell: (row) => formatRate(row.profit_rate) },
+    {
+      id: 'total_tokens',
+      header: t('Total Tokens'),
+      cell: (row) => (
+        <TokensDetailDialog
+          promptTokens={row.prompt_tokens}
+          completionTokens={row.completion_tokens}
+          cacheReadTokens={row.cache_read_tokens}
+          cacheCreationTokens={row.cache_creation_tokens}
+          totalTokens={row.total_tokens}
+        />
+      ),
+    },
+    {
+      id: 'success_rate',
+      header: t('Success rate'),
+      cell: (row) => formatRate(row.success_rate),
+    },
+    {
+      id: 'cache_rate',
+      header: t('Cache Rate'),
+      cell: (row) => formatRate(row.cache_rate),
+    },
+    {
+      id: 'avg_ttft_ms',
+      header: t('Average TTFT'),
+      cell: (row) => formatAvgTtft(row),
+    },
+  ]
+}
+
+type IdentityField = CostBreakdownGroupBy
+type ViewMode = 'detail' | IdentityField
+
+const IDENTITY_MERGE_LABEL_KEY: Record<IdentityField, string> = {
+  username: 'Merge users',
+  model_name: 'Merge models',
+  channel: 'Merge channels',
+}
 
 function getBreakdownIdentityFields(
   dim: CostDimension,
@@ -111,17 +203,42 @@ function getBreakdownIdentityFields(
   return fields
 }
 
+/** Each merge option collapses one identity field, grouping by the other. */
+function buildMergeOptions(
+  identityFields: IdentityField[]
+): { groupBy: IdentityField; collapsed: IdentityField }[] {
+  if (identityFields.length !== 2) return []
+  const [a, b] = identityFields
+  return [
+    { groupBy: b, collapsed: a },
+    { groupBy: a, collapsed: b },
+  ]
+}
+
 function BreakdownTable({
   dim,
-  breakdown,
-  truncated,
+  row,
+  metricColumns,
+  viewMode,
+  onViewModeChange,
+  onViewChannel,
 }: {
   dim: CostDimension
-  breakdown: CostBreakdownRow[]
-  truncated?: number
+  row: CostDimensionRow
+  metricColumns: MetricColumnSpec[]
+  viewMode: ViewMode
+  onViewModeChange: (mode: ViewMode) => void
+  onViewChannel: (channelId: number) => void
 }) {
   const { t } = useTranslation()
-  const identityFields = getBreakdownIdentityFields(dim, breakdown)
+  const rawBreakdown = row.breakdown ?? []
+  const mergeOptions = buildMergeOptions(
+    getBreakdownIdentityFields(dim, rawBreakdown)
+  )
+  const breakdown =
+    viewMode === 'detail' ? rawBreakdown : mergeBreakdown(rawBreakdown, viewMode)
+  const shownFields = getBreakdownIdentityFields(dim, breakdown)
+
   const identityHeaders: Record<IdentityField, string> = {
     username: t('Username'),
     model_name: t('Model'),
@@ -129,62 +246,116 @@ function BreakdownTable({
   }
 
   return (
-    <div className='bg-muted/30 flex flex-col gap-1.5 p-2'>
+    <div className='bg-muted/30 flex flex-col gap-2 p-2'>
+      {mergeOptions.length > 0 && (
+        <div className='flex items-center gap-2 px-1'>
+          <span className='text-muted-foreground text-xs'>{t('View')}</span>
+          <Select
+            value={viewMode}
+            onValueChange={(value) => onViewModeChange(value as ViewMode)}
+            items={[
+              { value: 'detail', label: t('Detail') },
+              ...mergeOptions.map((option) => ({
+                value: option.groupBy,
+                label: t(IDENTITY_MERGE_LABEL_KEY[option.collapsed]),
+              })),
+            ]}
+          >
+            <SelectTrigger size='sm' className='h-7 w-auto text-xs'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectItem value='detail'>{t('Detail')}</SelectItem>
+                {mergeOptions.map((option) => (
+                  <SelectItem key={option.groupBy} value={option.groupBy}>
+                    {t(IDENTITY_MERGE_LABEL_KEY[option.collapsed])}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {dim === 'channels' && row.sub_suppliers && row.sub_suppliers.length > 0 && (
+        <div className='flex flex-col gap-1.5 px-1'>
+          <p className='text-muted-foreground text-xs'>
+            {t('Report cost uses the channel-level pricing')}
+          </p>
+          <StaticDataTable<CostChannelSubSupplier>
+            columns={[
+              {
+                id: 'name',
+                header: t('Sub-supplier'),
+                cell: (supplier) => supplier.name,
+              },
+              {
+                id: 'cost_ratio',
+                header: t('Ratio'),
+                className: 'text-right',
+                cellClassName: 'text-right tabular-nums',
+                cell: (supplier) => supplier.cost_ratio ?? '-',
+              },
+            ]}
+            data={row.sub_suppliers}
+            tableClassName='text-xs'
+          />
+        </div>
+      )}
+
       <StaticDataTable<CostBreakdownRow>
         columns={[
-          ...identityFields.map((field) => ({
+          ...shownFields.map((field) => ({
             id: field,
             header: identityHeaders[field],
-            cell: (row: CostBreakdownRow) =>
-              field === 'username'
-                ? row.username
-                : field === 'model_name'
-                  ? row.model_name
-                  : row.channel_name
-                    ? `${row.channel_name} (#${row.channel_id})`
-                    : row.channel_id != null
-                      ? `#${row.channel_id}`
-                      : '-',
+            cell: (r: CostBreakdownRow) => {
+              if (field === 'username') return r.username
+              if (field === 'model_name') return r.model_name
+              return (
+                <div className='flex items-center gap-1.5'>
+                  <span>
+                    {r.channel_name
+                      ? `${r.channel_name} (#${r.channel_id})`
+                      : r.channel_id != null
+                        ? `#${r.channel_id}`
+                        : '-'}
+                  </span>
+                  {r.channel_id != null && (
+                    <Button
+                      type='button'
+                      variant='link'
+                      size='xs'
+                      className='h-auto p-0 text-xs'
+                      onClick={() => onViewChannel(r.channel_id!)}
+                    >
+                      {t('View channel only')}
+                    </Button>
+                  )}
+                </div>
+              )
+            },
           })),
-          {
-            id: 'revenue_usd',
-            header: t('Revenue $'),
+          ...metricColumns.map((col) => ({
+            id: col.id,
+            header: col.header,
             className: 'text-right',
-            cellClassName: 'text-right tabular-nums',
-            cell: (row: CostBreakdownRow) => formatUsd(row.revenue_usd),
-          },
-          {
-            id: 'cost_cny',
-            header: t('Cost ¥'),
-            className: 'text-right',
-            cellClassName: 'text-right tabular-nums',
-            cell: (row: CostBreakdownRow) => formatCny(row.cost_cny),
-          },
-          {
-            id: 'profit_cny',
-            header: t('Profit ¥'),
-            className: 'text-right',
-            cellClassName: (row: CostBreakdownRow) =>
+            cellClassName: (r: CostBreakdownRow) =>
               cn(
                 'text-right tabular-nums',
-                row.profit_cny >= 0 ? 'text-success' : 'text-destructive'
+                typeof col.cellClassName === 'function'
+                  ? col.cellClassName(r)
+                  : col.cellClassName
               ),
-            cell: (row: CostBreakdownRow) => formatCny(row.profit_cny),
-          },
-          {
-            id: 'profit_rate',
-            header: t('Rate'),
-            className: 'text-right',
-            cellClassName: 'text-right tabular-nums',
-            cell: (row: CostBreakdownRow) => formatRate(row.profit_rate),
-          },
+            cell: (r: CostBreakdownRow) => col.cell(r),
+          })),
         ]}
         data={breakdown}
         tableClassName='text-xs'
       />
-      {Boolean(truncated) && (
+      {Boolean(row.breakdown_truncated) && (
         <p className='text-muted-foreground px-1 text-xs'>
-          {t('… and {{n}} more rows omitted', { n: truncated })}
+          {t('… and {{n}} more rows omitted', { n: row.breakdown_truncated })}
         </p>
       )}
     </div>
@@ -202,29 +373,51 @@ function DimensionCell({
   if (dim === 'users') return <>{row.username || '-'}</>
   if (dim === 'models') return <>{row.model_name || '-'}</>
   return (
-    <div className='flex flex-col'>
-      <span>{row.channel_name || t('Unnamed channel')}</span>
+    <div className='flex flex-col gap-0.5'>
+      <div className='flex items-center gap-1.5'>
+        <span>{row.channel_name || t('Unnamed channel')}</span>
+        {row.is_aggregator && (
+          <Badge className='bg-info/10 text-info border-transparent'>
+            {t('Aggregator')}
+          </Badge>
+        )}
+      </div>
       <span className='text-muted-foreground text-xs'>#{row.channel_id}</span>
     </div>
   )
 }
 
-function RatioCell({ row }: { row: CostDimensionRow }) {
+function RatioCell({
+  row,
+  exchangeRate,
+}: {
+  row: CostDimensionRow
+  exchangeRate: number
+}) {
   const { t } = useTranslation()
   if (row.channel_id == null) return null
+  const mode = row.cost_mode === 'discount' ? 'discount' : 'ratio'
   return (
     <div className='flex items-center justify-end gap-1.5'>
-      {row.priced ? (
-        <span className='tabular-nums'>{row.cost_ratio}</span>
-      ) : (
+      {!row.priced ? (
         <Badge className='bg-warning/10 text-warning border-transparent'>
           {t('Not set')}
         </Badge>
+      ) : mode === 'discount' ? (
+        <span className='tabular-nums'>
+          {formatDiscountLabel(row.cost_discount)} (≈¥
+          {(row.effective_ratio ?? 0).toFixed(2)}/$1)
+        </span>
+      ) : (
+        <span className='tabular-nums'>{row.cost_ratio}</span>
       )}
       <EditRatioDialog
         channelId={row.channel_id}
         channelName={row.channel_name || `#${row.channel_id}`}
         currentRatio={row.cost_ratio ?? 0}
+        currentMode={row.cost_mode}
+        currentDiscount={row.cost_discount ?? 0}
+        exchangeRate={exchangeRate}
       />
     </div>
   )
@@ -248,7 +441,11 @@ export function CostDimensionTable({
   exchangeRate,
 }: CostDimensionTableProps) {
   const { t } = useTranslation()
+  const navigate = route.useNavigate()
   const [expanded, setExpanded] = useState<Set<string | number>>(new Set())
+  const [viewModeByRow, setViewModeByRow] = useState<
+    Map<string | number, ViewMode>
+  >(new Map())
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -280,6 +477,8 @@ export function CostDimensionTable({
   const total = data?.total ?? 0
   const summary: CostMoney | undefined = data?.summary
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const metricColumns = buildMetricColumns(t)
+  const totalColSpan = 2 + (dim === 'channels' ? 1 : 0) + metricColumns.length
 
   const toggleExpanded = (key: string | number) => {
     setExpanded((prev) => {
@@ -287,6 +486,30 @@ export function CostDimensionTable({
       if (next.has(key)) next.delete(key)
       else next.add(key)
       return next
+    })
+  }
+
+  const getViewMode = (key: string | number): ViewMode =>
+    viewModeByRow.get(key) ?? 'detail'
+
+  const setViewMode = (key: string | number, mode: ViewMode) => {
+    setViewModeByRow((prev) => {
+      const next = new Map(prev)
+      next.set(key, mode)
+      return next
+    })
+  }
+
+  const handleViewChannel = (channelId: number) => {
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        channel: channelId,
+        username: undefined,
+        model_name: undefined,
+        tab: 'channels',
+        p: undefined,
+      }),
     })
   }
 
@@ -304,41 +527,18 @@ export function CostDimensionTable({
               {dim === 'channels' && (
                 <TableHead className='text-right'>{t('Ratio')}</TableHead>
               )}
-              <TableHead className='text-right'>{t('Revenue $')}</TableHead>
-              {dim === 'channels' ? (
-                <TableHead className='text-right'>{t('List $')}</TableHead>
-              ) : (
-                <TableHead className='text-right'>{t('Revenue ¥')}</TableHead>
-              )}
-              <TableHead className='text-right'>{t('Cost ¥')}</TableHead>
-              <TableHead className='text-right'>{t('Profit ¥')}</TableHead>
-              <TableHead className='text-right'>{t('Rate')}</TableHead>
-              {dim !== 'channels' && (
-                <>
-                  <TableHead className='text-right'>
-                    {t('Input Tokens')}
-                  </TableHead>
-                  <TableHead className='text-right'>
-                    {t('Output Tokens')}
-                  </TableHead>
-                </>
-              )}
-              {dim === 'channels' && (
-                <TableHead className='text-right'>{t('Users')}</TableHead>
-              )}
-              <TableHead className='text-right'>{t('Requests')}</TableHead>
-              {dim !== 'channels' && (
-                <TableHead className='text-right'>{t('Refund $')}</TableHead>
-              )}
+              {metricColumns.map((col) => (
+                <TableHead key={col.id} className='text-right'>
+                  {col.header}
+                </TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, index) => (
                 <TableRow key={`skeleton-${index}`}>
-                  <TableCell
-                    colSpan={dim === 'channels' ? CHANNEL_COLSPAN : NON_CHANNEL_COLSPAN}
-                  >
+                  <TableCell colSpan={totalColSpan}>
                     <Skeleton className='h-6 w-full' />
                   </TableCell>
                 </TableRow>
@@ -346,7 +546,7 @@ export function CostDimensionTable({
             ) : items.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={dim === 'channels' ? CHANNEL_COLSPAN : NON_CHANNEL_COLSPAN}
+                  colSpan={totalColSpan}
                   className='text-muted-foreground h-24 text-center'
                 >
                   {t('No data available')}
@@ -383,48 +583,35 @@ export function CostDimensionTable({
                       </TableCell>
                       {dim === 'channels' && (
                         <TableCell className='text-right'>
-                          <RatioCell row={row} />
+                          <RatioCell
+                            row={row}
+                            exchangeRate={exchangeRate ?? DEFAULT_EXCHANGE_RATE}
+                          />
                         </TableCell>
                       )}
-                      <MoneyCell>{formatUsd(row.revenue_usd)}</MoneyCell>
-                      {dim === 'channels' ? (
-                        <MoneyCell>{formatUsd(row.list_usd)}</MoneyCell>
-                      ) : (
-                        <MoneyCell>{formatCny(row.revenue_cny)}</MoneyCell>
-                      )}
-                      <MoneyCell>{formatCny(row.cost_cny)}</MoneyCell>
-                      <ProfitCell value={row.profit_cny} />
-                      <MoneyCell>{formatRate(row.profit_rate)}</MoneyCell>
-                      {dim !== 'channels' && (
-                        <>
-                          <MoneyCell>
-                            {formatNumber(row.prompt_tokens)}
-                          </MoneyCell>
-                          <MoneyCell>
-                            {formatNumber(row.completion_tokens)}
-                          </MoneyCell>
-                        </>
-                      )}
-                      {dim === 'channels' && (
-                        <MoneyCell>{formatNumber(row.user_count)}</MoneyCell>
-                      )}
-                      <MoneyCell>{formatNumber(row.request_count)}</MoneyCell>
-                      {dim !== 'channels' && (
-                        <MoneyCell>{formatUsd(row.refund_usd)}</MoneyCell>
-                      )}
+                      {metricColumns.map((col) => (
+                        <MoneyCell
+                          key={col.id}
+                          className={
+                            typeof col.cellClassName === 'function'
+                              ? col.cellClassName(row)
+                              : col.cellClassName
+                          }
+                        >
+                          {col.cell(row)}
+                        </MoneyCell>
+                      ))}
                     </TableRow>
                     {hasBreakdown && isExpanded && (
                       <TableRow>
-                        <TableCell
-                          colSpan={
-                            dim === 'channels' ? CHANNEL_COLSPAN : NON_CHANNEL_COLSPAN
-                          }
-                          className='p-0'
-                        >
+                        <TableCell colSpan={totalColSpan} className='p-0'>
                           <BreakdownTable
                             dim={dim}
-                            breakdown={row.breakdown ?? []}
-                            truncated={row.breakdown_truncated}
+                            row={row}
+                            metricColumns={metricColumns}
+                            viewMode={getViewMode(key)}
+                            onViewModeChange={(mode) => setViewMode(key, mode)}
+                            onViewChannel={handleViewChannel}
                           />
                         </TableCell>
                       </TableRow>
@@ -442,44 +629,19 @@ export function CostDimensionTable({
                   {summaryLabel(dim, t)}
                 </TableCell>
                 {dim === 'channels' && <TableCell />}
-                <MoneyCell className='font-semibold'>
-                  {formatUsd(summary.revenue_usd)}
-                </MoneyCell>
-                {dim === 'channels' ? (
-                  <MoneyCell className='font-semibold'>
-                    {formatUsd(summary.list_usd)}
+                {metricColumns.map((col) => (
+                  <MoneyCell
+                    key={col.id}
+                    className={cn(
+                      'font-semibold',
+                      typeof col.cellClassName === 'function'
+                        ? col.cellClassName(summary)
+                        : col.cellClassName
+                    )}
+                  >
+                    {col.cell(summary)}
                   </MoneyCell>
-                ) : (
-                  <MoneyCell className='font-semibold'>
-                    {formatCny(summary.revenue_cny)}
-                  </MoneyCell>
-                )}
-                <MoneyCell className='font-semibold'>
-                  {formatCny(summary.cost_cny)}
-                </MoneyCell>
-                <ProfitCell value={summary.profit_cny} />
-                <MoneyCell className='font-semibold'>
-                  {formatRate(summary.profit_rate)}
-                </MoneyCell>
-                {dim !== 'channels' && (
-                  <>
-                    <MoneyCell className='font-semibold'>
-                      {formatNumber(summary.prompt_tokens)}
-                    </MoneyCell>
-                    <MoneyCell className='font-semibold'>
-                      {formatNumber(summary.completion_tokens)}
-                    </MoneyCell>
-                  </>
-                )}
-                {dim === 'channels' && <TableCell />}
-                <MoneyCell className='font-semibold'>
-                  {formatNumber(summary.request_count)}
-                </MoneyCell>
-                {dim !== 'channels' && (
-                  <MoneyCell className='font-semibold'>
-                    {formatUsd(summary.refund_usd)}
-                  </MoneyCell>
-                )}
+                ))}
               </TableRow>
             </TableFooter>
           )}

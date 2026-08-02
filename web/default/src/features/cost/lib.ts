@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { CostStackPoint } from './types'
+import type { CostBreakdownRow, CostMoney, CostStackPoint } from './types'
 
 /**
  * Fixed-currency formatters for the cost accounting page. Unlike
@@ -48,6 +48,122 @@ export function formatCny(value: number | null | undefined): string {
 export function formatRate(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '-'
   return `${(value * 100).toFixed(1)}%`
+}
+
+/** Fields a breakdown row can be grouped by when the user merges away a dimension. */
+export type CostBreakdownGroupBy = 'username' | 'model_name' | 'channel'
+
+function round6(value: number): number {
+  return Math.round(value * 1e6) / 1e6
+}
+
+const ZERO_MONEY: CostMoney = {
+  revenue_usd: 0,
+  revenue_cny: 0,
+  list_usd: 0,
+  cost_cny: 0,
+  profit_cny: 0,
+  profit_rate: 0,
+  refund_usd: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  request_count: 0,
+  cache_read_tokens: 0,
+  cache_creation_tokens: 0,
+  total_tokens: 0,
+  error_count: 0,
+  frt_sum_ms: 0,
+  frt_count: 0,
+  success_rate: 0,
+  cache_rate: 0,
+  avg_ttft_ms: 0,
+}
+
+/**
+ * Client-side re-fold of already-fetched breakdown rows onto a single
+ * remaining identity field. Sums every raw additive field and re-derives
+ * profit_rate/success_rate/cache_rate/avg_ttft_ms with the exact
+ * zero-denominator rules `costMoney.add`/`deriveRates` use in
+ * controller/cost_stat.go, so a client merge matches what the backend would
+ * have returned for the same grouping.
+ */
+export function mergeBreakdown(
+  rows: CostBreakdownRow[],
+  groupBy: CostBreakdownGroupBy
+): CostBreakdownRow[] {
+  const groups = new Map<string, CostBreakdownRow>()
+
+  for (const row of rows) {
+    const key =
+      groupBy === 'username'
+        ? (row.username ?? '')
+        : groupBy === 'model_name'
+          ? (row.model_name ?? '')
+          : String(row.channel_id ?? '')
+
+    let acc = groups.get(key)
+    if (!acc) {
+      acc = {
+        ...ZERO_MONEY,
+        ...(groupBy === 'username' ? { username: row.username } : {}),
+        ...(groupBy === 'model_name' ? { model_name: row.model_name } : {}),
+        ...(groupBy === 'channel'
+          ? { channel_id: row.channel_id, channel_name: row.channel_name }
+          : {}),
+      }
+      groups.set(key, acc)
+    }
+
+    acc.revenue_usd = round6(acc.revenue_usd + row.revenue_usd)
+    acc.revenue_cny = round6(acc.revenue_cny + row.revenue_cny)
+    acc.list_usd = round6(acc.list_usd + row.list_usd)
+    acc.cost_cny = round6(acc.cost_cny + row.cost_cny)
+    acc.profit_cny = round6(acc.profit_cny + row.profit_cny)
+    acc.refund_usd = round6(acc.refund_usd + row.refund_usd)
+    acc.prompt_tokens += row.prompt_tokens
+    acc.completion_tokens += row.completion_tokens
+    acc.request_count += row.request_count
+    acc.cache_read_tokens += row.cache_read_tokens
+    acc.cache_creation_tokens += row.cache_creation_tokens
+    acc.error_count += row.error_count
+    acc.frt_sum_ms = round6(acc.frt_sum_ms + row.frt_sum_ms)
+    acc.frt_count += row.frt_count
+  }
+
+  const merged = Array.from(groups.values())
+  for (const acc of merged) {
+    acc.total_tokens = acc.prompt_tokens + acc.completion_tokens
+    acc.profit_rate =
+      acc.revenue_cny === 0 ? 0 : round6(acc.profit_cny / acc.revenue_cny)
+    acc.success_rate =
+      acc.request_count + acc.error_count === 0
+        ? 1
+        : round6(acc.request_count / (acc.request_count + acc.error_count))
+    acc.cache_rate =
+      acc.prompt_tokens === 0
+        ? 0
+        : round6(acc.cache_read_tokens / acc.prompt_tokens)
+    acc.avg_ttft_ms = acc.frt_count === 0 ? 0 : round6(acc.frt_sum_ms / acc.frt_count)
+  }
+
+  merged.sort((a, b) => b.revenue_cny - a.revenue_cny)
+  return merged
+}
+
+/** "8折" style label for a channel cost discount (e.g. 0.8 -> "8折"). */
+export function formatDiscountLabel(discount: number | null | undefined): string {
+  if (discount == null || !Number.isFinite(discount)) return '-'
+  const tenths = Math.round(discount * 100) / 10
+  const text = Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1)
+  return `${text}折`
+}
+
+/** `-` when the bucket has no FRT sample, otherwise a rounded ms value. */
+export function formatAvgTtft(
+  row: Pick<CostMoney, 'avg_ttft_ms' | 'frt_count'>
+): string {
+  if (!row.frt_count) return '-'
+  return `${Math.round(row.avg_ttft_ms)} ms`
 }
 
 const THEME_CHART_COLOR_VARIABLES = [

@@ -25,36 +25,70 @@ import { getChannel, updateChannel } from '@/features/channels/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Dialog } from '@/components/dialog'
+
+type CostPricingMode = 'ratio' | 'discount'
 
 interface EditRatioDialogProps {
   channelId: number
   channelName: string
   currentRatio: number
+  currentMode?: string
+  currentDiscount?: number
+  exchangeRate: number
 }
 
 export function EditRatioDialog({
   channelId,
   channelName,
   currentRatio,
+  currentMode,
+  currentDiscount,
+  exchangeRate,
 }: EditRatioDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [value, setValue] = useState(currentRatio ? String(currentRatio) : '')
+  const [mode, setMode] = useState<CostPricingMode>(
+    currentMode === 'discount' ? 'discount' : 'ratio'
+  )
+  const [ratioValue, setRatioValue] = useState(
+    currentRatio ? String(currentRatio) : ''
+  )
+  const [discountValue, setDiscountValue] = useState(
+    currentDiscount ? String(currentDiscount) : ''
+  )
   const [submitting, setSubmitting] = useState(false)
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) setValue(currentRatio ? String(currentRatio) : '')
+    if (nextOpen) {
+      setMode(currentMode === 'discount' ? 'discount' : 'ratio')
+      setRatioValue(currentRatio ? String(currentRatio) : '')
+      setDiscountValue(currentDiscount ? String(currentDiscount) : '')
+    }
     setOpen(nextOpen)
   }
 
-  const parsedRatio = Number(value)
+  const parsedRatio = Number(ratioValue)
   const isValidRatio =
-    value.trim() !== '' && Number.isFinite(parsedRatio) && parsedRatio >= 0
+    ratioValue.trim() !== '' && Number.isFinite(parsedRatio) && parsedRatio >= 0
+  const parsedDiscount = Number(discountValue)
+  const isValidDiscount =
+    discountValue.trim() !== '' &&
+    Number.isFinite(parsedDiscount) &&
+    parsedDiscount >= 0
+  const isValid = mode === 'discount' ? isValidDiscount : isValidRatio
 
   const handleSubmit = async () => {
-    if (!isValidRatio) return
+    if (!isValid) return
     setSubmitting(true)
     try {
       const channelRes = await getChannel(channelId)
@@ -73,7 +107,12 @@ export function EditRatioDialog({
           settingObj = {}
         }
       }
-      settingObj.cost_ratio = parsedRatio
+      settingObj.cost_mode = mode
+      if (mode === 'discount') {
+        settingObj.cost_discount = parsedDiscount
+      } else {
+        settingObj.cost_ratio = parsedRatio
+      }
 
       const updateRes = await updateChannel(channelId, {
         setting: JSON.stringify(settingObj),
@@ -125,33 +164,85 @@ export function EditRatioDialog({
           <Button
             type='button'
             onClick={handleSubmit}
-            disabled={!isValidRatio || submitting}
+            disabled={!isValid || submitting}
           >
             {t('Save')}
           </Button>
         </>
       }
     >
-      <div className='flex flex-col gap-2'>
-        <Label htmlFor='cost-ratio-input'>
-          {t('Cost Ratio (CNY per USD)')}
-        </Label>
-        <Input
-          id='cost-ratio-input'
-          type='number'
-          min={0}
-          step={0.01}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        />
-        <p className='text-muted-foreground text-xs'>
-          {isValidRatio
-            ? t(
-                'Ratio {{r}} → every $1 of list-price usage costs ¥{{cny}}',
-                { r: parsedRatio, cny: parsedRatio.toFixed(2) }
-              )
-            : t('Used by cost accounting. Leave empty if unknown.')}
-        </p>
+      <div className='flex flex-col gap-4'>
+        <div className='flex flex-col gap-2'>
+          <Label>{t('Pricing Mode')}</Label>
+          <Select
+            value={mode}
+            onValueChange={(value) => setMode(value as CostPricingMode)}
+            items={[
+              { value: 'ratio', label: t('Cost Ratio (CNY per USD)') },
+              { value: 'discount', label: t('Cost Discount') },
+            ]}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectItem value='ratio'>
+                  {t('Cost Ratio (CNY per USD)')}
+                </SelectItem>
+                <SelectItem value='discount'>{t('Cost Discount')}</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {mode === 'discount' ? (
+          <div className='flex flex-col gap-2'>
+            <Label htmlFor='cost-discount-input'>{t('Cost Discount')}</Label>
+            <Input
+              id='cost-discount-input'
+              type='number'
+              min={0}
+              step={0.01}
+              value={discountValue}
+              onChange={(event) => setDiscountValue(event.target.value)}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {isValidDiscount
+                ? t(
+                    'Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}',
+                    {
+                      d: parsedDiscount,
+                      r: exchangeRate,
+                      cny: (parsedDiscount * exchangeRate).toFixed(2),
+                    }
+                  )
+                : t('Used by cost accounting. Leave empty if unknown.')}
+            </p>
+          </div>
+        ) : (
+          <div className='flex flex-col gap-2'>
+            <Label htmlFor='cost-ratio-input'>
+              {t('Cost Ratio (CNY per USD)')}
+            </Label>
+            <Input
+              id='cost-ratio-input'
+              type='number'
+              min={0}
+              step={0.01}
+              value={ratioValue}
+              onChange={(event) => setRatioValue(event.target.value)}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {isValidRatio
+                ? t(
+                    'Ratio {{r}} → every $1 of list-price usage costs ¥{{cny}}',
+                    { r: parsedRatio, cny: parsedRatio.toFixed(2) }
+                  )
+                : t('Used by cost accounting. Leave empty if unknown.')}
+            </p>
+          </div>
+        )}
       </div>
     </Dialog>
   )

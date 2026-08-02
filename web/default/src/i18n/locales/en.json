@@ -4696,6 +4696,20 @@
     "… and {{n}} more rows omitted": "… and {{n}} more rows omitted",
     "{{count}} channels have no cost ratio set; their cost is counted as 0": "{{count}} channels have no cost ratio set; their cost is counted as 0",
     "Ratio {{r}} → every $1 of list-price usage costs ¥{{cny}}": "Ratio {{r}} → every $1 of list-price usage costs ¥{{cny}}",
-    "e.g., 6.5": "e.g., 6.5"
+    "e.g., 6.5": "e.g., 6.5",
+    "Cache Rate": "Cache Rate",
+    "Cache Read Tokens": "Cache Read Tokens",
+    "Cache Creation Tokens": "Cache Creation Tokens",
+    "Detail": "Detail",
+    "Merge users": "Merge users",
+    "Merge models": "Merge models",
+    "Merge channels": "Merge channels",
+    "View channel only": "View channel only",
+    "Aggregator": "Aggregator",
+    "Cost Discount": "Cost Discount",
+    "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}": "Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}",
+    "Sub-supplier": "Sub-supplier",
+    "Report cost uses the channel-level pricing": "Report cost uses the channel-level pricing",
+    "Pricing Mode": "Pricing Mode"
   }
 }

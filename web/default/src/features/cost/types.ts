@@ -27,6 +27,24 @@ export interface CostMoney {
   prompt_tokens: number
   completion_tokens: number
   request_count: number
+  // v2 raw additive metrics
+  cache_read_tokens: number
+  cache_creation_tokens: number
+  total_tokens: number
+  error_count: number
+  frt_sum_ms: number
+  frt_count: number
+  // v2 derived rates (see `deriveRates` in controller/cost_stat.go for the
+  // zero-denominator rules `mergeBreakdown` in lib.ts must mirror)
+  success_rate: number
+  cache_rate: number
+  avg_ttft_ms: number
+}
+
+/** Channel `setting.sub_suppliers` entry (dto.ChannelSubSupplier mirror). */
+export interface CostChannelSubSupplier {
+  name: string
+  cost_ratio?: number
 }
 
 export interface CostBreakdownRow extends CostMoney {
@@ -47,6 +65,12 @@ export interface CostDimensionRow extends CostMoney {
   user_count?: number
   breakdown?: CostBreakdownRow[]
   breakdown_truncated?: number
+  // Channel-dim only (costDimChannel in controller/cost_stat.go).
+  cost_mode?: '' | 'ratio' | 'discount'
+  cost_discount?: number
+  effective_ratio?: number
+  is_aggregator?: boolean
+  sub_suppliers?: CostChannelSubSupplier[]
 }
 
 export interface CostTrendPoint {
