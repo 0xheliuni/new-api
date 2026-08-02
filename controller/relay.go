@@ -656,12 +656,21 @@ func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
 		startTime = time.Now()
 	}
 	useTimeSeconds := int(time.Since(startTime).Seconds())
-	content := common.MaskSensitiveInfo(taskErr.Message)
-	content = replaceUpstreamRequestId(content, c.GetString(common.RequestIdKey))
-	if content == "" {
-		content = fmt.Sprintf("status_code=%d, error_code=%s", taskErr.StatusCode, taskErr.Code)
+	model.RecordErrorLog(c, userId, channelId, modelName, tokenName,
+		buildTaskErrorLogContent(taskErr, c.GetString(common.RequestIdKey)),
+		tokenId, useTimeSeconds, false, userGroup, other)
+}
+
+// buildTaskErrorLogContent 组装任务错误日志内容：与聊天错误日志同格式
+// （status_code=N, 完整上游报错文字），上游 Request ID 换成系统 request id；
+// 消息为空才落回 error_code 兜底。
+func buildTaskErrorLogContent(taskErr *dto.TaskError, requestId string) string {
+	msg := common.MaskSensitiveInfo(taskErr.Message)
+	msg = replaceUpstreamRequestId(msg, requestId)
+	if msg == "" {
+		return fmt.Sprintf("status_code=%d, error_code=%s", taskErr.StatusCode, taskErr.Code)
 	}
-	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, content, tokenId, useTimeSeconds, false, userGroup, other)
+	return fmt.Sprintf("status_code=%d, %s", taskErr.StatusCode, msg)
 }
 
 // replaceUpstreamRequestId 把上游报错里的 Request ID 替换为我们系统的 request id：

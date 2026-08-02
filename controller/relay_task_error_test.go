@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,5 +129,59 @@ func TestReplaceUpstreamRequestId(t *testing.T) {
 	got2 := replaceUpstreamRequestId("failed. request id: abc_def-123", "sys-req-123")
 	if got2 != "failed. request id: sys-req-123" {
 		t.Fatalf("lowercase variant failed: %q", got2)
+	}
+}
+
+// 任务错误日志内容：与聊天错误日志同格式（status_code=N, 完整上游文字），
+// Request ID 已换成系统 ID；消息为空才落回 error_code 兜底。
+func TestBuildTaskErrorLogContent(t *testing.T) {
+	taskErr := &dto.TaskError{
+		Code:       "build_request_failed",
+		Message:    "preupload image to byteplus asset library failed: byteplus asset asset-1 processing failed: The request failed because the input image may contain sensitive information. Request ID: 2026_upstream-id",
+		StatusCode: http.StatusInternalServerError,
+	}
+	got := buildTaskErrorLogContent(taskErr, "sys-req-9")
+	for _, want := range []string{
+		"status_code=500",
+		"sensitive information",
+		"Request ID: sys-req-9",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("content missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "2026_upstream-id") {
+		t.Fatalf("upstream request id must be replaced:\n%s", got)
+	}
+	// 空消息兜底
+	empty := buildTaskErrorLogContent(&dto.TaskError{Code: "x_failed", StatusCode: 500}, "rid")
+	if empty != "status_code=500, error_code=x_failed" {
+		t.Fatalf("empty-message fallback = %q", empty)
+	}
+}
+
+// 端到端：素材预上传被审核拒绝 → TaskErrorWrapper(build_request_failed) →
+// 客户端响应与错误日志都必须携带上游完整拒绝原因（不得只剩 error_code）。
+func TestBuildRequestFailed_CarriesAssetRejectionDetail(t *testing.T) {
+	assetErr := fmt.Errorf("preupload image to byteplus asset library failed: byteplus asset a-1 processing failed: {\"Id\":\"a-1\",\"Status\":\"Failed\",\"StatusMessage\":\"The request failed because the input image may contain sensitive information. Request ID: up-999\"}")
+	taskErr := service.TaskErrorWrapper(assetErr, "build_request_failed", http.StatusInternalServerError)
+
+	if !strings.Contains(taskErr.Message, "sensitive information") {
+		t.Fatalf("TaskError message lost upstream detail: %q", taskErr.Message)
+	}
+
+	// 客户端响应
+	w := runRespondTaskError(t, "/v1/videos", taskErr)
+	if !strings.Contains(w.Body.String(), "sensitive information") {
+		t.Fatalf("client response lost upstream detail: %s", w.Body.String())
+	}
+
+	// 错误日志内容
+	content := buildTaskErrorLogContent(taskErr, "sys-rid")
+	if !strings.Contains(content, "sensitive information") || !strings.Contains(content, "status_code=500") {
+		t.Fatalf("error log content wrong: %q", content)
+	}
+	if strings.Contains(content, "up-999") {
+		t.Fatalf("upstream request id must be replaced: %q", content)
 	}
 }
