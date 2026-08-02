@@ -37,7 +37,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
   return (
     <div className='flex flex-col gap-3'>
       {unpricedCount > 0 && (
-        <div className='border-warning/40 bg-warning/10 text-warning-foreground rounded-md border px-3 py-2 text-sm'>
+        <div className='border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-sm'>
           {t(
             '{{count}} channels have no cost ratio set; their cost is counted as 0',
             { count: unpricedCount }

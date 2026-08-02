@@ -213,7 +213,7 @@ function RatioCell({ row }: { row: CostDimensionRow }) {
       {row.priced ? (
         <span className='tabular-nums'>{row.cost_ratio}</span>
       ) : (
-        <Badge className='bg-warning/10 text-warning-foreground border-transparent'>
+        <Badge className='bg-warning/10 text-warning border-transparent'>
           {t('Not set')}
         </Badge>
       )}
