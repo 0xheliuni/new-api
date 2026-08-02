@@ -1123,7 +1123,14 @@ func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {
 	}
 	infos := make(map[int]*ChannelCostInfo, len(channels))
 	for _, ch := range channels {
-		infos[ch.Id] = &ChannelCostInfo{Id: ch.Id, Name: ch.Name, CostRatio: ch.GetSetting().CostRatio}
+		info := &ChannelCostInfo{Id: ch.Id, Name: ch.Name}
+		if ch.Setting != nil && *ch.Setting != "" {
+			var s dto.ChannelSettings
+			if err := common.UnmarshalJsonStr(*ch.Setting, &s); err == nil {
+				info.CostRatio = s.CostRatio
+			}
+		}
+		infos[ch.Id] = info
 	}
 	return infos, nil
 }
