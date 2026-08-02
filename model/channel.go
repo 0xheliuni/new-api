@@ -1106,3 +1106,24 @@ func CountChannelsGroupByType() (map[int64]int64, error) {
 	}
 	return counts, nil
 }
+
+// ChannelCostInfo 成本核算用的渠道摘要：名称 + 成本倍率（CNY:USD，0=未填写）。
+type ChannelCostInfo struct {
+	Id        int
+	Name      string
+	CostRatio float64
+}
+
+// GetAllChannelCostInfos 一次性载入全部渠道的成本信息（主库），供成本报表在
+// 应用层做 channel_id 映射 —— logs 可能在独立 LOG_DB，无法 SQL JOIN。
+func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {
+	var channels []*Channel
+	if err := DB.Select("id", "name", "setting").Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	infos := make(map[int]*ChannelCostInfo, len(channels))
+	for _, ch := range channels {
+		infos[ch.Id] = &ChannelCostInfo{Id: ch.Id, Name: ch.Name, CostRatio: ch.GetSetting().CostRatio}
+	}
+	return infos, nil
+}
