@@ -169,7 +169,9 @@ func buildCostOverview(cube *costCube, channels map[int]*model.ChannelCostInfo, 
 		ratio, chName := effectiveChannelRatio(channels, k.ChannelId, rate)
 		m := costMoneyFromRow(r, ratio, rate)
 		ov.Totals.add(m)
-		if ratio <= 0 {
+		// channel_id == 0 表示日志未选择任何渠道（旧日志/兜底值），不是一个
+		// "未定价"的真实渠道，计入 unpriced 会让告警横幅误报，故跳过。
+		if ratio <= 0 && k.ChannelId != 0 {
 			unpriced[k.ChannelId] = true
 		}
 		tp := trend[k.Day]

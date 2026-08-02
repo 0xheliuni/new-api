@@ -150,12 +150,15 @@ export function mergeBreakdown(
   return merged
 }
 
-/** "8折" style label for a channel cost discount (e.g. 0.8 -> "8折"). */
-export function formatDiscountLabel(discount: number | null | undefined): string {
+/** "8折"/"×8" style label for a channel cost discount (e.g. 0.8 -> zh "8折", en "×8"). */
+export function formatDiscountLabel(
+  discount: number | null | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
   if (discount == null || !Number.isFinite(discount)) return '-'
   const tenths = Math.round(discount * 100) / 10
   const text = Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1)
-  return `${text}折`
+  return t('×{{d}}', { d: text })
 }
 
 /** `-` when the bucket has no FRT sample, otherwise a rounded ms value. */

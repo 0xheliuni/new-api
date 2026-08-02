@@ -3927,7 +3927,7 @@
     "报表成本按渠道级计价计算": "Report cost is calculated at the channel level",
     "时间范围": "Time Range",
     "渠道ID": "Channel ID",
-    "{{d}} 折 (≈¥{{cny}}/$1)": "{{d}}/10 off (≈¥{{cny}}/$1)",
+    "{{d}} 折 (≈¥{{cny}}/$1)": "{{d}}/10 of list price (≈¥{{cny}}/$1)",
     "成功率": "Success Rate",
     "缓存率": "Cache Rate",
     "平均TTFT": "Avg TTFT",

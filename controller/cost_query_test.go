@@ -30,6 +30,35 @@ func TestBuildCostOverview_TrendAndStackAndWarning(t *testing.T) {
 	}
 }
 
+// TestBuildCostOverview_ChannelZeroExcludedFromUnpriced 覆盖 I-1：channel_id=0
+// （日志未选择渠道，非真实渠道）的错误行不应计入 unpriced 渠道数——0 只是
+// "未选择渠道"的兜底值，把它算作未定价渠道会让告警横幅误报。
+func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 0, ModelName: "gpt-4o"},
+	})
+	ov := buildCostOverview(c, testChannels(), 7.0)
+	if ov.UnpricedChannelCount != 0 {
+		t.Fatalf("unpriced = %d, want 0 (channel_id=0 must be excluded)", ov.UnpricedChannelCount)
+	}
+
+	// 混合场景：channel 0 的错误行 + channel 7（testChannels 中 CostRatio=0，
+	// 真实未定价渠道）的消费行 → 只有渠道 7 应计入 unpriced。
+	c2 := newCostCube()
+	c2.addBatch([]*model.Log{
+		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 0, ModelName: "gpt-4o"},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 7, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
+	})
+	ov2 := buildCostOverview(c2, testChannels(), 7.0)
+	if ov2.UnpricedChannelCount != 1 {
+		t.Fatalf("unpriced = %d, want 1 (only real unpriced channel 7 counted)", ov2.UnpricedChannelCount)
+	}
+}
+
 func TestPaginateCostRows(t *testing.T) {
 	rows := foldCostCube(seedCube(), costDimUser, testChannels(), 7.0)
 	page := paginateCostRows(rows, 1, 1)

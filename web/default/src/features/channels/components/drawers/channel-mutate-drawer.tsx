@@ -3692,7 +3692,7 @@ export function ChannelMutateDrawer({
                                     type='number'
                                     min={0}
                                     step={0.01}
-                                    placeholder={t('e.g., 6.5')}
+                                    placeholder={t('e.g., 0.8')}
                                     value={field.value ?? ''}
                                     onChange={(e) => {
                                       const raw = e.target.value
@@ -3704,7 +3704,7 @@ export function ChannelMutateDrawer({
                                 </FormControl>
                                 <FormDescription>
                                   {t(
-                                    'Used by cost accounting. Leave empty if unknown.'
+                                    'Cost = list price × discount × exchange rate. 0.8 means 80% of list price.'
                                   )}
                                 </FormDescription>
                                 <FormMessage />

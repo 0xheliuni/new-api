@@ -264,7 +264,11 @@ const CostTables = ({
       fixed: 'left',
       render: (_, row) => (
         <span className='flex items-center gap-1'>
-          <span>{`${row.channel_name}（#${row.channel_id}）`}</span>
+          <span>
+            {row.channel_id
+              ? `${row.channel_name}（#${row.channel_id}）`
+              : `${t('未知渠道')}（#0）`}
+          </span>
           {row.is_aggregator && (
             <Tag color='purple' shape='circle' size='small'>
               {t('聚合渠道')}
@@ -306,13 +310,15 @@ const CostTables = ({
                     {t('未填写')}
                   </Tag>
                 )}
-                <Button
-                  icon={<IconEdit />}
-                  type='tertiary'
-                  theme='borderless'
-                  size='small'
-                  onClick={() => openRatioModal(row)}
-                />
+                {Boolean(row.channel_id) && (
+                  <Button
+                    icon={<IconEdit />}
+                    type='tertiary'
+                    theme='borderless'
+                    size='small'
+                    onClick={() => openRatioModal(row)}
+                  />
+                )}
               </div>
             ),
           },

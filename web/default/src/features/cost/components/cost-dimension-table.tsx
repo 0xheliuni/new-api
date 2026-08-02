@@ -312,16 +312,19 @@ function BreakdownTable({
             cell: (r: CostBreakdownRow) => {
               if (field === 'username') return r.username
               if (field === 'model_name') return r.model_name
+              // channel_id falsy (undefined/0) => no channel selected on the
+              // underlying logs, not a real channel: no "view channel only"
+              // action for it.
               return (
                 <div className='flex items-center gap-1.5'>
                   <span>
-                    {r.channel_name
-                      ? `${r.channel_name} (#${r.channel_id})`
-                      : r.channel_id != null
-                        ? `#${r.channel_id}`
-                        : '-'}
+                    {!r.channel_id
+                      ? t('Unknown channel')
+                      : r.channel_name
+                        ? `${r.channel_name} (#${r.channel_id})`
+                        : `#${r.channel_id}`}
                   </span>
-                  {r.channel_id != null && (
+                  {Boolean(r.channel_id) && (
                     <Button
                       type='button'
                       variant='link'
@@ -372,17 +375,27 @@ function DimensionCell({
   const { t } = useTranslation()
   if (dim === 'users') return <>{row.username || '-'}</>
   if (dim === 'models') return <>{row.model_name || '-'}</>
+  // channel_id is omitted (omitempty) by the backend when it's 0, i.e. "no
+  // channel selected" on the underlying logs — not a real, unpriced channel.
+  // Render it distinctly instead of "Unnamed channel #undefined".
+  const isUnknownChannel = !row.channel_id
   return (
     <div className='flex flex-col gap-0.5'>
       <div className='flex items-center gap-1.5'>
-        <span>{row.channel_name || t('Unnamed channel')}</span>
+        <span>
+          {isUnknownChannel
+            ? t('Unknown channel')
+            : row.channel_name || t('Unnamed channel')}
+        </span>
         {row.is_aggregator && (
           <Badge className='bg-info/10 text-info border-transparent'>
             {t('Aggregator')}
           </Badge>
         )}
       </div>
-      <span className='text-muted-foreground text-xs'>#{row.channel_id}</span>
+      <span className='text-muted-foreground text-xs'>
+        #{isUnknownChannel ? 0 : row.channel_id}
+      </span>
     </div>
   )
 }
@@ -395,7 +408,9 @@ function RatioCell({
   exchangeRate: number
 }) {
   const { t } = useTranslation()
-  if (row.channel_id == null) return null
+  // Falsy (undefined or 0) channel_id means "no channel selected" on the
+  // underlying logs, not a real channel — no ratio to edit for it.
+  if (!row.channel_id) return null
   const mode = row.cost_mode === 'discount' ? 'discount' : 'ratio'
   return (
     <div className='flex items-center justify-end gap-1.5'>
@@ -405,7 +420,7 @@ function RatioCell({
         </Badge>
       ) : mode === 'discount' ? (
         <span className='tabular-nums'>
-          {formatDiscountLabel(row.cost_discount)} (≈¥
+          {formatDiscountLabel(row.cost_discount, t)} (≈¥
           {(row.effective_ratio ?? 0).toFixed(2)}/$1)
         </span>
       ) : (
