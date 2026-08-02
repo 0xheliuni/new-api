@@ -657,7 +657,18 @@ func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
 	}
 	useTimeSeconds := int(time.Since(startTime).Seconds())
 	content := common.MaskSensitiveInfo(taskErr.Message)
+	content = replaceUpstreamRequestId(content, c.GetString(common.RequestIdKey))
+	if content == "" {
+		content = fmt.Sprintf("status_code=%d, error_code=%s", taskErr.StatusCode, taskErr.Code)
+	}
 	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, content, tokenId, useTimeSeconds, false, userGroup, other)
+}
+
+// replaceUpstreamRequestId 把上游报错里的 Request ID 替换为我们系统的 request id：
+// 客户排查凭据应是系统 ID（可在日志按 request_id 检索），上游内部 ID 对客户无用
+// 且泄露上游细节。rid 为空时保留原文。
+func replaceUpstreamRequestId(msg, rid string) string {
+	return common.ReplaceUpstreamRequestId(msg, rid)
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）。
@@ -667,6 +678,7 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	taskErr.Message = replaceUpstreamRequestId(taskErr.Message, c.GetString(common.RequestIdKey))
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
 		c.JSON(taskErr.StatusCode, gin.H{
 			"error": gin.H{

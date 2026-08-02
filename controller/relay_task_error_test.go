@@ -105,3 +105,28 @@ func TestRespondTaskError_VolcengineSensitiveContentEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// 上游报错里的 Request ID 替换为系统 request id：客户拿到的排查凭据应是
+// 我们系统的 ID，而非上游内部 ID。
+func TestReplaceUpstreamRequestId(t *testing.T) {
+	msg := "The request failed because the input image may contain sensitive information. Request ID: 20260802133303AC60C953E95B6AEDD755_asset-20260802133311-ck4kk"
+	got := replaceUpstreamRequestId(msg, "sys-req-123")
+	want := "The request failed because the input image may contain sensitive information. Request ID: sys-req-123"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	// 无 Request ID 时原样返回
+	if got := replaceUpstreamRequestId("plain error", "sys-req-123"); got != "plain error" {
+		t.Fatalf("plain passthrough failed: %q", got)
+	}
+	// 系统 request id 为空时不替换（保留上游原文，别删信息）
+	if got := replaceUpstreamRequestId(msg, ""); got != msg {
+		t.Fatalf("empty rid must keep original, got %q", got)
+	}
+	// 小写/变体形式也替换，且保留原前缀写法
+	got2 := replaceUpstreamRequestId("failed. request id: abc_def-123", "sys-req-123")
+	if got2 != "failed. request id: sys-req-123" {
+		t.Fatalf("lowercase variant failed: %q", got2)
+	}
+}
