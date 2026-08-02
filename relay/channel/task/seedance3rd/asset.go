@@ -66,7 +66,7 @@ type sdCreateResp struct {
 func (cl *sdAssetClient) CreateAndWait(ctx context.Context, mediaURL, assetType string) (string, error) {
 	body, _ := common.Marshal(map[string]string{"URL": mediaURL, "Name": "newapi", "AssetType": assetType})
 	var cr sdCreateResp
-	if err := cl.do(ctx, http.MethodPost, "/v1/sd/assets", body, &cr); err != nil {
+	if _, err := cl.do(ctx, http.MethodPost, "/v1/sd/assets", body, &cr); err != nil {
 		return "", errors.Wrap(err, "sd create asset failed")
 	}
 	if cr.Data.Id == "" {
@@ -75,14 +75,16 @@ func (cl *sdAssetClient) CreateAndWait(ctx context.Context, mediaURL, assetType 
 	deadline := time.Now().Add(cl.timeout())
 	for {
 		var gr sdCreateResp
-		if err := cl.do(ctx, http.MethodGet, "/v1/sd/assets/"+cr.Data.Id, nil, &gr); err != nil {
+		raw, err := cl.do(ctx, http.MethodGet, "/v1/sd/assets/"+cr.Data.Id, nil, &gr)
+		if err != nil {
 			return "", errors.Wrap(err, "sd get asset failed")
 		}
 		switch gr.Data.Status {
 		case "Active":
 			return cr.Data.Id, nil
 		case "Failed":
-			return "", errors.Errorf("sd asset %s failed", cr.Data.Id)
+			// 失败详情（审核拒绝原因等）在响应体扩展字段里，整段透传。
+			return "", errors.Errorf("sd asset %s failed: %s", cr.Data.Id, raw)
 		}
 		if time.Now().After(deadline) {
 			return "", errors.Errorf("sd asset %s not active within %s (last: %s)", cr.Data.Id, cl.timeout(), gr.Data.Status)
@@ -95,20 +97,21 @@ func (cl *sdAssetClient) CreateAndWait(ctx context.Context, mediaURL, assetType 
 	}
 }
 
-// do 发起一次 Bearer 鉴权的 JSON 请求并解析到 out。
-func (cl *sdAssetClient) do(ctx context.Context, method, path string, body []byte, out any) error {
+// do 发起一次 Bearer 鉴权的 JSON 请求并解析到 out，返回响应体原文。
+func (cl *sdAssetClient) do(ctx context.Context, method, path string, body []byte, out any) (string, error) {
 	return doJSON(ctx, cl.httpClient, method, cl.baseURL+path, cl.apiKey, body, out)
 }
 
-// doJSON 是包内共用的 Bearer JSON 请求辅助。
-func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string, body []byte, out any) error {
+// doJSON 是包内共用的 Bearer JSON 请求辅助；返回响应体原文（截断 512），
+// 供 Failed 分支透传上游失败详情（审核拒绝原因等字段名不固定）。
+func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string, body []byte, out any) (string, error) {
 	var r io.Reader
 	if body != nil {
 		r = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, r)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -118,22 +121,23 @@ func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
+	preview := truncate(respBody, 512)
 	if resp.StatusCode >= http.StatusBadRequest {
-		return errors.Errorf("upstream status %d: %s", resp.StatusCode, truncate(respBody, 512))
+		return preview, errors.Errorf("upstream status %d: %s", resp.StatusCode, preview)
 	}
 	if out != nil {
 		if err := common.Unmarshal(respBody, out); err != nil {
-			return errors.Wrapf(err, "unmarshal failed (body: %s)", truncate(respBody, 512))
+			return preview, errors.Wrapf(err, "unmarshal failed (body: %s)", preview)
 		}
 	}
-	return nil
+	return preview, nil
 }
 
 func truncate(b []byte, n int) string {
@@ -191,7 +195,7 @@ func (cl *groupAssetClient) ensureGroup(ctx context.Context) (string, error) {
 	var gr struct {
 		ID string `json:"id"`
 	}
-	if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/asset-groups", cl.apiKey, body, &gr); err != nil {
+	if _, err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/asset-groups", cl.apiKey, body, &gr); err != nil {
 		return "", errors.Wrap(err, "create asset group failed")
 	}
 	if gr.ID == "" {
@@ -225,14 +229,16 @@ func (cl *groupAssetClient) CreateAndWait(ctx context.Context, mediaURL, assetTy
 	for {
 		var gr groupCreateAssetResp
 		getBody, _ := common.Marshal(map[string]string{"asset_id": created.ID, "task_id": created.TaskID})
-		if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets/get", cl.apiKey, getBody, &gr); err != nil {
+		raw, err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets/get", cl.apiKey, getBody, &gr)
+		if err != nil {
 			return "", errors.Wrap(err, "get asset failed")
 		}
 		switch gr.Status {
 		case "completed":
 			return created.ID, nil
 		case "failed":
-			return "", errors.Errorf("group asset %s failed", created.ID)
+			// 失败详情（审核拒绝原因等）在响应体扩展字段里，整段透传。
+			return "", errors.Errorf("group asset %s failed: %s", created.ID, raw)
 		}
 		if time.Now().After(deadline) {
 			return "", errors.Errorf("group asset %s not completed within %s (last: %s)", created.ID, cl.timeoutDur(), gr.Status)
@@ -254,7 +260,7 @@ func (cl *groupAssetClient) createAssetWithGroup(ctx context.Context, mediaURL, 
 		"group_id": groupID, "url": mediaURL, "asset_type": assetType, "name": "newapi",
 	})
 	var cr groupCreateAssetResp
-	if err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets", cl.apiKey, body, &cr); err != nil {
+	if _, err := doJSON(ctx, cl.httpClient, http.MethodPost, cl.baseURL+"/v1/assets", cl.apiKey, body, &cr); err != nil {
 		return groupCreateAssetResp{}, errors.Wrap(err, "create asset failed")
 	}
 	return cr, nil

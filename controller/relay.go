@@ -663,12 +663,16 @@ func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
 
 // buildTaskErrorLogContent 组装任务错误日志内容：与聊天错误日志同格式
 // （status_code=N, 完整上游报错文字），上游 Request ID 换成系统 request id；
-// 消息为空才落回 error_code 兜底。
+// 消息为空才落回 error_code 兜底。上游本身也是网关时其 message 可能已带
+// "status_code=" 前缀（同族网关的兜底文案会原样透传回来），不重复叠加。
 func buildTaskErrorLogContent(taskErr *dto.TaskError, requestId string) string {
 	msg := common.MaskSensitiveInfo(taskErr.Message)
 	msg = replaceUpstreamRequestId(msg, requestId)
 	if msg == "" {
 		return fmt.Sprintf("status_code=%d, error_code=%s", taskErr.StatusCode, taskErr.Code)
+	}
+	if strings.HasPrefix(msg, "status_code=") {
+		return msg
 	}
 	return fmt.Sprintf("status_code=%d, %s", taskErr.StatusCode, msg)
 }

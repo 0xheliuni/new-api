@@ -160,6 +160,19 @@ func TestBuildTaskErrorLogContent(t *testing.T) {
 	}
 }
 
+// 上游本身也是网关时，其 message 可能已带 "status_code=N, " 前缀——不得重复叠加。
+func TestBuildTaskErrorLogContent_NoDoublePrefix(t *testing.T) {
+	taskErr := &dto.TaskError{
+		Code:       "build_request_failed",
+		Message:    "status_code=500, error_code=build_request_failed",
+		StatusCode: http.StatusInternalServerError,
+	}
+	got := buildTaskErrorLogContent(taskErr, "rid")
+	if got != "status_code=500, error_code=build_request_failed" {
+		t.Fatalf("prefix doubled: %q", got)
+	}
+}
+
 // 端到端：素材预上传被审核拒绝 → TaskErrorWrapper(build_request_failed) →
 // 客户端响应与错误日志都必须携带上游完整拒绝原因（不得只剩 error_code）。
 func TestBuildRequestFailed_CarriesAssetRejectionDetail(t *testing.T) {
