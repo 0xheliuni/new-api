@@ -27,6 +27,10 @@ const costSearchSchema = z.object({
   end: z.number().optional(),
   tab: z.enum(['users', 'models', 'channels']).optional().catch('users'),
   p: z.number().optional().catch(1),
+  username: z.string().optional(),
+  channel: z.number().optional(),
+  model_name: z.string().optional(),
+  rate: z.number().optional(),
 })
 
 export const Route = createFileRoute('/_authenticated/cost/')({

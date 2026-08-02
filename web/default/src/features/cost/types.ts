@@ -86,4 +86,8 @@ export interface CostQueryParams {
   end_timestamp: number
   p?: number
   page_size?: number
+  username?: string
+  channel?: number
+  model_name?: string
+  exchange_rate?: number
 }

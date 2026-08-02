@@ -55,6 +55,10 @@ interface CostDimensionTableProps {
   end: number
   page: number
   onPageChange: (page: number) => void
+  username?: string
+  channel?: number
+  modelName?: string
+  exchangeRate?: number
 }
 
 function rowKey(dim: CostDimension, row: CostDimensionRow, index: number) {
@@ -238,18 +242,36 @@ export function CostDimensionTable({
   end,
   page,
   onPageChange,
+  username,
+  channel,
+  modelName,
+  exchangeRate,
 }: CostDimensionTableProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Set<string | number>>(new Set())
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['cost', dim, start, end, page],
+    queryKey: [
+      'cost',
+      dim,
+      start,
+      end,
+      page,
+      username,
+      channel,
+      modelName,
+      exchangeRate,
+    ],
     queryFn: () =>
       getCostByDimension(dim, {
         start_timestamp: start,
         end_timestamp: end,
         p: page,
         page_size: PAGE_SIZE,
+        username,
+        channel,
+        model_name: modelName,
+        exchange_rate: exchangeRate,
       }),
     placeholderData: keepPreviousData,
   })

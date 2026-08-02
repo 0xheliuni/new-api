@@ -26,7 +26,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getCostOverview } from './api'
 import { CostCharts } from './components/cost-charts'
 import { CostDimensionTable } from './components/cost-dimension-table'
-import { CostFilter, type CostFilterValue } from './components/cost-filter'
+import {
+  CostFilter,
+  DEFAULT_EXCHANGE_RATE,
+  type CostFilterValue,
+} from './components/cost-filter'
 import { CostKpiCards } from './components/cost-kpi-cards'
 import type { CostDimension } from './types'
 
@@ -42,10 +46,32 @@ export function CostAccounting() {
   const end = search.end ?? dateToUnixTimestamp(defaultRange.end)
   const tab: CostDimension = search.tab ?? 'users'
   const page = search.p ?? 1
+  const username = search.username
+  const channel = search.channel
+  const modelName = search.model_name
+  const exchangeRate = search.rate ?? DEFAULT_EXCHANGE_RATE
 
-  const handleRangeChange = (next: CostFilterValue) => {
+  const filterValue: CostFilterValue = {
+    start,
+    end,
+    username,
+    channel,
+    model_name: modelName,
+    exchange_rate: exchangeRate,
+  }
+
+  const handleFilterApply = (next: CostFilterValue) => {
     navigate({
-      search: (prev) => ({ ...prev, start: next.start, end: next.end, p: undefined }),
+      search: (prev) => ({
+        ...prev,
+        start: next.start,
+        end: next.end,
+        username: next.username,
+        channel: next.channel,
+        model_name: next.model_name,
+        rate: next.exchange_rate,
+        p: undefined,
+      }),
     })
   }
 
@@ -66,19 +92,34 @@ export function CostAccounting() {
   }
 
   const overviewQuery = useQuery({
-    queryKey: ['cost', 'overview', start, end],
+    queryKey: [
+      'cost',
+      'overview',
+      start,
+      end,
+      username,
+      channel,
+      modelName,
+      exchangeRate,
+    ],
     queryFn: () =>
-      getCostOverview({ start_timestamp: start, end_timestamp: end }),
+      getCostOverview({
+        start_timestamp: start,
+        end_timestamp: end,
+        username,
+        channel,
+        model_name: modelName,
+        exchange_rate: exchangeRate,
+      }),
   })
 
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Cost Accounting')}</SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <CostFilter value={{ start, end }} onChange={handleRangeChange} />
-      </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='flex flex-col gap-4'>
+          <CostFilter value={filterValue} onApply={handleFilterApply} />
+
           <CostKpiCards
             overview={overviewQuery.data}
             loading={overviewQuery.isLoading}
@@ -103,6 +144,10 @@ export function CostAccounting() {
                 end={end}
                 page={tab === 'users' ? page : 1}
                 onPageChange={handlePageChange}
+                username={username}
+                channel={channel}
+                modelName={modelName}
+                exchangeRate={exchangeRate}
               />
             </TabsContent>
             <TabsContent value='models' className='mt-3'>
@@ -112,6 +157,10 @@ export function CostAccounting() {
                 end={end}
                 page={tab === 'models' ? page : 1}
                 onPageChange={handlePageChange}
+                username={username}
+                channel={channel}
+                modelName={modelName}
+                exchangeRate={exchangeRate}
               />
             </TabsContent>
             <TabsContent value='channels' className='mt-3'>
@@ -121,6 +170,10 @@ export function CostAccounting() {
                 end={end}
                 page={tab === 'channels' ? page : 1}
                 onPageChange={handlePageChange}
+                username={username}
+                channel={channel}
+                modelName={modelName}
+                exchangeRate={exchangeRate}
               />
             </TabsContent>
           </Tabs>
