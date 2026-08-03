@@ -54,15 +54,18 @@ import type {
   CostMoney,
 } from '../types'
 import {
+  deriveCnyFromUsd,
+  deriveUsdFromCny,
   formatAvgTtft,
-  formatCny,
   formatDiscountLabel,
   formatRate,
-  formatUsd,
   mergeBreakdown,
+  useMoneyPrimaryCurrency,
   type CostBreakdownGroupBy,
+  type MoneyPrimaryCurrency,
 } from '../lib'
 import { EditRatioDialog } from './edit-ratio-dialog'
+import { MoneyDualCell } from './money-dual-cell'
 import { TokensDetailDialog } from './tokens-detail-dialog'
 
 const PAGE_SIZE = 20
@@ -112,31 +115,59 @@ interface MetricColumnSpec {
   cell: (row: CostMoney) => ReactNode
 }
 
-function renderRevenueCell(row: CostMoney) {
-  return (
-    <div className='flex flex-col items-end leading-tight'>
-      <span>{formatUsd(row.revenue_usd)}</span>
-      <span className='text-muted-foreground text-[11px]'>
-        {formatCny(row.revenue_cny)}
-      </span>
-    </div>
-  )
-}
-
 function buildMetricColumns(
-  t: ReturnType<typeof useTranslation>['t']
+  t: ReturnType<typeof useTranslation>['t'],
+  primary: MoneyPrimaryCurrency,
+  exchangeRate: number
 ): MetricColumnSpec[] {
   return [
-    { id: 'cost_cny', header: t('Cost ¥'), cell: (row) => formatCny(row.cost_cny) },
-    { id: 'revenue', header: t('Revenue'), cell: renderRevenueCell },
+    {
+      id: 'cost_cny',
+      header: t('Cost'),
+      cell: (row) => (
+        <MoneyDualCell
+          usd={deriveUsdFromCny(row.cost_cny, exchangeRate)}
+          cny={row.cost_cny}
+          primary={primary}
+        />
+      ),
+    },
+    {
+      id: 'revenue',
+      header: t('Revenue'),
+      cell: (row) => (
+        <MoneyDualCell
+          usd={row.revenue_usd}
+          cny={row.revenue_cny}
+          primary={primary}
+        />
+      ),
+    },
     {
       id: 'profit_cny',
-      header: t('Profit ¥'),
-      cellClassName: (row) =>
-        row.profit_cny >= 0 ? 'text-success' : 'text-destructive',
-      cell: (row) => formatCny(row.profit_cny),
+      header: t('Profit'),
+      cell: (row) => (
+        <MoneyDualCell
+          usd={deriveUsdFromCny(row.profit_cny, exchangeRate)}
+          cny={row.profit_cny}
+          primary={primary}
+          primaryClassName={
+            row.profit_cny >= 0 ? 'text-success' : 'text-destructive'
+          }
+        />
+      ),
     },
-    { id: 'list_usd', header: t('List $'), cell: (row) => formatUsd(row.list_usd) },
+    {
+      id: 'list_usd',
+      header: t('List Price'),
+      cell: (row) => (
+        <MoneyDualCell
+          usd={row.list_usd}
+          cny={deriveCnyFromUsd(row.list_usd, exchangeRate)}
+          primary={primary}
+        />
+      ),
+    },
     {
       id: 'request_count',
       header: t('Requests'),
@@ -568,7 +599,9 @@ export function CostDimensionTable({
   const total = data?.total ?? 0
   const summary: CostMoney | undefined = data?.summary
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const metricColumns = buildMetricColumns(t)
+  const primary = useMoneyPrimaryCurrency()
+  const effectiveExchangeRate = exchangeRate ?? DEFAULT_EXCHANGE_RATE
+  const metricColumns = buildMetricColumns(t, primary, effectiveExchangeRate)
   // expand toggle + identity + (ratio, channels only) + metrics + actions
   const totalColSpan = 3 + (dim === 'channels' ? 1 : 0) + metricColumns.length
 
@@ -678,7 +711,7 @@ export function CostDimensionTable({
                         <TableCell className='text-right'>
                           <RatioCell
                             row={row}
-                            exchangeRate={exchangeRate ?? DEFAULT_EXCHANGE_RATE}
+                            exchangeRate={effectiveExchangeRate}
                           />
                         </TableCell>
                       )}

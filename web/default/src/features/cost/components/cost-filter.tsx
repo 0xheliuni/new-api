@@ -27,7 +27,6 @@ import {
 } from '@/lib/time'
 import { formatDateStr } from '@/lib/format'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   InputGroup,
@@ -36,6 +35,10 @@ import {
 } from '@/components/ui/input-group'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
+import {
+  LogsFilterField,
+  LogsFilterInput,
+} from '@/features/usage-logs/components/logs-filter-toolbar'
 
 export const DEFAULT_EXCHANGE_RATE = 6.8
 
@@ -177,166 +180,156 @@ export function CostFilter({ value, onApply }: CostFilterProps) {
   const triggerLabel = `${formatDateStr(new Date(draft.start * 1000))} – ${formatDateStr(new Date(draft.end * 1000))}`
 
   return (
-    <div className='flex flex-wrap items-end gap-2'>
-      <div className='flex flex-col gap-1.5'>
-        <Label className='text-muted-foreground text-xs'>
-          {t('Time Range')}
-        </Label>
-        <Dialog
-          open={rangeOpen}
-          onOpenChange={handleRangeOpenChange}
-          trigger={
-            // Default size (h-8) to match the h-8 inputs/InputGroup below —
-            // this is the row's visual anchor, so every other field mirrors it.
-            <Button variant='outline' className='font-normal'>
-              <CalendarRange className='mr-2 size-4' />
-              {triggerLabel}
-            </Button>
-          }
-          title={t('Time Range')}
-          contentClassName='sm:max-w-md'
-          footer={
-            <>
-              <Button variant='outline' onClick={() => setRangeOpen(false)}>
-                {t('Cancel')}
+    <div className='bg-card/50 rounded-lg border p-2.5 sm:p-3'>
+      <div className='grid grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
+        <LogsFilterField wide>
+          <Dialog
+            open={rangeOpen}
+            onOpenChange={handleRangeOpenChange}
+            trigger={
+              <Button
+                variant='outline'
+                className='h-8 w-full justify-start gap-2 px-2.5 text-sm leading-5 font-normal'
+              >
+                <CalendarRange className='text-muted-foreground size-4 shrink-0' />
+                <span className='truncate'>{triggerLabel}</span>
               </Button>
-              <Button onClick={() => applyRange(rangeDraftStart, rangeDraftEnd)}>
-                {t('Apply')}
-              </Button>
-            </>
-          }
-        >
-          <div className='flex flex-col gap-4'>
-            <div className='grid gap-2'>
-              <Label className='text-muted-foreground text-xs'>
-                {t('Quick Range')}
-              </Label>
-              <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
-                {presets.map((preset) => (
-                  <Button
-                    key={preset.label}
-                    type='button'
-                    size='sm'
-                    variant='outline'
-                    onClick={() => {
-                      const { start, end } = preset.range()
-                      applyRange(start, end)
-                    }}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
+            }
+            title={t('Time Range')}
+            contentClassName='sm:max-w-md'
+            footer={
+              <>
+                <Button variant='outline' onClick={() => setRangeOpen(false)}>
+                  {t('Cancel')}
+                </Button>
+                <Button onClick={() => applyRange(rangeDraftStart, rangeDraftEnd)}>
+                  {t('Apply')}
+                </Button>
+              </>
+            }
+          >
+            <div className='flex flex-col gap-4'>
+              <div className='grid gap-2'>
+                <Label className='text-muted-foreground text-xs'>
+                  {t('Quick Range')}
+                </Label>
+                <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                  {presets.map((preset) => (
+                    <Button
+                      key={preset.label}
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      onClick={() => {
+                        const { start, end } = preset.range()
+                        applyRange(start, end)
+                      }}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className='grid gap-2'>
+                <Label htmlFor='cost-filter-start'>{t('Start Time')}</Label>
+                <DateTimePicker
+                  value={rangeDraftStart}
+                  onChange={(date) => date && setRangeDraftStart(date)}
+                />
+              </div>
+
+              <div className='grid gap-2'>
+                <Label htmlFor='cost-filter-end'>{t('End Time')}</Label>
+                <DateTimePicker
+                  value={rangeDraftEnd}
+                  onChange={(date) => date && setRangeDraftEnd(date)}
+                />
               </div>
             </div>
+          </Dialog>
+        </LogsFilterField>
 
-            <div className='grid gap-2'>
-              <Label htmlFor='cost-filter-start'>{t('Start Time')}</Label>
-              <DateTimePicker
-                value={rangeDraftStart}
-                onChange={(date) => date && setRangeDraftStart(date)}
-              />
-            </div>
-
-            <div className='grid gap-2'>
-              <Label htmlFor='cost-filter-end'>{t('End Time')}</Label>
-              <DateTimePicker
-                value={rangeDraftEnd}
-                onChange={(date) => date && setRangeDraftEnd(date)}
-              />
-            </div>
-          </div>
-        </Dialog>
-      </div>
-
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='cost-filter-username' className='text-muted-foreground text-xs'>
-          {t('Username')}
-        </Label>
-        <Input
-          id='cost-filter-username'
-          className='h-8 w-36'
-          placeholder={t('Username')}
-          value={draft.username ?? ''}
-          onChange={(e) =>
-            setDraft((prev) => ({
-              ...prev,
-              username: e.target.value || undefined,
-            }))
-          }
-          onKeyDown={handleKeyDown}
-        />
-      </div>
-
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='cost-filter-channel' className='text-muted-foreground text-xs'>
-          {t('Channel ID')}
-        </Label>
-        <Input
-          id='cost-filter-channel'
-          type='number'
-          className='h-8 w-28'
-          placeholder={t('Channel ID')}
-          value={draft.channel ?? ''}
-          onChange={(e) =>
-            setDraft((prev) => ({
-              ...prev,
-              channel: e.target.value === '' ? undefined : Number(e.target.value),
-            }))
-          }
-          onKeyDown={handleKeyDown}
-        />
-      </div>
-
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='cost-filter-model' className='text-muted-foreground text-xs'>
-          {t('Model Name')}
-        </Label>
-        <Input
-          id='cost-filter-model'
-          className='h-8 w-40'
-          placeholder={t('Model Name')}
-          value={draft.model_name ?? ''}
-          onChange={(e) =>
-            setDraft((prev) => ({
-              ...prev,
-              model_name: e.target.value || undefined,
-            }))
-          }
-          onKeyDown={handleKeyDown}
-        />
-      </div>
-
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='cost-filter-rate' className='text-muted-foreground text-xs'>
-          {t('Exchange Rate')}
-        </Label>
-        <InputGroup className='w-36'>
-          <InputGroupAddon>$1 =</InputGroupAddon>
-          <InputGroupInput
-            id='cost-filter-rate'
-            type='number'
-            step={0.1}
-            value={Number.isFinite(draft.exchange_rate) ? draft.exchange_rate : ''}
+        <LogsFilterField>
+          <LogsFilterInput
+            aria-label={t('Username')}
+            placeholder={t('Username')}
+            value={draft.username ?? ''}
             onChange={(e) =>
               setDraft((prev) => ({
                 ...prev,
-                exchange_rate:
-                  e.target.value === '' ? NaN : Number(e.target.value),
+                username: e.target.value || undefined,
               }))
             }
             onKeyDown={handleKeyDown}
           />
-          <InputGroupAddon align='inline-end'>CNY</InputGroupAddon>
-        </InputGroup>
+        </LogsFilterField>
+
+        <LogsFilterField>
+          <LogsFilterInput
+            aria-label={t('Channel ID')}
+            type='number'
+            placeholder={t('Channel ID')}
+            value={draft.channel ?? ''}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                channel:
+                  e.target.value === '' ? undefined : Number(e.target.value),
+              }))
+            }
+            onKeyDown={handleKeyDown}
+          />
+        </LogsFilterField>
+
+        <LogsFilterField>
+          <LogsFilterInput
+            aria-label={t('Model Name')}
+            placeholder={t('Model Name')}
+            value={draft.model_name ?? ''}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                model_name: e.target.value || undefined,
+              }))
+            }
+            onKeyDown={handleKeyDown}
+          />
+        </LogsFilterField>
+
+        <LogsFilterField>
+          <InputGroup className='h-8 w-full min-w-0'>
+            <InputGroupAddon>$1 =</InputGroupAddon>
+            <InputGroupInput
+              aria-label={t('Exchange Rate')}
+              type='number'
+              step={0.1}
+              value={
+                Number.isFinite(draft.exchange_rate) ? draft.exchange_rate : ''
+              }
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  exchange_rate:
+                    e.target.value === '' ? NaN : Number(e.target.value),
+                }))
+              }
+              onKeyDown={handleKeyDown}
+            />
+            <InputGroupAddon align='inline-end'>CNY</InputGroupAddon>
+          </InputGroup>
+        </LogsFilterField>
       </div>
 
-      <div className='flex gap-2'>
-        <Button type='button' onClick={handleSearch}>
-          {t('Search')}
-        </Button>
-        <Button type='button' variant='outline' onClick={handleReset}>
-          {t('Reset')}
-        </Button>
+      <div className='mt-2 flex flex-wrap items-center gap-2'>
+        <div className='ms-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2'>
+          <Button type='button' variant='outline' onClick={handleReset}>
+            {t('Reset')}
+          </Button>
+          <Button type='button' onClick={handleSearch}>
+            {t('Search')}
+          </Button>
+        </div>
       </div>
     </div>
   )

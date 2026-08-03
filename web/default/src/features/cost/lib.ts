@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useSystemConfigStore } from '@/stores/system-config-store'
 import type { CostBreakdownRow, CostMoney, CostStackPoint } from './types'
 
 /**
@@ -48,6 +49,62 @@ export function formatCny(value: number | null | undefined): string {
 export function formatRate(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '-'
   return `${(value * 100).toFixed(1)}%`
+}
+
+/**
+ * Which currency leads the dual-line money display, driven by the admin's
+ * 系统设置 → 运营设置 → 额度展示类型 (`quota_display_type`). CNY-primary only
+ * when the admin explicitly picked CNY; USD/TOKENS/CUSTOM all fall back to
+ * USD-primary for the cost report (mirrors `getBillingDisplayMeta` in
+ * `lib/currency.ts`, which forces a real currency for billing displays).
+ */
+export type MoneyPrimaryCurrency = 'usd' | 'cny'
+
+export function useMoneyPrimaryCurrency(): MoneyPrimaryCurrency {
+  const quotaDisplayType = useSystemConfigStore(
+    (s) => s.config.currency.quotaDisplayType
+  )
+  return quotaDisplayType === 'CNY' ? 'cny' : 'usd'
+}
+
+export interface DualMoneyText {
+  primary: string
+  secondary: string
+}
+
+/**
+ * Render a USD/CNY pair as {primary, secondary} display strings, ordered by
+ * the admin's configured display currency. Used for the four cost-report
+ * money columns (Cost/Revenue/Profit/List Price) everywhere they appear:
+ * KPI cards, dimension table cells, and breakdown sub-rows.
+ */
+export function formatDualMoney(
+  usd: number | null | undefined,
+  cny: number | null | undefined,
+  primary: MoneyPrimaryCurrency
+): DualMoneyText {
+  return primary === 'cny'
+    ? { primary: formatCny(cny), secondary: formatUsd(usd) }
+    : { primary: formatUsd(usd), secondary: formatCny(cny) }
+}
+
+/**
+ * Derive a USD amount from a CNY-only field (cost_cny/profit_cny) using the
+ * exchange rate echoed by the cost overview response / filter bar.
+ */
+export function deriveUsdFromCny(
+  cny: number,
+  exchangeRate: number
+): number {
+  return exchangeRate > 0 ? cny / exchangeRate : 0
+}
+
+/**
+ * Derive a CNY amount from a USD-only field (list_usd) using the exchange
+ * rate echoed by the cost overview response / filter bar.
+ */
+export function deriveCnyFromUsd(usd: number, exchangeRate: number): number {
+  return usd * exchangeRate
 }
 
 /** Fields a breakdown row can be grouped by when the user merges away a dimension. */

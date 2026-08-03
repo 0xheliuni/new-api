@@ -18,9 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { DollarSign, PiggyBank, Receipt, TrendingUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { StatCard } from '@/features/dashboard/components/ui/stat-card'
 import type { CostOverview } from '../types'
-import { formatCny, formatRate, formatUsd } from '../lib'
+import {
+  deriveCnyFromUsd,
+  deriveUsdFromCny,
+  formatCny,
+  formatDualMoney,
+  formatRate,
+  formatUsd,
+  useMoneyPrimaryCurrency,
+} from '../lib'
 
 interface CostKpiCardsProps {
   overview?: CostOverview
@@ -29,10 +38,37 @@ interface CostKpiCardsProps {
 
 export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
   const { t } = useTranslation()
+  const primary = useMoneyPrimaryCurrency()
   const totals = overview?.totals
+  const exchangeRate = overview?.exchange_rate ?? 0
   const unpricedCount = overview?.unpriced_channel_count ?? 0
   const profitTone =
     totals && totals.profit_cny < 0 ? ('rose' as const) : ('teal' as const)
+
+  const revenue = totals
+    ? formatDualMoney(totals.revenue_usd, totals.revenue_cny, primary)
+    : undefined
+  const cost = totals
+    ? formatDualMoney(
+        deriveUsdFromCny(totals.cost_cny, exchangeRate),
+        totals.cost_cny,
+        primary
+      )
+    : undefined
+  const listPrice = totals
+    ? formatDualMoney(
+        totals.list_usd,
+        deriveCnyFromUsd(totals.list_usd, exchangeRate),
+        primary
+      )
+    : undefined
+  const profit = totals
+    ? formatDualMoney(
+        deriveUsdFromCny(totals.profit_cny, exchangeRate),
+        totals.profit_cny,
+        primary
+      )
+    : undefined
 
   return (
     <div className='flex flex-col gap-3'>
@@ -49,11 +85,11 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
         <div className='bg-card rounded-xl border p-3'>
           <StatCard
             title={t('Revenue')}
-            value={loading || !totals ? '--' : formatUsd(totals.revenue_usd)}
+            value={loading || !totals || !revenue ? '--' : revenue.primary}
             description={
-              loading || !totals
+              loading || !totals || !revenue
                 ? ''
-                : `${formatCny(totals.revenue_cny)} · ${t('Refunds')} -${formatUsd(totals.refund_usd)}`
+                : `${revenue.secondary} · ${t('Refunds')} -${formatUsd(totals.refund_usd)}`
             }
             icon={DollarSign}
             tone='gray'
@@ -63,11 +99,11 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
         <div className='bg-card rounded-xl border p-3'>
           <StatCard
             title={t('Cost')}
-            value={loading || !totals ? '--' : formatCny(totals.cost_cny)}
+            value={loading || !totals || !cost ? '--' : cost.primary}
             description={
-              loading || !totals
+              loading || !totals || !cost || !listPrice
                 ? ''
-                : `${t('List Price')} ${formatUsd(totals.list_usd)} × ${t('per-channel ratios')}`
+                : `${cost.secondary} · ${t('List Price')} ${listPrice.primary} × ${t('per-channel ratios')}`
             }
             icon={Receipt}
             tone='gray'
@@ -77,8 +113,20 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
         <div className='bg-card rounded-xl border p-3'>
           <StatCard
             title={t('Profit')}
-            value={loading || !totals ? '--' : formatCny(totals.profit_cny)}
-            description={loading || !totals ? '' : formatRate(totals.profit_rate)}
+            value={
+              loading || !totals || !profit ? (
+                '--'
+              ) : (
+                <span
+                  className={cn(
+                    totals.profit_cny >= 0 ? 'text-success' : 'text-destructive'
+                  )}
+                >
+                  {profit.primary}
+                </span>
+              )
+            }
+            description={loading || !totals || !profit ? '' : profit.secondary}
             icon={PiggyBank}
             tone={profitTone}
             loading={loading}
