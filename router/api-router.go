@@ -228,6 +228,7 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
 		costRoute := apiRouter.Group("/cost")
+		costRoute.Use(middleware.CostAccountingEnabled())
 		costRoute.Use(middleware.RootAuth())
 		{
 			costRoute.GET("/overview", controller.GetCostOverview)

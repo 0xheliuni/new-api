@@ -81,6 +81,7 @@ func GetStatus(c *gin.Context) {
 		"enable_drawing":                common.DrawingEnabled,
 		"enable_task":                   common.TaskEnabled,
 		"enable_data_export":            common.DataExportEnabled,
+		"cost_accounting_enabled":       common.CostAccountingEnabled,
 		"data_export_default_time":      common.DataExportDefaultTime,
 		"log_export_enabled":            common.LogExportEnabled,
 		"default_collapse_sidebar":      common.DefaultCollapseSidebar,
