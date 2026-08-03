@@ -26,9 +26,9 @@ const DEFAULT_PAGE_SIZE = 20;
 // 默认汇率：与后端 operation_setting.USDExchangeRate 未显式传参时的兜底一致的展示默认值
 const DEFAULT_EXCHANGE_RATE = 6.8;
 
-// 默认时间范围：近 7 天
+// 默认时间范围：今天
 const getDefaultDateRange = () => [
-  dayjs().subtract(6, 'day').startOf('day').toDate(),
+  dayjs().startOf('day').toDate(),
   dayjs().endOf('day').toDate(),
 ];
 

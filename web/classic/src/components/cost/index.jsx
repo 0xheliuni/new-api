@@ -135,7 +135,7 @@ const CostAccounting = () => {
             field='dateRange'
             type='dateTimeRange'
             label={t('时间范围')}
-            className='w-full sm:w-auto'
+            className='w-full sm:w-[300px]'
             placeholder={[t('开始时间'), t('结束时间')]}
             presets={DATE_RANGE_PRESETS.map((preset) => ({
               text: t(preset.text),
@@ -143,14 +143,13 @@ const CostAccounting = () => {
               end: preset.end(),
             }))}
             showClear
-            pure
             size='small'
           />
           <Form.Input
             field='username'
             label={t('用户名称')}
             placeholder={t('用户名称')}
-            className='w-full sm:w-auto'
+            className='w-full sm:w-[160px]'
             showClear
             size='small'
           />
@@ -158,7 +157,7 @@ const CostAccounting = () => {
             field='channel'
             label={t('渠道ID')}
             placeholder={t('渠道ID')}
-            className='w-full sm:w-auto'
+            className='w-full sm:w-[140px]'
             min={0}
             size='small'
           />
@@ -166,7 +165,7 @@ const CostAccounting = () => {
             field='modelName'
             label={t('模型名称')}
             placeholder={t('模型名称')}
-            className='w-full sm:w-auto'
+            className='w-full sm:w-[160px]'
             showClear
             size='small'
           />
@@ -174,7 +173,7 @@ const CostAccounting = () => {
             field='exchangeRate'
             label={t('汇率')}
             placeholder='6.8'
-            className='w-full sm:w-auto'
+            className='w-full sm:w-[180px]'
             min={0}
             step={0.01}
             prefix='$1 ='

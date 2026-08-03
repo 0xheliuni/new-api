@@ -58,18 +58,28 @@ const getBreakdownLabel = (row) => {
   return parts.join(' / ') || '-';
 };
 
+// ========== 布局对齐用的显式列宽 ==========
+// 父表 身份列 + 操作列 的宽度预算 == 子表 两个身份列 的宽度预算，
+// 令两张表在“指标列”开始前占用相同的总宽度，配合下方共用的指标列宽定义，
+// 使 成本/收入/利润/刊例/请求数/利润率/总tokens/成功率/缓存率/TTFT 上下对齐。
+const IDENTITY_COLUMN_WIDTH = 200;
+const ACTION_COLUMN_WIDTH = 140;
+const BREAKDOWN_IDENTITY_COLUMN_WIDTH = 170; // (200 + 140) / 2
+
 // ========== 统一的指标列（顶层行与展开明细行共用） ==========
 const buildMetricColumns = (t, openTokensModal) => [
   {
     key: 'cost_cny',
     title: t('成本'),
     align: 'right',
+    width: 110,
     render: (_, row) => <span>¥{money(row.cost_cny)}</span>,
   },
   {
     key: 'revenue',
     title: t('收入'),
     align: 'right',
+    width: 120,
     render: (_, row) => (
       <div>
         <div>${money(row.revenue_usd)}</div>
@@ -81,6 +91,7 @@ const buildMetricColumns = (t, openTokensModal) => [
     key: 'profit_cny',
     title: t('利润'),
     align: 'right',
+    width: 110,
     render: (_, row) => (
       <span style={profitStyle(row.profit_cny)}>¥{money(row.profit_cny)}</span>
     ),
@@ -89,18 +100,21 @@ const buildMetricColumns = (t, openTokensModal) => [
     key: 'list_usd',
     title: t('刊例价'),
     align: 'right',
+    width: 100,
     render: (_, row) => <span>${money(row.list_usd)}</span>,
   },
   {
     key: 'request_count',
     title: t('请求数'),
     align: 'right',
+    width: 90,
     render: (_, row) => <span>{Number(row.request_count || 0)}</span>,
   },
   {
     key: 'profit_rate',
     title: t('利润率'),
     align: 'right',
+    width: 90,
     render: (_, row) => (
       <span style={profitStyle(row.profit_rate)}>{percent(row.profit_rate)}</span>
     ),
@@ -109,6 +123,7 @@ const buildMetricColumns = (t, openTokensModal) => [
     key: 'total_tokens',
     title: t('总tokens'),
     align: 'right',
+    width: 110,
     render: (_, row) => (
       <Button
         theme='borderless'
@@ -124,18 +139,21 @@ const buildMetricColumns = (t, openTokensModal) => [
     key: 'success_rate',
     title: t('成功率'),
     align: 'right',
+    width: 90,
     render: (_, row) => <span>{percent(row.success_rate ?? 1)}</span>,
   },
   {
     key: 'cache_rate',
     title: t('缓存率'),
     align: 'right',
+    width: 90,
     render: (_, row) => <span>{percent(row.cache_rate)}</span>,
   },
   {
     key: 'avg_ttft_ms',
     title: t('平均TTFT'),
     align: 'right',
+    width: 110,
     render: (_, row) =>
       Number(row.frt_count || 0) === 0 ? (
         <span>-</span>
@@ -144,6 +162,39 @@ const buildMetricColumns = (t, openTokensModal) => [
       ),
   },
 ];
+
+// 每个维度 Tab 下，展开明细行固定展示的两个身份字段（顺序与 costMerge.js 的
+// MERGE_VIEW_OPTIONS 对应：字段若不在当前查看方式的 keyFields 里，视为“已合并”，
+// 显示为“—”，但列本身始终保留，避免切换查看方式时布局跳动）。
+const BREAKDOWN_IDENTITY_FIELDS = {
+  users: ['channel', 'model_name'],
+  models: ['username', 'channel'],
+  channels: ['username', 'model_name'],
+};
+
+// 身份字段 -> 判断其是否被当前 keyFields 保留所用的代表性行字段
+const IDENTITY_FIELD_SIGNATURE = {
+  channel: 'channel_id',
+  model_name: 'model_name',
+  username: 'username',
+};
+
+const isIdentityFieldCollapsed = (field, mode, keyFields) =>
+  mode !== 'detail' && !(keyFields || []).includes(IDENTITY_FIELD_SIGNATURE[field]);
+
+const renderIdentityFieldValue = (t, field, row) => {
+  if (field === 'username') return row.username || '-';
+  if (field === 'model_name') return row.model_name || '-';
+  // field === 'channel'
+  if (!row.channel_id) return t('未知渠道');
+  return row.channel_name ? `${row.channel_name}（#${row.channel_id}）` : `#${row.channel_id}`;
+};
+
+const IDENTITY_FIELD_LABEL = {
+  channel: '渠道',
+  model_name: '模型',
+  username: '用户',
+};
 
 const CostTables = ({
   t,
@@ -248,6 +299,7 @@ const CostTables = ({
         title: t('用户'),
         dataIndex: 'username',
         fixed: 'left',
+        width: IDENTITY_COLUMN_WIDTH,
       };
     }
     if (activeTab === 'models') {
@@ -256,12 +308,14 @@ const CostTables = ({
         title: t('模型'),
         dataIndex: 'model_name',
         fixed: 'left',
+        width: IDENTITY_COLUMN_WIDTH,
       };
     }
     return {
       key: 'channel_name',
       title: t('渠道'),
       fixed: 'left',
+      width: IDENTITY_COLUMN_WIDTH,
       render: (_, row) => (
         <span className='flex items-center gap-1'>
           <span>
@@ -286,12 +340,14 @@ const CostTables = ({
             key: 'user_count',
             title: t('用户数'),
             align: 'right',
+            width: 90,
             render: (_, row) => Number(row.user_count || 0),
           },
           {
             key: 'ratio',
             title: t('倍率'),
             align: 'right',
+            width: 160,
             render: (_, row) => (
               <div className='flex items-center justify-end gap-1'>
                 {row.priced ? (
@@ -325,15 +381,6 @@ const CostTables = ({
         ]
       : [];
 
-  const columns = [
-    dimensionColumn,
-    ...channelExtraColumns,
-    ...buildMetricColumns(t, openTokensModal),
-  ];
-
-  const items = pageData?.items || [];
-  const total = pageData?.total || 0;
-
   const rowKey = (record) => {
     if (activeTab === 'users') return `u-${record.user_id}`;
     if (activeTab === 'models') return `m-${record.model_name}`;
@@ -344,7 +391,42 @@ const CostTables = ({
   const setMergeMode = (rKey, mode) =>
     setMergeModes((prev) => ({ ...prev, [rKey]: mode }));
 
-  // ========== 展开行：查看方式合并 + （渠道维度）子供应商配置 ==========
+  // 「操作」列：紧凑的按行「查看方式」Select，仅在该行有 breakdown 明细时展示。
+  const actionColumn = {
+    key: 'action',
+    title: t('操作'),
+    width: ACTION_COLUMN_WIDTH,
+    render: (_, row) => {
+      if (!(row.breakdown || []).length) return null;
+      const rKey = rowKey(row);
+      const options = MERGE_VIEW_OPTIONS[activeTab] || MERGE_VIEW_OPTIONS.users;
+      return (
+        <Select
+          size='small'
+          value={getMergeMode(rKey)}
+          optionList={options.map((o) => ({
+            label: t(o.labelKey),
+            value: o.value,
+          }))}
+          onChange={(value) => setMergeMode(rKey, value)}
+          style={{ width: '100%' }}
+        />
+      );
+    },
+  };
+
+  const columns = [
+    dimensionColumn,
+    ...channelExtraColumns,
+    ...buildMetricColumns(t, openTokensModal),
+    actionColumn,
+  ];
+
+  const items = pageData?.items || [];
+  const total = pageData?.total || 0;
+
+  // ========== 展开行：合并明细 + （渠道维度）子供应商配置 ==========
+  // 查看方式 Select 已上移至父行「操作」列，此处仅渲染合并后的明细子表。
   const renderBreakdown = (record) => {
     const rows = record.breakdown || [];
     if (rows.length === 0) {
@@ -357,18 +439,32 @@ const CostTables = ({
     const activeOption = options.find((o) => o.value === mode) || options[0];
     const mergedRows = mergeBreakdown(rows, activeOption.keyFields);
 
-    const idColumn = {
-      key: 'label',
-      title: t('明细'),
-      render: (_, row) => getBreakdownLabel(row),
-    };
-    const actionColumn =
+    // 固定展示当前维度的两个身份字段（顺序固定），合并掉的字段显示“—”，
+    // 保证列宽/布局不随查看方式切换而跳动。
+    const [fieldA, fieldB] = BREAKDOWN_IDENTITY_FIELDS[activeTab];
+    const identityColumns = [fieldA, fieldB].map((field) => ({
+      key: `identity-${field}`,
+      title: t(IDENTITY_FIELD_LABEL[field]),
+      width: BREAKDOWN_IDENTITY_COLUMN_WIDTH,
+      render: (_, row) =>
+        isIdentityFieldCollapsed(field, mode, activeOption.keyFields) ? (
+          <Text type='tertiary'>—</Text>
+        ) : (
+          renderIdentityFieldValue(t, field, row)
+        ),
+    }));
+
+    // 「只看该渠道」放在渠道身份列旁的一个窄尾列里，供应商维度（channels）本身
+    // 就是按渠道分组，不需要该动作。
+    const channelActionColumn =
       activeTab !== 'channels'
         ? [
             {
               key: 'action',
               title: '',
+              width: ACTION_COLUMN_WIDTH,
               render: (_, row) =>
+                !isIdentityFieldCollapsed('channel', mode, activeOption.keyFields) &&
                 row.channel_id ? (
                   <Button
                     size='small'
@@ -386,29 +482,13 @@ const CostTables = ({
         : [];
 
     const breakdownColumns = [
-      idColumn,
+      ...identityColumns,
       ...buildMetricColumns(t, openTokensModal),
-      ...actionColumn,
+      ...channelActionColumn,
     ];
 
     return (
       <div className='pl-4'>
-        <div className='flex items-center gap-2 mb-2'>
-          <Text type='tertiary' size='small'>
-            {t('查看方式')}
-          </Text>
-          <Select
-            size='small'
-            value={mode}
-            optionList={options.map((o) => ({
-              label: t(o.labelKey),
-              value: o.value,
-            }))}
-            onChange={(value) => setMergeMode(rKey, value)}
-            style={{ minWidth: 200 }}
-          />
-        </div>
-
         {activeTab === 'channels' && (record.sub_suppliers || []).length > 0 && (
           <div className='mb-3'>
             <Text className='text-sm font-medium'>{t('子供应商')}</Text>
