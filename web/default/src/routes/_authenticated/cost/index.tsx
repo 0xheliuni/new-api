@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import z from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 import { ROLE } from '@/lib/roles'
 import { CostAccounting } from '@/features/cost'
 
@@ -38,6 +39,15 @@ export const Route = createFileRoute('/_authenticated/cost/')({
     const { auth } = useAuthStore.getState()
 
     if (!auth.user || auth.user.role < ROLE.SUPER_ADMIN) {
+      throw redirect({
+        to: '/403',
+      })
+    }
+
+    // 功能开关关闭时不渲染页面骨架 —— 真正的安全边界在后端中间件，
+    // 这里只是避免用户看到空表格再吃 403。
+    const { config } = useSystemConfigStore.getState()
+    if (config.costAccountingEnabled === false) {
       throw redirect({
         to: '/403',
       })

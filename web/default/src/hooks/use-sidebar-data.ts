@@ -38,6 +38,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { type SidebarData } from '@/components/layout/types'
 import { useAuthStore } from '@/stores/auth-store'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -50,6 +51,8 @@ export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const userRole = useAuthStore((s) => s.auth.user?.role)
   const isSuperAdmin = userRole !== undefined && userRole >= ROLE.SUPER_ADMIN
+  const { costAccountingEnabled } = useSystemConfig()
+  const showCostAccounting = isSuperAdmin && costAccountingEnabled !== false
 
   return {
     navGroups: [
@@ -132,6 +135,15 @@ export function useSidebarData(): SidebarData {
             url: '/channels',
             icon: Radio,
           },
+          ...(showCostAccounting
+            ? [
+                {
+                  title: t('Cost Accounting'),
+                  url: '/cost' as const,
+                  icon: Calculator,
+                },
+              ]
+            : []),
           {
             title: t('Models'),
             url: '/models/metadata',
@@ -152,15 +164,6 @@ export function useSidebarData(): SidebarData {
             url: '/subscriptions',
             icon: CreditCard,
           },
-          ...(isSuperAdmin
-            ? [
-                {
-                  title: t('Cost Accounting'),
-                  url: '/cost' as const,
-                  icon: Calculator,
-                },
-              ]
-            : []),
           {
             title: t('System Settings'),
             url: '/system-settings/site',
