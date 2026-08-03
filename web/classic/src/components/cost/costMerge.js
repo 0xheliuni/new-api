@@ -76,6 +76,16 @@ export function mergeBreakdown(rows, keyFields) {
   if (!Array.isArray(rows) || rows.length === 0) return [];
   if (!keyFields || keyFields.length === 0) return rows;
 
+  // 随身份字段一起保留的挂载字段：合并仍保留渠道身份时，渠道计价配置对整组
+  // 生效；仍保留用户身份时，用户折扣对整组生效（组内各行同一身份 → 同一取值）。
+  const carryFields = [];
+  if (keyFields.includes('channel_id')) {
+    carryFields.push('cost_mode', 'cost_ratio', 'cost_discount', 'effective_ratio');
+  }
+  if (keyFields.includes('username')) {
+    carryFields.push('user_group', 'group_ratio', 'group_ratio_known', 'group_ratio_special');
+  }
+
   const groups = new Map();
   const order = [];
   for (const row of rows) {
@@ -84,6 +94,9 @@ export function mergeBreakdown(rows, keyFields) {
     if (!g) {
       g = {};
       keyFields.forEach((f) => {
+        g[f] = row[f];
+      });
+      carryFields.forEach((f) => {
         g[f] = row[f];
       });
       RAW_ADDITIVE_FIELDS.forEach((f) => {
@@ -106,12 +119,12 @@ export const MERGE_VIEW_OPTIONS = {
     { value: 'detail', labelKey: '明细', keyFields: null },
     {
       value: 'merge_model',
-      labelKey: '合并模型(按渠道汇总)',
+      labelKey: '合并模型',
       keyFields: ['channel_id', 'channel_name'],
     },
     {
       value: 'merge_channel',
-      labelKey: '合并渠道(按模型汇总)',
+      labelKey: '合并渠道',
       keyFields: ['model_name'],
     },
   ],

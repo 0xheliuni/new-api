@@ -57,16 +57,24 @@ import {
   deriveCnyFromUsd,
   deriveUsdFromCny,
   formatAvgTtft,
-  formatDiscountLabel,
   formatRate,
   mergeBreakdown,
   useMoneyPrimaryCurrency,
   type CostBreakdownGroupBy,
   type MoneyPrimaryCurrency,
 } from '../lib'
-import { EditRatioDialog } from './edit-ratio-dialog'
 import { MoneyDualCell } from './money-dual-cell'
-import { TokensDetailDialog } from './tokens-detail-dialog'
+import { TokensDetailHover } from './tokens-detail-hover'
+import {
+  CostHelpFormula,
+  CostHelpHover,
+  CostHelpNotes,
+} from './cost-help-hover'
+import {
+  CostRatioDiscountCell,
+  RequestOutcomeCell,
+  UserDiscountCell,
+} from './cost-user-cells'
 
 const PAGE_SIZE = 20
 const route = getRouteApi('/_authenticated/cost/')
@@ -83,10 +91,16 @@ interface CostDimensionTableProps {
   exchangeRate?: number
 }
 
+/**
+ * Row keys are namespaced per dim and always fall back to the row index. The
+ * identity fields are `omitempty` on the backend, so a deleted user (user_id
+ * absent) or an empty model name would otherwise collide across rows and make
+ * React reuse the wrong row's expand/merge state.
+ */
 function rowKey(dim: CostDimension, row: CostDimensionRow, index: number) {
-  if (dim === 'users') return row.user_id ?? `u-${index}`
-  if (dim === 'models') return row.model_name ?? `m-${index}`
-  return row.channel_id ?? `c-${index}`
+  if (dim === 'users') return `u-${row.user_id ?? `i${index}`}`
+  if (dim === 'models') return `m-${row.model_name || `i${index}`}`
+  return `c-${row.channel_id ?? `i${index}`}`
 }
 
 function MoneyCell({
@@ -108,19 +122,159 @@ function MoneyCell({
  * rows and their breakdown sub-rows, so both render the exact same set of
  * columns in the exact same order (v2 requirement).
  */
+/**
+ * A metric cell receives the money fields it always has, plus — when the caller
+ * is a dimension row or a breakdown row — the identity/pricing fields those
+ * carry. Columns that need more than money (cost ratio, group discount) read
+ * the optional fields and degrade to "—" when absent (e.g. the footer summary,
+ * which is money-only).
+ */
+type MetricRow = CostMoney &
+  Partial<
+    Pick<
+      CostDimensionRow,
+      | 'breakdown'
+      | 'priced'
+      | 'channel_id'
+      | 'channel_name'
+      | 'user_group'
+      | 'group_ratio'
+      | 'group_ratio_known'
+      | 'group_ratio_special'
+    >
+  > &
+  Partial<Pick<CostBreakdownRow, 'cost_mode' | 'cost_ratio' | 'cost_discount' | 'effective_ratio'>>
+
 interface MetricColumnSpec {
   id: string
   header: ReactNode
-  cellClassName?: string | ((row: CostMoney) => string | undefined)
-  cell: (row: CostMoney) => ReactNode
+  cellClassName?: string | ((row: MetricRow) => string | undefined)
+  cell: (row: MetricRow) => ReactNode
+}
+
+/** Header help for the profit rate — the "why doesn't this add up" column. */
+function ProfitRateHeader() {
+  const { t } = useTranslation()
+  return (
+    <CostHelpHover label={t('Rate')}>
+      <div className='flex flex-col gap-2'>
+        <CostHelpFormula
+          term={t('Profit rate')}
+          expression={t('profit ÷ revenue (CNY)')}
+        />
+        <CostHelpFormula
+          term={t('Revenue (CNY)')}
+          expression={t('paid (USD) × exchange rate')}
+        />
+        <CostHelpFormula
+          term={t('Cost (CNY)')}
+          expression={t('list price (USD) × channel cost ratio')}
+        />
+        <CostHelpNotes
+          notes={[
+            t('Revenue already includes the group discount and nets out refunds.'),
+            t('Channels with no cost ratio set count as zero cost, which inflates the rate.'),
+            t('Summary rows are total profit ÷ total revenue, not an average of the row rates.'),
+          ]}
+        />
+      </div>
+    </CostHelpHover>
+  )
+}
+
+/** Header help for the unified cost ratio / discount column. */
+function CostRatioHeader() {
+  const { t } = useTranslation()
+  return (
+    <CostHelpHover label={t('Cost Ratio / Discount')}>
+      <div className='flex flex-col gap-2'>
+        <CostHelpFormula
+          term={t('{{v}} / ratio', { v: '2.5' })}
+          expression={t('the channel bills ¥2.5 per $1 of list price')}
+        />
+        <CostHelpFormula
+          term={t('{{v}} / discount', { v: '0.8' })}
+          expression={t('the channel bills 80% of list price × exchange rate')}
+        />
+        <CostHelpNotes
+          notes={[
+            t('User/model rows blend several channels: shown as ≈ cost ÷ list price; hover to see each channel.'),
+            t('"Not set" means the channel has no cost pricing configured and counts as zero cost.'),
+          ]}
+        />
+      </div>
+    </CostHelpHover>
+  )
+}
+
+/** Header help for the user-discount column. */
+function UserDiscountHeader() {
+  const { t } = useTranslation()
+  return (
+    <CostHelpHover label={t('User Discount')}>
+      <div className='flex flex-col gap-2'>
+        <CostHelpFormula
+          term={t('User Discount')}
+          expression={t("the group ratio of the user's current group; a dedicated ratio takes priority when configured")}
+        />
+        <CostHelpNotes
+          notes={[
+            t('A dedicated ratio is the (user group × token group) override, read as the user using their own group.'),
+            t('This is a current-config snapshot, not weighted over the selected range.'),
+            t('Shows "-" when the group has no ratio configured.'),
+          ]}
+        />
+      </div>
+    </CostHelpHover>
+  )
 }
 
 function buildMetricColumns(
   t: ReturnType<typeof useTranslation>['t'],
   primary: MoneyPrimaryCurrency,
-  exchangeRate: number
+  exchangeRate: number,
+  dim: CostDimension
 ): MetricColumnSpec[] {
-  return [
+  // List price leads: it's the basis both other money columns derive from
+  // (× cost ratio = cost, × group discount = revenue).
+  const columns: MetricColumnSpec[] = [
+    {
+      id: 'list_usd',
+      header: t('List Price'),
+      cell: (row) => (
+        <MoneyDualCell
+          usd={row.list_usd}
+          cny={deriveCnyFromUsd(row.list_usd, exchangeRate)}
+          primary={primary}
+        />
+      ),
+    },
+  ]
+
+  // The two derivation columns apply to every dim: cost ratio / discount says
+  // how list price became cost; user discount says how list price became
+  // revenue. Parent rows without a single channel show the weighted ratio;
+  // parent rows without a single user show '-'.
+  columns.push(
+    {
+      id: 'cost_ratio',
+      header: <CostRatioHeader />,
+      cell: (row) => (
+        <CostRatioDiscountCell
+          row={row}
+          dim={dim}
+          exchangeRate={exchangeRate}
+        />
+      ),
+    },
+    {
+      id: 'user_discount',
+      header: <UserDiscountHeader />,
+      cell: (row) => <UserDiscountCell row={row} />,
+    }
+  )
+
+  columns.push(
     {
       id: 'cost_cny',
       header: t('Cost'),
@@ -157,28 +311,25 @@ function buildMetricColumns(
         />
       ),
     },
+    { id: 'profit_rate', header: <ProfitRateHeader />, cell: (row) => formatRate(row.profit_rate) },
     {
-      id: 'list_usd',
-      header: t('List Price'),
+      id: 'request_outcome',
+      header: t('Success / Failed'),
       cell: (row) => (
-        <MoneyDualCell
-          usd={row.list_usd}
-          cny={deriveCnyFromUsd(row.list_usd, exchangeRate)}
-          primary={primary}
+        <RequestOutcomeCell
+          requestCount={row.request_count}
+          errorCount={row.error_count}
+          successRate={row.success_rate}
+          formatNumber={formatNumber}
+          formatRate={formatRate}
         />
       ),
     },
     {
-      id: 'request_count',
-      header: t('Requests'),
-      cell: (row) => formatNumber(row.request_count),
-    },
-    { id: 'profit_rate', header: t('Rate'), cell: (row) => formatRate(row.profit_rate) },
-    {
       id: 'total_tokens',
       header: t('Total Tokens'),
       cell: (row) => (
-        <TokensDetailDialog
+        <TokensDetailHover
           promptTokens={row.prompt_tokens}
           completionTokens={row.completion_tokens}
           cacheReadTokens={row.cache_read_tokens}
@@ -186,11 +337,6 @@ function buildMetricColumns(
           totalTokens={row.total_tokens}
         />
       ),
-    },
-    {
-      id: 'success_rate',
-      header: t('Success rate'),
-      cell: (row) => formatRate(row.success_rate),
     },
     {
       id: 'cache_rate',
@@ -201,8 +347,10 @@ function buildMetricColumns(
       id: 'avg_ttft_ms',
       header: t('Average TTFT'),
       cell: (row) => formatAvgTtft(row),
-    },
-  ]
+    }
+  )
+
+  return columns
 }
 
 type IdentityField = CostBreakdownGroupBy
@@ -381,10 +529,36 @@ function BreakdownRows({
   const rawBreakdown = row.breakdown ?? []
   const breakdown =
     viewMode === 'detail' ? rawBreakdown : mergeBreakdown(rawBreakdown, viewMode)
-  // Reclaim the Ratio column's width for channels-dim breakdown rows — it
-  // has no per-row ratio editor, so folding it into the identity cell gives
-  // the two identity fields more room without breaking column alignment.
-  const identityColSpan = 1 + (dim === 'channels' ? 1 : 0)
+  // Sub-rows inherit identity-bound context their own fields can't carry:
+  //  - channels dim: the channel identity is folded into the parent, so copy
+  //    the parent's channel id + pricing config onto every sub-row (the
+  //    cost-ratio cell then renders "2.5 / ratio" instead of a blank);
+  //  - users dim: every sub-row belongs to the parent user, so copy the
+  //    parent's discount fields (also covers client-side merged rows, where
+  //    mergeBreakdown drops non-grouped payload fields).
+  const enrich = (b: CostBreakdownRow): CostBreakdownRow => {
+    if (dim === 'channels') {
+      return {
+        ...b,
+        channel_id: row.channel_id,
+        channel_name: row.channel_name,
+        cost_mode: row.cost_mode,
+        cost_ratio: row.cost_ratio,
+        cost_discount: row.cost_discount,
+        effective_ratio: row.effective_ratio,
+      }
+    }
+    if (dim === 'users') {
+      return {
+        ...b,
+        user_group: row.user_group,
+        group_ratio: row.group_ratio,
+        group_ratio_known: row.group_ratio_known,
+        group_ratio_special: row.group_ratio_special,
+      }
+    }
+    return b
+  }
   // Breakdown rows for the "channels" dim never carry a `channel` identity
   // field (the parent row already is the channel), so there's no "view
   // channel only" action to show there.
@@ -422,41 +596,44 @@ function BreakdownRows({
         </TableRow>
       )}
 
-      {breakdown.map((bRow, index) => (
-        <TableRow key={index} className='bg-muted/20 hover:bg-muted/30'>
-          <TableCell />
-          <TableCell colSpan={identityColSpan}>
-            <BreakdownIdentityCell dim={dim} row={bRow} viewMode={viewMode} />
-          </TableCell>
-          {metricColumns.map((col) => (
-            <MoneyCell
-              key={col.id}
-              className={
-                typeof col.cellClassName === 'function'
-                  ? col.cellClassName(bRow)
-                  : col.cellClassName
-              }
-            >
-              {col.cell(bRow)}
-            </MoneyCell>
-          ))}
-          <TableCell>
-            {channelActionAvailable &&
-              !isFieldCollapsed('channel', viewMode) &&
-              Boolean(bRow.channel_id) && (
-                <Button
-                  type='button'
-                  variant='link'
-                  size='xs'
-                  className='h-auto p-0 text-xs'
-                  onClick={() => onViewChannel(bRow.channel_id!)}
-                >
-                  {t('View channel only')}
-                </Button>
-              )}
-          </TableCell>
-        </TableRow>
-      ))}
+      {breakdown.map((bRow, index) => {
+        const enriched = enrich(bRow)
+        return (
+          <TableRow key={index} className='bg-muted/20 hover:bg-muted/30'>
+            <TableCell />
+            <TableCell>
+              <BreakdownIdentityCell dim={dim} row={bRow} viewMode={viewMode} />
+            </TableCell>
+            {metricColumns.map((col) => (
+              <MoneyCell
+                key={col.id}
+                className={
+                  typeof col.cellClassName === 'function'
+                    ? col.cellClassName(enriched)
+                    : col.cellClassName
+                }
+              >
+                {col.cell(enriched)}
+              </MoneyCell>
+            ))}
+            <TableCell>
+              {channelActionAvailable &&
+                !isFieldCollapsed('channel', viewMode) &&
+                Boolean(bRow.channel_id) && (
+                  <Button
+                    type='button'
+                    variant='link'
+                    size='xs'
+                    className='h-auto p-0 text-xs'
+                    onClick={() => onViewChannel(bRow.channel_id!)}
+                  >
+                    {t('View channel only')}
+                  </Button>
+                )}
+            </TableCell>
+          </TableRow>
+        )
+      })}
 
       {Boolean(row.breakdown_truncated) && (
         <TableRow className='hover:bg-transparent'>
@@ -507,44 +684,6 @@ function DimensionCell({
   )
 }
 
-function RatioCell({
-  row,
-  exchangeRate,
-}: {
-  row: CostDimensionRow
-  exchangeRate: number
-}) {
-  const { t } = useTranslation()
-  // Falsy (undefined or 0) channel_id means "no channel selected" on the
-  // underlying logs, not a real channel — no ratio to edit for it.
-  if (!row.channel_id) return null
-  const mode = row.cost_mode === 'discount' ? 'discount' : 'ratio'
-  return (
-    <div className='flex items-center justify-end gap-1.5'>
-      {!row.priced ? (
-        <Badge className='bg-warning/10 text-warning border-transparent'>
-          {t('Not set')}
-        </Badge>
-      ) : mode === 'discount' ? (
-        <span className='tabular-nums'>
-          {formatDiscountLabel(row.cost_discount, t)} (≈¥
-          {(row.effective_ratio ?? 0).toFixed(2)}/$1)
-        </span>
-      ) : (
-        <span className='tabular-nums'>{row.cost_ratio}</span>
-      )}
-      <EditRatioDialog
-        channelId={row.channel_id}
-        channelName={row.channel_name || `#${row.channel_id}`}
-        currentRatio={row.cost_ratio ?? 0}
-        currentMode={row.cost_mode}
-        currentDiscount={row.cost_discount ?? 0}
-        exchangeRate={exchangeRate}
-      />
-    </div>
-  )
-}
-
 function summaryLabel(dim: CostDimension, t: (key: string) => string) {
   if (dim === 'users') return t('All Users')
   if (dim === 'models') return t('All Models')
@@ -568,6 +707,18 @@ export function CostDimensionTable({
   const [viewModeByRow, setViewModeByRow] = useState<
     Map<string | number, ViewMode>
   >(new Map())
+
+  // Row keys only identify a row within one result set, so any change of dim,
+  // range, filter or page can hand the same key to a different row. Drop the
+  // per-row expand/merge state whenever the result set changes, otherwise one
+  // row inherits another's expanded breakdown or merge view.
+  const resultSetId = [dim, start, end, page, username, channel, modelName].join('|')
+  const [lastResultSetId, setLastResultSetId] = useState(resultSetId)
+  if (lastResultSetId !== resultSetId) {
+    setLastResultSetId(resultSetId)
+    if (expanded.size) setExpanded(new Set())
+    if (viewModeByRow.size) setViewModeByRow(new Map())
+  }
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -601,9 +752,9 @@ export function CostDimensionTable({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const primary = useMoneyPrimaryCurrency()
   const effectiveExchangeRate = exchangeRate ?? DEFAULT_EXCHANGE_RATE
-  const metricColumns = buildMetricColumns(t, primary, effectiveExchangeRate)
-  // expand toggle + identity + (ratio, channels only) + metrics + actions
-  const totalColSpan = 3 + (dim === 'channels' ? 1 : 0) + metricColumns.length
+  const metricColumns = buildMetricColumns(t, primary, effectiveExchangeRate, dim)
+  // expand toggle + identity + metrics + actions
+  const totalColSpan = 3 + metricColumns.length
 
   const toggleExpanded = (key: string | number) => {
     setExpanded((prev) => {
@@ -649,9 +800,6 @@ export function CostDimensionTable({
             <TableRow>
               <TableHead className='w-8' />
               <TableHead>{identityHeader}</TableHead>
-              {dim === 'channels' && (
-                <TableHead className='text-right'>{t('Ratio')}</TableHead>
-              )}
               {metricColumns.map((col) => (
                 <TableHead key={col.id} className='text-right'>
                   {col.header}
@@ -707,14 +855,6 @@ export function CostDimensionTable({
                       <TableCell>
                         <DimensionCell dim={dim} row={row} />
                       </TableCell>
-                      {dim === 'channels' && (
-                        <TableCell className='text-right'>
-                          <RatioCell
-                            row={row}
-                            exchangeRate={effectiveExchangeRate}
-                          />
-                        </TableCell>
-                      )}
                       {metricColumns.map((col) => (
                         <MoneyCell
                           key={col.id}
@@ -759,7 +899,6 @@ export function CostDimensionTable({
                 <TableCell className='font-semibold'>
                   {summaryLabel(dim, t)}
                 </TableCell>
-                {dim === 'channels' && <TableCell />}
                 {metricColumns.map((col) => (
                   <MoneyCell
                     key={col.id}

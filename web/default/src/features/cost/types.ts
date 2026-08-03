@@ -52,6 +52,18 @@ export interface CostBreakdownRow extends CostMoney {
   model_name?: string
   channel_id?: number
   channel_name?: string
+  // Pricing config of the channel this sub-row belongs to; absent when the
+  // channel identity is merged away (grouped by model).
+  cost_mode?: '' | 'ratio' | 'discount'
+  cost_ratio?: number
+  cost_discount?: number
+  effective_ratio?: number
+  // Current discount of the user this sub-row belongs to (dedicated ratio
+  // takes priority); absent when the user identity is merged away.
+  user_group?: string
+  group_ratio?: number
+  group_ratio_known?: boolean
+  group_ratio_special?: boolean
 }
 
 export interface CostDimensionRow extends CostMoney {
@@ -71,6 +83,13 @@ export interface CostDimensionRow extends CostMoney {
   effective_ratio?: number
   is_aggregator?: boolean
   sub_suppliers?: CostChannelSubSupplier[]
+  // User-dim only: the user's *current* group and that group's configured
+  // ratio (a query-time config snapshot, not weighted over the logs in range).
+  // group_ratio_special marks a dedicated (user-group × using-group) ratio hit.
+  user_group?: string
+  group_ratio?: number
+  group_ratio_known?: boolean
+  group_ratio_special?: boolean
 }
 
 export interface CostTrendPoint {

@@ -1121,6 +1121,23 @@ type ChannelCostInfo struct {
 	SubSuppliers []dto.ChannelSubSupplier
 }
 
+// GetAllUserGroups 一次性载入全部用户当前所属分组（主库），返回 username -> group。
+// 键用 username 而非 user_id：成本报表的 breakdown 明细行只携带 Username（user_id
+// 在折叠时被丢弃），而 username 在 users 表上有唯一索引，可安全作键。
+// 与 GetAllChannelCostInfos 同理：logs 可能在独立 LOG_DB，无法 SQL JOIN，只能在
+// 应用层做映射。
+func GetAllUserGroups() (map[string]string, error) {
+	var users []*User
+	if err := DB.Model(&User{}).Select("username", commonGroupCol).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	groups := make(map[string]string, len(users))
+	for _, u := range users {
+		groups[u.Username] = u.Group
+	}
+	return groups, nil
+}
+
 // GetAllChannelCostInfos 一次性载入全部渠道的成本信息（主库），供成本报表在
 // 应用层做 channel_id 映射 —— logs 可能在独立 LOG_DB，无法 SQL JOIN。
 func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {

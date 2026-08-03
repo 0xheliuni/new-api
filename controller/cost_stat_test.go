@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 // 分组折扣 0.8：实付 800，刊例应还原为 1000。
@@ -206,6 +207,114 @@ func TestFoldCostCube_ChannelDimSupplierExtras(t *testing.T) {
 	}
 	if !ch9.Priced {
 		t.Fatal("priced = false, want true (effective ratio > 0)")
+	}
+}
+
+// TestFoldCostCube_BreakdownCarriesChannelPricing 用户维度的展开明细行需要带上
+// 所属渠道的计价配置，前端才能在明细行直接展示"这笔成本按哪个倍率/折扣算的"。
+// ch3 为 ratio 模式（cost_ratio 2.5，生效倍率同值）；ch9 为 discount 模式
+// （cost_discount 0.8，生效倍率 0.8×汇率）。
+func TestFoldCostCube_BreakdownCarriesChannelPricing(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 800, Other: `{"group_ratio":0.8}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 11), UserId: 1, Username: "alice",
+			ChannelId: 9, ModelName: "gpt-4o", Quota: 500, Other: `{"group_ratio":1}`},
+	})
+	rows := foldCostCube(c, costDimUser, testChannels(), 6.8)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	byChannel := map[int]costBreakdownRow{}
+	for _, b := range rows[0].Breakdown {
+		byChannel[b.ChannelId] = b
+	}
+	ch3, ok := byChannel[3]
+	if !ok {
+		t.Fatal("breakdown for channel 3 missing")
+	}
+	if ch3.CostRatio != 2.5 || ch3.EffectiveRatio != 2.5 {
+		t.Fatalf("ch3 ratio = %v / effective %v, want 2.5 / 2.5", ch3.CostRatio, ch3.EffectiveRatio)
+	}
+	if ch3.CostMode != "" {
+		t.Fatalf("ch3 cost_mode = %q, want empty (ratio mode)", ch3.CostMode)
+	}
+	ch9, ok := byChannel[9]
+	if !ok {
+		t.Fatal("breakdown for channel 9 missing")
+	}
+	if ch9.CostMode != "discount" || ch9.CostDiscount != 0.8 {
+		t.Fatalf("ch9 mode = %q discount = %v, want discount / 0.8", ch9.CostMode, ch9.CostDiscount)
+	}
+	if want := 0.8 * 6.8; ch9.EffectiveRatio != want {
+		t.Fatalf("ch9 effective_ratio = %v, want %v", ch9.EffectiveRatio, want)
+	}
+}
+
+// TestAttachUserGroupRatios 用户折扣补齐：
+// 已知分组且配置了倍率 → 填充且 GroupRatioKnown=true；
+// 用户已删除（映射里没有）→ 字段留空；
+// 分组存在但未配置倍率 → 只填分组名，Known=false（未配置 ≠ 不打折）；
+// 配置了专属倍率（GroupGroupRatio[G][G]）→ 专属优先，GroupRatioSpecial=true；
+// breakdown 明细行：models/channels 维度按自身 Username 补齐，users 维度回退父行用户名。
+func TestAttachUserGroupRatios(t *testing.T) {
+	// 注入专属倍率：sp_vip 用户使用自身分组令牌时 0.7（优先于一维配置的 0.9）。
+	if err := ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"sp_vip":0.9}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ratio_setting.UpdateGroupGroupRatioByJSONString(`{"sp_vip":{"sp_vip":0.7}}`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := []costDimensionRow{
+		// users 维度父行 + 折叠掉用户名的明细行（应回退父行用户名）
+		{Username: "alice", Breakdown: []costBreakdownRow{
+			{ChannelId: 3, ModelName: "gpt-4o"},
+		}},
+		{Username: "ghost"},
+		{Username: "carol"},
+		{Username: "sam"},
+		// models 维度父行（无单一用户）+ 携带用户名的明细行
+		{ModelName: "gpt-4o", Breakdown: []costBreakdownRow{
+			{Username: "alice", ChannelId: 3},
+			{Username: "sam", ChannelId: 3},
+			{Username: "ghost", ChannelId: 3},
+		}},
+	}
+	attachUserGroupRatios(rows, map[string]string{
+		"alice": "default",
+		"carol": "no_ratio_group",
+		"sam":   "sp_vip",
+	})
+
+	if rows[0].UserGroup != "default" || !rows[0].GroupRatioKnown || rows[0].GroupRatio != 1 || rows[0].GroupRatioSpecial {
+		t.Fatalf("alice: %+v", rows[0])
+	}
+	if b := rows[0].Breakdown[0]; b.UserGroup != "default" || !b.GroupRatioKnown || b.GroupRatio != 1 {
+		t.Fatalf("alice breakdown must inherit parent username: %+v", b)
+	}
+	if rows[1].UserGroup != "" || rows[1].GroupRatioKnown {
+		t.Fatalf("deleted user must stay empty: %+v", rows[1])
+	}
+	if rows[2].UserGroup != "no_ratio_group" || rows[2].GroupRatioKnown || rows[2].GroupRatio != 0 {
+		t.Fatalf("unconfigured group: %+v", rows[2])
+	}
+	if rows[3].UserGroup != "sp_vip" || !rows[3].GroupRatioKnown || rows[3].GroupRatio != 0.7 || !rows[3].GroupRatioSpecial {
+		t.Fatalf("dedicated ratio must win over group ratio: %+v", rows[3])
+	}
+	// models 维度：父行不补（无单一用户），明细行按各自 Username 补
+	if rows[4].UserGroup != "" || rows[4].GroupRatioKnown {
+		t.Fatalf("models-dim parent must stay empty: %+v", rows[4])
+	}
+	if b := rows[4].Breakdown[0]; b.UserGroup != "default" || !b.GroupRatioKnown {
+		t.Fatalf("models-dim breakdown alice: %+v", b)
+	}
+	if b := rows[4].Breakdown[1]; b.GroupRatio != 0.7 || !b.GroupRatioSpecial {
+		t.Fatalf("models-dim breakdown sam must use dedicated ratio: %+v", b)
+	}
+	if b := rows[4].Breakdown[2]; b.UserGroup != "" || b.GroupRatioKnown {
+		t.Fatalf("models-dim breakdown ghost must stay empty: %+v", b)
 	}
 }
 

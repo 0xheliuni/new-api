@@ -38,6 +38,13 @@ import {
   formatDualMoney,
   getMoneyPrimaryCurrency,
 } from './costFormat';
+import { CostHelpHeader, CostHelpFormula, CostHelpNotes } from './CostHelp';
+import {
+  CostRatioDiscountCell,
+  RequestOutcomeCell,
+  TokensHoverCell,
+  UserDiscountCell,
+} from './CostUserCells';
 
 const { Text } = Typography;
 
@@ -68,7 +75,8 @@ const DualMoneyCell = ({ primary, secondary }) => (
 const IDENTITY_COLUMN_WIDTH = 220; // 身份列（用户/模型/渠道），展开明细行在此列内缩进展示
 const ACTION_COLUMN_WIDTH = 140; // 「操作」列：父行显示「查看方式」，明细行显示「只看该渠道」
 const CHANNEL_USER_COUNT_WIDTH = 90; // 供应商维度 用户数列
-const CHANNEL_RATIO_WIDTH = 160; // 供应商维度 倍率列
+const RATIO_DISCOUNT_WIDTH = 130; // 成本倍率/折扣列（2.5/倍率、0.8/折扣、加权 ≈）
+const USER_DISCOUNT_WIDTH = 110; // 用户折扣列（0.8/分组、0.7/专属）
 
 // 每个维度 Tab 下，展开明细行固定展示的两个身份字段（顺序与 costMerge.js 的
 // MERGE_VIEW_OPTIONS 对应：字段若不在当前查看方式的 keyFields 里，视为"已合并"，
@@ -98,7 +106,80 @@ const renderIdentityFieldValue = (t, field, row) => {
 };
 
 // ========== 统一的指标列（顶层行与展开明细行共用同一套渲染） ==========
-const buildMetricColumns = (t, openTokensModal, exchangeRate, primaryCurrency) => [
+const buildMetricColumns = (t, exchangeRate, primaryCurrency, activeTab, onEditRatio) => [
+  {
+    key: 'list_usd',
+    title: t('刊例价'),
+    align: 'right',
+    width: 130,
+    render: (_, row) => {
+      if (row.__isNote) return null;
+      const { primary, secondary } = formatDualMoney(
+        row.list_usd,
+        deriveCnyFromUsd(row.list_usd, exchangeRate),
+        primaryCurrency,
+      );
+      return <DualMoneyCell primary={primary} secondary={secondary} />;
+    },
+  },
+  {
+    key: 'cost_ratio_discount',
+    title: (
+      <CostHelpHeader title={t('成本倍率/折扣')}>
+        <CostHelpFormula
+          term={t('{{v}}/倍率', { v: '2.5' })}
+          expression={t('渠道按每 $1 刊例价记成本 ¥2.5')}
+        />
+        <CostHelpFormula
+          term={t('{{v}}/折扣', { v: '0.8' })}
+          expression={t('渠道按刊例价的 80% × 汇率记成本')}
+        />
+        <CostHelpNotes
+          notes={[
+            t('用户/模型行跨多个渠道时显示 ≈ 加权值（成本 ÷ 刊例价），悬浮可看各渠道配置。'),
+            t('「未填写」表示该渠道未配置成本计价，成本按 0 计。'),
+          ]}
+        />
+      </CostHelpHeader>
+    ),
+    align: 'right',
+    width: RATIO_DISCOUNT_WIDTH,
+    render: (_, row) => {
+      if (row.__isNote) return null;
+      return (
+        <CostRatioDiscountCell
+          row={row}
+          dim={activeTab}
+          t={t}
+          onEditRatio={onEditRatio}
+        />
+      );
+    },
+  },
+  {
+    key: 'user_discount',
+    title: (
+      <CostHelpHeader title={t('用户折扣')}>
+        <CostHelpFormula
+          term={t('用户折扣')}
+          expression={t('用户当前分组的分组倍率；配置了专属倍率时以专属优先')}
+        />
+        <CostHelpNotes
+          notes={[
+            t('专属倍率为「用户分组×令牌分组」的二维覆盖，按用户使用自身分组令牌的口径取值。'),
+            t('取查询时刻的配置快照，未按所选区间加权。'),
+            t('行内没有单一用户（模型/供应商父行）时显示「-」。'),
+          ]}
+        />
+      </CostHelpHeader>
+    ),
+    align: 'right',
+    width: USER_DISCOUNT_WIDTH,
+    render: (_, row) => {
+      if (row.__isNote) return null;
+      return <UserDiscountCell row={row} t={t} />;
+    },
+  },
   {
     key: 'cost_cny',
     title: t('成本'),
@@ -150,36 +231,40 @@ const buildMetricColumns = (t, openTokensModal, exchangeRate, primaryCurrency) =
     },
   },
   {
-    key: 'list_usd',
-    title: t('刊例价'),
+    key: 'profit_rate',
+    title: (
+      <CostHelpHeader title={t('利润率')}>
+        <CostHelpFormula term={t('利润率')} expression={t('利润 ÷ 收入')} />
+        <CostHelpFormula term={t('利润')} expression={t('收入 − 成本')} />
+        <CostHelpFormula term={t('成本')} expression={t('刊例价 × 成本倍率')} />
+        <CostHelpNotes
+          notes={[
+            t('收入为 0 时利润率按 0 显示。'),
+            t('成本倍率取渠道当前配置，不随历史变更回溯。'),
+          ]}
+        />
+      </CostHelpHeader>
+    ),
     align: 'right',
-    width: 130,
-    render: (_, row) => {
-      if (row.__isNote) return null;
-      const { primary, secondary } = formatDualMoney(
-        row.list_usd,
-        deriveCnyFromUsd(row.list_usd, exchangeRate),
-        primaryCurrency,
-      );
-      return <DualMoneyCell primary={primary} secondary={secondary} />;
-    },
+    width: 100,
+    render: (_, row) =>
+      row.__isNote ? null : (
+        <span style={profitStyle(row.profit_rate)}>{percent(row.profit_rate)}</span>
+      ),
   },
   {
     key: 'request_count',
     title: t('请求数'),
     align: 'right',
-    width: 90,
-    render: (_, row) =>
-      row.__isNote ? null : <span>{Number(row.request_count || 0)}</span>,
-  },
-  {
-    key: 'profit_rate',
-    title: t('利润率'),
-    align: 'right',
-    width: 90,
+    width: 110,
     render: (_, row) =>
       row.__isNote ? null : (
-        <span style={profitStyle(row.profit_rate)}>{percent(row.profit_rate)}</span>
+        <RequestOutcomeCell
+          requestCount={row.request_count}
+          errorCount={row.error_count}
+          successRate={row.success_rate}
+          percent={percent}
+        />
       ),
   },
   {
@@ -188,23 +273,7 @@ const buildMetricColumns = (t, openTokensModal, exchangeRate, primaryCurrency) =
     align: 'right',
     width: 110,
     render: (_, row) =>
-      row.__isNote ? null : (
-        <Button
-          theme='borderless'
-          type='tertiary'
-          size='small'
-          onClick={() => openTokensModal(row)}
-        >
-          {Number(row.total_tokens || 0)}
-        </Button>
-      ),
-  },
-  {
-    key: 'success_rate',
-    title: t('成功率'),
-    align: 'right',
-    width: 90,
-    render: (_, row) => (row.__isNote ? null : <span>{percent(row.success_rate ?? 1)}</span>),
+      row.__isNote ? null : <TokensHoverCell row={row} t={t} />,
   },
   {
     key: 'cache_rate',
@@ -252,7 +321,6 @@ const CostTables = ({
     discountValue: 0,
   });
   const [submitting, setSubmitting] = useState(false);
-  const [tokensModal, setTokensModal] = useState({ visible: false, row: null });
   const [mergeModes, setMergeModes] = useState({});
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   const [subSuppliersModal, setSubSuppliersModal] = useState({
@@ -260,6 +328,17 @@ const CostTables = ({
     channelName: '',
     subSuppliers: [],
   });
+
+  // 展开态与「查看方式」按行键存储。换维度/换页/换筛选后行集合整体变了，旧键要么
+  // 指向不存在的行（残留内存），要么在分页复用同一批 user_id 时让新行意外呈展开态。
+  // 这里在数据身份变化时清空，让每批数据都从收起状态开始。
+  const dataIdentity = `${activeTab}|${activePage}|${pageSize}|${exchangeRate}`;
+  const [stateScope, setStateScope] = useState(dataIdentity);
+  if (stateScope !== dataIdentity) {
+    setStateScope(dataIdentity);
+    setExpandedKeys(new Set());
+    setMergeModes({});
+  }
 
   const primaryCurrency = getMoneyPrimaryCurrency();
 
@@ -278,9 +357,6 @@ const CostTables = ({
     if (submitting) return;
     setRatioModal((s) => ({ ...s, visible: false }));
   };
-
-  const openTokensModal = (row) => setTokensModal({ visible: true, row });
-  const closeTokensModal = () => setTokensModal({ visible: false, row: null });
 
   const openSubSuppliersModal = (record) =>
     setSubSuppliersModal({
@@ -466,44 +542,6 @@ const CostTables = ({
                 Number(row.user_count || 0)
               ),
           },
-          {
-            key: 'ratio',
-            title: t('倍率'),
-            align: 'right',
-            width: CHANNEL_RATIO_WIDTH,
-            render: (_, row) => {
-              if (row.__isChild) return <Text type='tertiary'>—</Text>;
-              return (
-                <div className='flex items-center justify-end gap-1'>
-                  {row.priced ? (
-                    row.cost_mode === 'discount' ? (
-                      <span>
-                        {t('{{d}} 折 (≈¥{{cny}}/$1)', {
-                          d: (Number(row.cost_discount || 0) * 10).toFixed(1),
-                          cny: Number(row.effective_ratio || 0).toFixed(2),
-                        })}
-                      </span>
-                    ) : (
-                      <span>{row.cost_ratio}</span>
-                    )
-                  ) : (
-                    <Tag color='yellow' shape='circle'>
-                      {t('未填写')}
-                    </Tag>
-                  )}
-                  {Boolean(row.channel_id) && (
-                    <Button
-                      icon={<IconEdit />}
-                      type='tertiary'
-                      theme='borderless'
-                      size='small'
-                      onClick={() => openRatioModal(row)}
-                    />
-                  )}
-                </div>
-              );
-            },
-          },
         ]
       : [];
 
@@ -553,12 +591,16 @@ const CostTables = ({
   const columns = [
     dimensionColumn,
     ...channelExtraColumns,
-    ...buildMetricColumns(t, openTokensModal, exchangeRate, primaryCurrency),
+    ...buildMetricColumns(t, exchangeRate, primaryCurrency, activeTab, openRatioModal),
     actionColumn,
   ];
 
-  const items = pageData?.items || [];
-  const total = pageData?.total || 0;
+  // pageData 三个 tab 共用一份状态。切 tab 时新请求还在飞行中，若直接渲染上一个
+  // 维度的 items，就会用新维度的列去读旧维度的行（用户列里出现渠道数据）。
+  // dim 不匹配即视为陈旧，渲染空表 + loading。
+  const dataIsStale = (pageData?.dim || activeTab) !== activeTab;
+  const items = dataIsStale ? [] : pageData?.items || [];
+  const total = dataIsStale ? 0 : pageData?.total || 0;
 
   // ========== 展平：把展开行的合并明细直接插入父行之后，成为同一张表的普通
   // 行（打 __isChild 标记）。单表单 colgroup，列宽由列定义唯一决定，父子行
@@ -577,9 +619,38 @@ const CostTables = ({
       const activeOption = options.find((o) => o.value === mode) || options[0];
       const mergedRows = mergeBreakdown(rawRows, activeOption.keyFields);
 
+      // 明细行补上自身字段带不动的身份挂载信息：
+      //  - 供应商维度：渠道身份折叠进了父行，把父行的渠道计价配置注入每个明细行
+      //    （成本倍率/折扣列因此能显示 2.5/倍率 而不是空）；
+      //  - 用户维度：明细行都属于父行用户，注入父行的用户折扣字段（顺带覆盖
+      //    合并视图丢掉挂载字段的情况）。
+      const enrichChild = (bRow) => {
+        if (activeTab === 'channels') {
+          return {
+            ...bRow,
+            channel_id: record.channel_id,
+            channel_name: record.channel_name,
+            cost_mode: record.cost_mode,
+            cost_ratio: record.cost_ratio,
+            cost_discount: record.cost_discount,
+            effective_ratio: record.effective_ratio,
+          };
+        }
+        if (activeTab === 'users') {
+          return {
+            ...bRow,
+            user_group: record.user_group,
+            group_ratio: record.group_ratio,
+            group_ratio_known: record.group_ratio_known,
+            group_ratio_special: record.group_ratio_special,
+          };
+        }
+        return bRow;
+      };
+
       mergedRows.forEach((bRow, idx) => {
         result.push({
-          ...bRow,
+          ...enrichChild(bRow),
           __isChild: true,
           __parentKey: rKey,
           __rowKey: `${rKey}::${idx}`,
@@ -632,32 +703,6 @@ const CostTables = ({
           }}
         />
       </div>
-
-      <Modal
-        centered
-        visible={tokensModal.visible}
-        onCancel={closeTokensModal}
-        footer={
-          <Button type='primary' onClick={closeTokensModal}>
-            {t('关闭')}
-          </Button>
-        }
-        title={t('总tokens')}
-      >
-        <div className='space-y-2'>
-          {[
-            ['输入 tokens', tokensModal.row?.prompt_tokens],
-            ['输出 tokens', tokensModal.row?.completion_tokens],
-            ['缓存读取 tokens', tokensModal.row?.cache_read_tokens],
-            ['缓存创建 tokens', tokensModal.row?.cache_creation_tokens],
-          ].map(([labelKey, value]) => (
-            <div key={labelKey} className='flex items-center justify-between'>
-              <Text type='tertiary'>{t(labelKey)}</Text>
-              <Text className='tabular-nums'>{Number(value || 0)}</Text>
-            </div>
-          ))}
-        </div>
-      </Modal>
 
       <Modal
         centered

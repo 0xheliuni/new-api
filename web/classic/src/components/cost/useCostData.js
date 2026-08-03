@@ -52,7 +52,11 @@ export const useCostData = () => {
   // ========== 数据 ==========
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  // pageData 带上它属于哪个维度（dim）。三个 tab 共用这一份状态，切 tab 时新请求
+  // 还在飞行中，旧维度的 items 会先用新维度的列定义渲染出来（用户列里出现渠道数据）。
+  // 消费方按 dim !== activeTab 判定为陈旧数据，渲染空表 + loading，不再串数据。
   const [pageData, setPageData] = useState({
+    dim: 'users',
     items: [],
     total: 0,
     page: 1,
@@ -99,9 +103,10 @@ export const useCostData = () => {
   }, [startTimestamp, endTimestamp, username, effectiveChannel, modelName, effectiveExchangeRate]);
 
   const loadDimension = useCallback(async () => {
+    const requestedDim = activeTab;
     setTableLoading(true);
     try {
-      const res = await API.get(`/api/cost/${activeTab}`, {
+      const res = await API.get(`/api/cost/${requestedDim}`, {
         params: {
           ...commonParams,
           p: activePage,
@@ -110,7 +115,9 @@ export const useCostData = () => {
       });
       const { success, message, data } = res.data;
       if (success) {
-        setPageData(data);
+        // 标记数据所属维度；两个 tab 的请求乱序返回时，晚到的旧维度响应会被消费方
+        // 按 dim 判定为陈旧而忽略。
+        setPageData({ ...data, dim: requestedDim });
       } else {
         showError(message);
       }

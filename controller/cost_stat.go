@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 // costCubeKey 成本立方体分桶键：用户 × 模型 × 渠道 × 日。
@@ -122,22 +123,37 @@ type costMoney struct {
 }
 
 // costBreakdownRow 维度折叠行下的子明细（折叠掉本维度与 Day，保留其余两个维度）。
+// CostMode/CostRatio/CostDiscount/EffectiveRatio 为该明细行所属渠道的计价配置，
+// 供前端在明细行直接展示"这一笔成本是按哪个倍率/折扣算出来的"；渠道身份被合并
+// （按模型汇总）时这些字段无意义，由前端按 channel_id 是否存在决定是否渲染。
+// UserGroup/GroupRatio/GroupRatioKnown/GroupRatioSpecial 为该明细行所属用户的
+// 当前分组折扣（专属优先），由 attachUserGroupRatios 统一填充。
 type costBreakdownRow struct {
 	Username    string `json:"username,omitempty"`
 	ModelName   string `json:"model_name,omitempty"`
 	ChannelId   int    `json:"channel_id,omitempty"`
 	ChannelName string `json:"channel_name,omitempty"`
+
+	CostMode       string  `json:"cost_mode,omitempty"`
+	CostRatio      float64 `json:"cost_ratio,omitempty"`
+	CostDiscount   float64 `json:"cost_discount,omitempty"`
+	EffectiveRatio float64 `json:"effective_ratio,omitempty"`
+
+	UserGroup         string  `json:"user_group,omitempty"`
+	GroupRatio        float64 `json:"group_ratio,omitempty"`
+	GroupRatioKnown   bool    `json:"group_ratio_known,omitempty"`
+	GroupRatioSpecial bool    `json:"group_ratio_special,omitempty"`
 	costMoney
 }
 
 // costDimensionRow 单个维度（user/model/channel）折叠后的一行；同一时刻只有对应
 // 维度的身份字段被填充。
 type costDimensionRow struct {
-	UserId      int     `json:"user_id,omitempty"`
-	Username    string  `json:"username,omitempty"`
-	ModelName   string  `json:"model_name,omitempty"`
-	ChannelId   int     `json:"channel_id,omitempty"`
-	ChannelName string  `json:"channel_name,omitempty"`
+	UserId      int    `json:"user_id,omitempty"`
+	Username    string `json:"username,omitempty"`
+	ModelName   string `json:"model_name,omitempty"`
+	ChannelId   int    `json:"channel_id,omitempty"`
+	ChannelName string `json:"channel_name,omitempty"`
 	// CostRatio 为渠道原始配置倍率（ratio 模式即生效倍率；discount 模式恒为 0，
 	// 生效倍率见 EffectiveRatio）。
 	CostRatio float64 `json:"cost_ratio,omitempty"`
@@ -153,6 +169,15 @@ type costDimensionRow struct {
 	EffectiveRatio float64                  `json:"effective_ratio,omitempty"`
 	IsAggregator   bool                     `json:"is_aggregator,omitempty"`
 	SubSuppliers   []dto.ChannelSubSupplier `json:"sub_suppliers,omitempty"`
+
+	// 以下字段仅用户维度（costDimUser）填充：用户"当前"所属分组及该分组的配置
+	// 折扣（分组倍率）。注意这是查询时刻的配置快照，不是查询期间按日志加权的
+	// 实际折扣——用户期间换过组时两者会不一致，前端悬浮说明里已注明口径。
+	// GroupRatioSpecial 表示命中了「专属倍率」（GroupGroupRatio 二维配置）。
+	UserGroup         string  `json:"user_group,omitempty"`
+	GroupRatio        float64 `json:"group_ratio,omitempty"`
+	GroupRatioKnown   bool    `json:"group_ratio_known,omitempty"`
+	GroupRatioSpecial bool    `json:"group_ratio_special,omitempty"`
 }
 
 // costMoneyFromRow 统一金额换算：
@@ -241,6 +266,88 @@ func effectiveChannelRatio(channels map[int]*model.ChannelCostInfo, id int, exch
 		return ci.CostDiscount * exchangeRate, ci.Name
 	}
 	return ci.CostRatio, ci.Name
+}
+
+// userDiscount 单个用户的当前折扣快照：分组名 + 生效倍率 + 是否命中专属倍率。
+type userDiscount struct {
+	group   string
+	ratio   float64
+	known   bool
+	special bool
+}
+
+// resolveUserDiscount 按与计费链路 HandleGroupRatio（relay/helper/price.go）一致
+// 的优先级取用户当前折扣：GroupGroupRatio[用户分组][用户分组]（专属倍率，按用户
+// 使用自身分组令牌的口径）优先，其次一维分组倍率，都没配置时 known=false。
+// 与计费不同的是这里不兜底 1——报表上"未配置"和"倍率恰好是 1"必须可区分。
+func resolveUserDiscount(group string, groupRatios map[string]float64) userDiscount {
+	d := userDiscount{group: group}
+	if special, ok := ratio_setting.GetGroupGroupRatio(group, group); ok && special >= 0 {
+		d.ratio, d.known, d.special = special, true, true
+		return d
+	}
+	if r, ok := groupRatios[group]; ok {
+		d.ratio, d.known = r, true
+	}
+	return d
+}
+
+// attachUserGroupRatios 给维度行与 breakdown 明细行补上"当前分组 + 分组/专属
+// 折扣"。groups 为 username -> 当前分组。
+//   - 父行：仅用户维度有单一用户（Username 非空），models/channels 父行留空；
+//   - 明细行：models/channels 维度的明细行自带 Username；users 维度的明细行
+//     Username 已被折叠，回退用父行的用户名（同一用户）。
+//
+// 用户已删除（groups 里查不到）或分组未配置倍率时 GroupRatioKnown 置 false，
+// 由前端显示"—"而不是误显示 1（未配置 ≠ 不打折）。
+func attachUserGroupRatios(rows []costDimensionRow, groups map[string]string) {
+	if len(rows) == 0 {
+		return
+	}
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	// 同一页里大量行属于同一用户（尤其 users 维度的明细行），按用户名缓存。
+	cache := make(map[string]userDiscount)
+	lookup := func(username string) (userDiscount, bool) {
+		if username == "" {
+			return userDiscount{}, false
+		}
+		if d, ok := cache[username]; ok {
+			return d, d.group != ""
+		}
+		group, ok := groups[username]
+		if !ok {
+			cache[username] = userDiscount{}
+			return userDiscount{}, false
+		}
+		d := resolveUserDiscount(group, groupRatios)
+		cache[username] = d
+		return d, true
+	}
+	apply := func(target *costBreakdownRow, d userDiscount) {
+		target.UserGroup = d.group
+		target.GroupRatio = d.ratio
+		target.GroupRatioKnown = d.known
+		target.GroupRatioSpecial = d.special
+	}
+	for i := range rows {
+		if d, ok := lookup(rows[i].Username); ok {
+			rows[i].UserGroup = d.group
+			rows[i].GroupRatio = d.ratio
+			rows[i].GroupRatioKnown = d.known
+			rows[i].GroupRatioSpecial = d.special
+		}
+		for j := range rows[i].Breakdown {
+			b := &rows[i].Breakdown[j]
+			username := b.Username
+			if username == "" {
+				// users 维度：明细行的用户身份被折叠，归属父行用户。
+				username = rows[i].Username
+			}
+			if d, ok := lookup(username); ok {
+				apply(b, d)
+			}
+		}
+	}
 }
 
 // foldCostCube 沿 dim 折叠立方体。每行金额先在 (渠道) 粒度换算再累加，
@@ -346,12 +453,24 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 			bds = bds[:costBreakdownCap]
 		}
 		for _, b := range bds {
-			_, chName := effectiveChannelRatio(channels, b.key.ChannelId, exchangeRate)
-			row.Breakdown = append(row.Breakdown, costBreakdownRow{
+			effRatio, chName := effectiveChannelRatio(channels, b.key.ChannelId, exchangeRate)
+			br := costBreakdownRow{
 				Username: b.key.Username, ModelName: b.key.ModelName,
 				ChannelId: b.key.ChannelId, ChannelName: chName,
 				costMoney: *b.m,
-			})
+			}
+			// 渠道身份未被折叠（ChannelId != 0）时带上该渠道的计价配置，供前端在
+			// 明细行展示成本倍率/折扣。按模型汇总的明细行 ChannelId 为 0，此时
+			// 跨渠道混合，不存在单一倍率，字段留空由前端显示"—"。
+			if b.key.ChannelId != 0 {
+				br.EffectiveRatio = effRatio
+				if ci := channels[b.key.ChannelId]; ci != nil {
+					br.CostMode = ci.CostMode
+					br.CostRatio = ci.CostRatio
+					br.CostDiscount = ci.CostDiscount
+				}
+			}
+			row.Breakdown = append(row.Breakdown, br)
 		}
 		rows = append(rows, *row)
 	}

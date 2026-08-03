@@ -61,12 +61,14 @@ func clampCostRange(start, end, now int64) (int64, int64) {
 	return start, end
 }
 
-// costCubeCacheEntry 缓存一次 buildCostCube 的完整产出（立方体 + 渠道倍率映射 + 汇率）。
+// costCubeCacheEntry 缓存一次 buildCostCube 的完整产出（立方体 + 渠道倍率映射 +
+// 用户当前分组映射 + 汇率）。
 type costCubeCacheEntry struct {
-	cube     *costCube
-	channels map[int]*model.ChannelCostInfo
-	rate     float64
-	at       time.Time
+	cube       *costCube
+	channels   map[int]*model.ChannelCostInfo
+	userGroups map[string]string
+	rate       float64
+	at         time.Time
 }
 
 // costCubeCache 一期护栏：60 秒内相同查询参数直接复用结果，避免同一页面（总览 +
@@ -124,9 +126,17 @@ func costCubeCachePut(key string, entry *costCubeCacheEntry) {
 	costCubeCache.Store(key, entry)
 }
 
-// buildCostCube 流式扫描日志构建立方体，同时载入渠道倍率映射与汇率。
-// 命中 60 秒内相同参数的缓存时直接复用，否则重新扫描并写入缓存。
-func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, float64, error) {
+// costCubeData 一次 buildCostCube 的产出集合，避免多返回值随字段增长继续膨胀。
+type costCubeData struct {
+	cube       *costCube
+	channels   map[int]*model.ChannelCostInfo
+	userGroups map[string]string
+	rate       float64
+}
+
+// buildCostCube 流式扫描日志构建立方体，同时载入渠道倍率映射、用户当前分组映射
+// 与汇率。命中 60 秒内相同参数的缓存时直接复用，否则重新扫描并写入缓存。
+func buildCostCube(c *gin.Context) (*costCubeData, error) {
 	start, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	end, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	start, end = clampCostRange(start, end, time.Now().Unix())
@@ -138,7 +148,8 @@ func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, f
 
 	cacheKey := costCubeCacheKey(start, end, modelName, username, rate, channel)
 	if entry, ok := costCubeCacheGet(cacheKey); ok {
-		return entry.cube, entry.channels, entry.rate, nil
+		return &costCubeData{cube: entry.cube, channels: entry.channels,
+			userGroups: entry.userGroups, rate: entry.rate}, nil
 	}
 
 	cube := newCostCube()
@@ -150,14 +161,19 @@ func buildCostCube(c *gin.Context) (*costCube, map[int]*model.ChannelCostInfo, f
 			return nil
 		})
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, err
 	}
 	channels, err := model.GetAllChannelCostInfos()
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, err
 	}
-	costCubeCachePut(cacheKey, &costCubeCacheEntry{cube: cube, channels: channels, rate: rate, at: time.Now()})
-	return cube, channels, rate, nil
+	userGroups, err := model.GetAllUserGroups()
+	if err != nil {
+		return nil, err
+	}
+	costCubeCachePut(cacheKey, &costCubeCacheEntry{cube: cube, channels: channels,
+		userGroups: userGroups, rate: rate, at: time.Now()})
+	return &costCubeData{cube: cube, channels: channels, userGroups: userGroups, rate: rate}, nil
 }
 
 func buildCostOverview(cube *costCube, channels map[int]*model.ChannelCostInfo, rate float64) costOverviewDTO {
@@ -230,22 +246,25 @@ func paginateCostRows(rows []costDimensionRow, page, pageSize int) costPageDTO {
 
 // GetCostOverview GET /api/cost/overview — Root only.
 func GetCostOverview(c *gin.Context) {
-	cube, channels, rate, err := buildCostCube(c)
+	data, err := buildCostCube(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildCostOverview(cube, channels, rate))
+	common.ApiSuccess(c, buildCostOverview(data.cube, data.channels, data.rate))
 }
 
 func getCostByDimension(c *gin.Context, dim string) {
-	cube, channels, rate, err := buildCostCube(c)
+	data, err := buildCostCube(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	page, pageSize := parseBillSummaryPaging(c)
-	rows := foldCostCube(cube, dim, channels, rate)
+	rows := foldCostCube(data.cube, dim, data.channels, data.rate)
+	// 所有维度都补用户折扣：users 维度补在父行与子行；models/channels 维度的
+	// breakdown 子行携带 username，同样逐行补齐（父行无单一用户，留空）。
+	attachUserGroupRatios(rows, data.userGroups)
 	common.ApiSuccess(c, paginateCostRows(rows, page, pageSize))
 }
 

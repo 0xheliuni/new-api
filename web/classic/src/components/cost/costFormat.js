@@ -65,3 +65,23 @@ export function deriveUsdFromCny(cny, exchangeRate) {
 export function deriveCnyFromUsd(usd, exchangeRate) {
   return Number(usd || 0) * Number(exchangeRate || 0);
 }
+
+/** 倍率展示：×1.4 这种形式，最多 4 位小数且去掉尾随 0。 */
+export function formatCostRatio(ratio) {
+  const n = Number(ratio || 0);
+  if (!n) return '-';
+  return `×${Number(n.toFixed(4))}`;
+}
+
+/**
+ * 用户行的实际生效成本倍率：用户跨多个渠道，没有单一配置倍率，
+ * 只能用这一行自己的钱反推 —— cost_cny / (list_usd × 汇率)。
+ * 与后端 cost_cny = list_usd × ratio 互为逆运算，因此结果就是加权倍率。
+ * 刊例价为 0（无上游计费基数）时返回 null，由调用方渲染 '-'。
+ */
+export function effectiveCostRatioOf(row) {
+  const listUsd = Number(row?.list_usd || 0);
+  const costCny = Number(row?.cost_cny || 0);
+  if (!listUsd) return null;
+  return costCny / listUsd;
+}

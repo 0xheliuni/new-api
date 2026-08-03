@@ -168,6 +168,22 @@ export function mergeBreakdown(
           ? { channel_id: row.channel_id, channel_name: row.channel_name }
           : {}),
       }
+      // Fields that ride along with an identity survive a merge that KEEPS that
+      // identity: grouping by channel keeps the channel's pricing config;
+      // grouping by username keeps that user's discount. (All rows in a group
+      // share the identity, so first-row values are the group's values.)
+      if (groupBy === 'channel') {
+        acc.cost_mode = row.cost_mode
+        acc.cost_ratio = row.cost_ratio
+        acc.cost_discount = row.cost_discount
+        acc.effective_ratio = row.effective_ratio
+      }
+      if (groupBy === 'username') {
+        acc.user_group = row.user_group
+        acc.group_ratio = row.group_ratio
+        acc.group_ratio_known = row.group_ratio_known
+        acc.group_ratio_special = row.group_ratio_special
+      }
       groups.set(key, acc)
     }
 
@@ -216,6 +232,44 @@ export function formatDiscountLabel(
   const tenths = Math.round(discount * 100) / 10
   const text = Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1)
   return t('×{{d}}', { d: text })
+}
+
+/**
+ * The cost ratio actually applied to a row, derived as cost_cny / list_usd.
+ *
+ * A user row spans many channels with different ratios, so there is no single
+ * configured ratio to show — this returns the *weighted* one implied by the
+ * money already summed for the row. `null` when list_usd is 0 (free or
+ * unpriced models), where the quotient is meaningless.
+ */
+export function effectiveCostRatioOf(
+  row: Pick<CostMoney, 'cost_cny' | 'list_usd'>
+): number | null {
+  if (!row.list_usd) return null
+  const ratio = row.cost_cny / row.list_usd
+  return Number.isFinite(ratio) ? ratio : null
+}
+
+/** "¥7.20/$1" — the CNY paid upstream per USD of list price. */
+export function formatCostRatio(ratio: number | null | undefined): string {
+  if (ratio == null || !Number.isFinite(ratio)) return '-'
+  return `¥${ratio.toFixed(2)}/$1`
+}
+
+/** "2.5", "0.8" — a configured ratio/discount number with trailing zeros trimmed. */
+export function trimRatioNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return String(Number(value.toFixed(4)))
+}
+
+/**
+ * Distinct channel ids present in a row's breakdown. Used to decide whether a
+ * user row's cost ratio is a single channel's configured value (exact) or a
+ * weighted blend across channels (prefixed with ≈ in the UI).
+ */
+export function breakdownChannelCount(rows: CostBreakdownRow[] | undefined): number {
+  if (!rows?.length) return 0
+  return new Set(rows.map((r) => r.channel_id ?? 0)).size
 }
 
 /** `-` when the bucket has no FRT sample, otherwise a rounded ms value. */
