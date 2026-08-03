@@ -59,12 +59,23 @@ const getBreakdownLabel = (row) => {
 };
 
 // ========== 布局对齐用的显式列宽 ==========
-// 父表 身份列 + 操作列 的宽度预算 == 子表 两个身份列 的宽度预算，
-// 令两张表在“指标列”开始前占用相同的总宽度，配合下方共用的指标列宽定义，
-// 使 成本/收入/利润/刊例/请求数/利润率/总tokens/成功率/缓存率/TTFT 上下对齐。
-const IDENTITY_COLUMN_WIDTH = 200;
-const ACTION_COLUMN_WIDTH = 140;
-const BREAKDOWN_IDENTITY_COLUMN_WIDTH = 170; // (200 + 140) / 2
+// 指标列前后对齐要求的是"位置"而不是"总和"：指标列前的每一列宽度之和（父表
+// 身份[+渠道维度专属列]）必须等于子表指标列前两列（身份对）之和；指标列后
+// 同理（父表固定一个「操作」列，子表也固定镜像一个同宽的尾列，哪怕该维度下
+// 尾列没有可点的动作，也保留等宽空单元格占位，不能省略）。
+const IDENTITY_COLUMN_WIDTH = 200; // 父表身份列（用户/模型/渠道）
+const ACTION_COLUMN_WIDTH = 140; // 父表「操作」列 == 子表尾部动作列，三个 tab 一致
+const CHANNEL_USER_COUNT_WIDTH = 90; // 供应商维度 父表「用户数」列
+const CHANNEL_RATIO_WIDTH = 160; // 供应商维度 父表「倍率」列
+
+// 每个 tab 指标列前的宽度预算（父表 = 子表），子表两个身份列各占一半：
+// - users/models：父表指标前只有身份列 => 200；子表身份对 100+100=200
+// - channels：父表指标前是 身份+用户数+倍率 => 200+90+160=450；子表身份对 225+225=450
+const BREAKDOWN_LEADING_WIDTH_BY_DIM = {
+  users: IDENTITY_COLUMN_WIDTH,
+  models: IDENTITY_COLUMN_WIDTH,
+  channels: IDENTITY_COLUMN_WIDTH + CHANNEL_USER_COUNT_WIDTH + CHANNEL_RATIO_WIDTH,
+};
 
 // ========== 统一的指标列（顶层行与展开明细行共用） ==========
 const buildMetricColumns = (t, openTokensModal) => [
@@ -439,13 +450,16 @@ const CostTables = ({
     const activeOption = options.find((o) => o.value === mode) || options[0];
     const mergedRows = mergeBreakdown(rows, activeOption.keyFields);
 
-    // 固定展示当前维度的两个身份字段（顺序固定），合并掉的字段显示“—”，
-    // 保证列宽/布局不随查看方式切换而跳动。
+    // 固定展示当前维度的两个身份字段（顺序固定），合并掉的字段显示"—"，
+    // 保证列宽/布局不随查看方式切换而跳动。两列各占该 tab 指标前预算的一半，
+    // 使子表指标列前的总宽度与父表指标列前的总宽度相等（见
+    // BREAKDOWN_LEADING_WIDTH_BY_DIM 的注释与取值）。
     const [fieldA, fieldB] = BREAKDOWN_IDENTITY_FIELDS[activeTab];
+    const breakdownIdentityWidth = BREAKDOWN_LEADING_WIDTH_BY_DIM[activeTab] / 2;
     const identityColumns = [fieldA, fieldB].map((field) => ({
       key: `identity-${field}`,
       title: t(IDENTITY_FIELD_LABEL[field]),
-      width: BREAKDOWN_IDENTITY_COLUMN_WIDTH,
+      width: breakdownIdentityWidth,
       render: (_, row) =>
         isIdentityFieldCollapsed(field, mode, activeOption.keyFields) ? (
           <Text type='tertiary'>—</Text>
@@ -454,37 +468,36 @@ const CostTables = ({
         ),
     }));
 
-    // 「只看该渠道」放在渠道身份列旁的一个窄尾列里，供应商维度（channels）本身
-    // 就是按渠道分组，不需要该动作。
-    const channelActionColumn =
-      activeTab !== 'channels'
-        ? [
-            {
-              key: 'action',
-              title: '',
-              width: ACTION_COLUMN_WIDTH,
-              render: (_, row) =>
-                !isIdentityFieldCollapsed('channel', mode, activeOption.keyFields) &&
-                row.channel_id ? (
-                  <Button
-                    size='small'
-                    type='tertiary'
-                    theme='borderless'
-                    onClick={() =>
-                      onFilterByChannel && onFilterByChannel(row.channel_id)
-                    }
-                  >
-                    {t('只看该渠道')}
-                  </Button>
-                ) : null,
-            },
-          ]
-        : [];
+    // 尾部动作列：与父表「操作」列同宽（ACTION_COLUMN_WIDTH），三个 tab 都保留
+    // 这一列以维持尾部对齐 —— 供应商维度（channels）本身已按渠道分组，没有
+    // 「只看该渠道」可点，渲染一个等宽的空单元格占位，而不是省略整列。
+    const trailingActionColumn = [
+      {
+        key: 'action',
+        title: '',
+        width: ACTION_COLUMN_WIDTH,
+        render: (_, row) =>
+          activeTab !== 'channels' &&
+          !isIdentityFieldCollapsed('channel', mode, activeOption.keyFields) &&
+          row.channel_id ? (
+            <Button
+              size='small'
+              type='tertiary'
+              theme='borderless'
+              onClick={() =>
+                onFilterByChannel && onFilterByChannel(row.channel_id)
+              }
+            >
+              {t('只看该渠道')}
+            </Button>
+          ) : null,
+      },
+    ];
 
     const breakdownColumns = [
       ...identityColumns,
       ...buildMetricColumns(t, openTokensModal),
-      ...channelActionColumn,
+      ...trailingActionColumn,
     ];
 
     return (
