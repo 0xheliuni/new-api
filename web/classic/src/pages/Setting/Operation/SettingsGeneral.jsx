@@ -57,6 +57,7 @@ export default function GeneralSettings(props) {
     DefaultCollapseSidebar: false,
     DemoSiteEnabled: false,
     SelfUseModeEnabled: false,
+    CostAccountingEnabled: true,
     'token_setting.max_user_tokens': 1000,
   });
   const refForm = useRef();
