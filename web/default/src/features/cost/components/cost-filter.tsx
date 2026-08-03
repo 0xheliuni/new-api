@@ -69,11 +69,16 @@ function serializeFilterValue(value: CostFilterValue): string {
   ].join('|')
 }
 
-function defaultFilterValue(): CostFilterValue {
-  const range = getRollingDateRange(7)
+/**
+ * Default filter range is TODAY (00:00:00 local -> now), matching the
+ * "Today" quick-range preset below. Exported so the route/page-level default
+ * (used before the user has ever applied a filter) stays in sync with what
+ * Reset restores.
+ */
+export function defaultFilterValue(): CostFilterValue {
   return {
-    start: dateToUnixTimestamp(range.start),
-    end: dateToUnixTimestamp(range.end),
+    start: dateToUnixTimestamp(getStartOfDay(new Date())),
+    end: dateToUnixTimestamp(new Date()),
     username: undefined,
     channel: undefined,
     model_name: undefined,
@@ -181,7 +186,9 @@ export function CostFilter({ value, onApply }: CostFilterProps) {
           open={rangeOpen}
           onOpenChange={handleRangeOpenChange}
           trigger={
-            <Button variant='outline' size='sm'>
+            // Default size (h-8) to match the h-8 inputs/InputGroup below —
+            // this is the row's visual anchor, so every other field mirrors it.
+            <Button variant='outline' className='font-normal'>
               <CalendarRange className='mr-2 size-4' />
               {triggerLabel}
             </Button>
@@ -324,10 +331,10 @@ export function CostFilter({ value, onApply }: CostFilterProps) {
       </div>
 
       <div className='flex gap-2'>
-        <Button type='button' size='sm' onClick={handleSearch}>
+        <Button type='button' onClick={handleSearch}>
           {t('Search')}
         </Button>
-        <Button type='button' size='sm' variant='outline' onClick={handleReset}>
+        <Button type='button' variant='outline' onClick={handleReset}>
           {t('Reset')}
         </Button>
       </div>

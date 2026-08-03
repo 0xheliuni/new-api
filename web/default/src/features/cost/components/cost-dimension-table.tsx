@@ -183,185 +183,261 @@ const IDENTITY_MERGE_LABEL_KEY: Record<IdentityField, string> = {
   channel: 'Merge channels',
 }
 
-function getBreakdownIdentityFields(
-  dim: CostDimension,
-  breakdown: CostBreakdownRow[]
-): IdentityField[] {
-  const fields: IdentityField[] = []
-  if (dim !== 'users' && breakdown.some((row) => row.username != null)) {
-    fields.push('username')
-  }
-  if (dim !== 'models' && breakdown.some((row) => row.model_name != null)) {
-    fields.push('model_name')
-  }
-  if (
-    dim !== 'channels' &&
-    breakdown.some((row) => row.channel_name != null || row.channel_id != null)
-  ) {
-    fields.push('channel')
-  }
-  return fields
+/**
+ * Fixed per-dim order for the two breakdown identity columns (v3: always
+ * both columns, "—" for whichever is collapsed by the merge view — this
+ * keeps sub-row column widths stable whether the parent row is in detail or
+ * merged mode).
+ */
+const BREAKDOWN_IDENTITY_ORDER: Record<CostDimension, [IdentityField, IdentityField]> = {
+  users: ['channel', 'model_name'],
+  models: ['username', 'channel'],
+  channels: ['username', 'model_name'],
 }
 
-/** Each merge option collapses one identity field, grouping by the other. */
-function buildMergeOptions(
-  identityFields: IdentityField[]
-): { groupBy: IdentityField; collapsed: IdentityField }[] {
-  if (identityFields.length !== 2) return []
-  const [a, b] = identityFields
-  return [
-    { groupBy: b, collapsed: a },
-    { groupBy: a, collapsed: b },
-  ]
+/**
+ * Fixed per-dim merge options (each collapses one identity field, grouping
+ * by the other). Order matches the product spec: users -> Merge
+ * models/Merge channels; models -> Merge users/Merge channels; channels ->
+ * Merge users/Merge models.
+ */
+const MERGE_OPTIONS_BY_DIM: Record<
+  CostDimension,
+  { groupBy: IdentityField; collapsed: IdentityField }[]
+> = {
+  users: [
+    { groupBy: 'channel', collapsed: 'model_name' },
+    { groupBy: 'model_name', collapsed: 'channel' },
+  ],
+  models: [
+    { groupBy: 'channel', collapsed: 'username' },
+    { groupBy: 'username', collapsed: 'channel' },
+  ],
+  channels: [
+    { groupBy: 'model_name', collapsed: 'username' },
+    { groupBy: 'username', collapsed: 'model_name' },
+  ],
 }
 
-function BreakdownTable({
+/** Per-row compact merge-view Select, rendered in the parent row's Actions column. */
+function MergeViewSelect({
+  dim,
+  viewMode,
+  onViewModeChange,
+}: {
+  dim: CostDimension
+  viewMode: ViewMode
+  onViewModeChange: (mode: ViewMode) => void
+}) {
+  const { t } = useTranslation()
+  const mergeOptions = MERGE_OPTIONS_BY_DIM[dim]
+  return (
+    <Select
+      value={viewMode}
+      onValueChange={(value) => onViewModeChange(value as ViewMode)}
+      items={[
+        { value: 'detail', label: t('Detail') },
+        ...mergeOptions.map((option) => ({
+          value: option.groupBy,
+          label: t(IDENTITY_MERGE_LABEL_KEY[option.collapsed]),
+        })),
+      ]}
+    >
+      <SelectTrigger size='sm' className='h-7 w-28 text-xs'>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent alignItemWithTrigger={false}>
+        <SelectGroup>
+          <SelectItem value='detail'>{t('Detail')}</SelectItem>
+          {mergeOptions.map((option) => (
+            <SelectItem key={option.groupBy} value={option.groupBy}>
+              {t(IDENTITY_MERGE_LABEL_KEY[option.collapsed])}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** `true` when the merge view has collapsed this identity field away. */
+function isFieldCollapsed(field: IdentityField, viewMode: ViewMode): boolean {
+  return viewMode !== 'detail' && field !== viewMode
+}
+
+function BreakdownIdentityValue({
+  field,
+  row,
+  collapsed,
+}: {
+  field: IdentityField
+  row: CostBreakdownRow
+  collapsed: boolean
+}) {
+  const { t } = useTranslation()
+  if (collapsed) return <span className='text-muted-foreground'>—</span>
+  if (field === 'username') return <>{row.username || '-'}</>
+  if (field === 'model_name') return <>{row.model_name || '-'}</>
+  // channel_id falsy (undefined/0) => no channel selected on the underlying
+  // logs, not a real channel.
+  if (!row.channel_id) return <>{t('Unknown channel')}</>
+  return <>{row.channel_name ? `${row.channel_name} (#${row.channel_id})` : `#${row.channel_id}`}</>
+}
+
+/**
+ * Both identity columns for a dim, always rendered (task v3): the two
+ * "other" dimensions per dim (e.g. users dim -> channel, model). Rendered as
+ * a fixed 2-column grid inside one <td> so widths stay put across
+ * detail/merged views.
+ */
+function BreakdownIdentityCell({
+  dim,
+  row,
+  viewMode,
+}: {
+  dim: CostDimension
+  row: CostBreakdownRow
+  viewMode: ViewMode
+}) {
+  const { t } = useTranslation()
+  const [fieldA, fieldB] = BREAKDOWN_IDENTITY_ORDER[dim]
+  const identityLabels: Record<IdentityField, string> = {
+    username: t('Username'),
+    model_name: t('Model'),
+    channel: t('Channel'),
+  }
+  return (
+    <div className='grid grid-cols-2 gap-3'>
+      {[fieldA, fieldB].map((field) => (
+        <div key={field} className='flex flex-col gap-0.5'>
+          <span className='text-muted-foreground text-[11px]'>
+            {identityLabels[field]}
+          </span>
+          <BreakdownIdentityValue
+            field={field}
+            row={row}
+            collapsed={isFieldCollapsed(field, viewMode)}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Breakdown sub-rows for an expanded parent row, rendered as additional
+ * <tr>s in the SAME table as the parent so metric columns line up exactly
+ * (v3 requirement). The leading identity+ratio columns are merged into one
+ * cell holding both breakdown identity fields; the Actions column carries
+ * the "view channel only" action when applicable.
+ */
+function BreakdownRows({
   dim,
   row,
   metricColumns,
   viewMode,
-  onViewModeChange,
   onViewChannel,
+  totalColSpan,
 }: {
   dim: CostDimension
   row: CostDimensionRow
   metricColumns: MetricColumnSpec[]
   viewMode: ViewMode
-  onViewModeChange: (mode: ViewMode) => void
   onViewChannel: (channelId: number) => void
+  totalColSpan: number
 }) {
   const { t } = useTranslation()
   const rawBreakdown = row.breakdown ?? []
-  const mergeOptions = buildMergeOptions(
-    getBreakdownIdentityFields(dim, rawBreakdown)
-  )
   const breakdown =
     viewMode === 'detail' ? rawBreakdown : mergeBreakdown(rawBreakdown, viewMode)
-  const shownFields = getBreakdownIdentityFields(dim, breakdown)
-
-  const identityHeaders: Record<IdentityField, string> = {
-    username: t('Username'),
-    model_name: t('Model'),
-    channel: t('Channel'),
-  }
+  // Reclaim the Ratio column's width for channels-dim breakdown rows — it
+  // has no per-row ratio editor, so folding it into the identity cell gives
+  // the two identity fields more room without breaking column alignment.
+  const identityColSpan = 1 + (dim === 'channels' ? 1 : 0)
+  // Breakdown rows for the "channels" dim never carry a `channel` identity
+  // field (the parent row already is the channel), so there's no "view
+  // channel only" action to show there.
+  const channelActionAvailable = dim !== 'channels'
 
   return (
-    <div className='bg-muted/30 flex flex-col gap-2 p-2'>
-      {mergeOptions.length > 0 && (
-        <div className='flex items-center gap-2 px-1'>
-          <span className='text-muted-foreground text-xs'>{t('View')}</span>
-          <Select
-            value={viewMode}
-            onValueChange={(value) => onViewModeChange(value as ViewMode)}
-            items={[
-              { value: 'detail', label: t('Detail') },
-              ...mergeOptions.map((option) => ({
-                value: option.groupBy,
-                label: t(IDENTITY_MERGE_LABEL_KEY[option.collapsed]),
-              })),
-            ]}
-          >
-            <SelectTrigger size='sm' className='h-7 w-auto text-xs'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                <SelectItem value='detail'>{t('Detail')}</SelectItem>
-                {mergeOptions.map((option) => (
-                  <SelectItem key={option.groupBy} value={option.groupBy}>
-                    {t(IDENTITY_MERGE_LABEL_KEY[option.collapsed])}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
+    <>
       {dim === 'channels' && row.sub_suppliers && row.sub_suppliers.length > 0 && (
-        <div className='flex flex-col gap-1.5 px-1'>
-          <p className='text-muted-foreground text-xs'>
-            {t('Report cost uses the channel-level pricing')}
-          </p>
-          <StaticDataTable<CostChannelSubSupplier>
-            columns={[
-              {
-                id: 'name',
-                header: t('Sub-supplier'),
-                cell: (supplier) => supplier.name,
-              },
-              {
-                id: 'cost_ratio',
-                header: t('Ratio'),
-                className: 'text-right',
-                cellClassName: 'text-right tabular-nums',
-                cell: (supplier) => supplier.cost_ratio ?? '-',
-              },
-            ]}
-            data={row.sub_suppliers}
-            tableClassName='text-xs'
-          />
-        </div>
+        <TableRow className='hover:bg-transparent'>
+          <TableCell colSpan={totalColSpan} className='bg-muted/30 p-0'>
+            <div className='flex flex-col gap-1.5 p-2'>
+              <p className='text-muted-foreground text-xs'>
+                {t('Report cost uses the channel-level pricing')}
+              </p>
+              <StaticDataTable<CostChannelSubSupplier>
+                columns={[
+                  {
+                    id: 'name',
+                    header: t('Sub-supplier'),
+                    cell: (supplier) => supplier.name,
+                  },
+                  {
+                    id: 'cost_ratio',
+                    header: t('Ratio'),
+                    className: 'text-right',
+                    cellClassName: 'text-right tabular-nums',
+                    cell: (supplier) => supplier.cost_ratio ?? '-',
+                  },
+                ]}
+                data={row.sub_suppliers}
+                tableClassName='text-xs'
+              />
+            </div>
+          </TableCell>
+        </TableRow>
       )}
 
-      <StaticDataTable<CostBreakdownRow>
-        columns={[
-          ...shownFields.map((field) => ({
-            id: field,
-            header: identityHeaders[field],
-            cell: (r: CostBreakdownRow) => {
-              if (field === 'username') return r.username
-              if (field === 'model_name') return r.model_name
-              // channel_id falsy (undefined/0) => no channel selected on the
-              // underlying logs, not a real channel: no "view channel only"
-              // action for it.
-              return (
-                <div className='flex items-center gap-1.5'>
-                  <span>
-                    {!r.channel_id
-                      ? t('Unknown channel')
-                      : r.channel_name
-                        ? `${r.channel_name} (#${r.channel_id})`
-                        : `#${r.channel_id}`}
-                  </span>
-                  {Boolean(r.channel_id) && (
-                    <Button
-                      type='button'
-                      variant='link'
-                      size='xs'
-                      className='h-auto p-0 text-xs'
-                      onClick={() => onViewChannel(r.channel_id!)}
-                    >
-                      {t('View channel only')}
-                    </Button>
-                  )}
-                </div>
-              )
-            },
-          })),
-          ...metricColumns.map((col) => ({
-            id: col.id,
-            header: col.header,
-            className: 'text-right',
-            cellClassName: (r: CostBreakdownRow) =>
-              cn(
-                'text-right tabular-nums',
+      {breakdown.map((bRow, index) => (
+        <TableRow key={index} className='bg-muted/20 hover:bg-muted/30'>
+          <TableCell />
+          <TableCell colSpan={identityColSpan}>
+            <BreakdownIdentityCell dim={dim} row={bRow} viewMode={viewMode} />
+          </TableCell>
+          {metricColumns.map((col) => (
+            <MoneyCell
+              key={col.id}
+              className={
                 typeof col.cellClassName === 'function'
-                  ? col.cellClassName(r)
+                  ? col.cellClassName(bRow)
                   : col.cellClassName
-              ),
-            cell: (r: CostBreakdownRow) => col.cell(r),
-          })),
-        ]}
-        data={breakdown}
-        tableClassName='text-xs'
-      />
+              }
+            >
+              {col.cell(bRow)}
+            </MoneyCell>
+          ))}
+          <TableCell>
+            {channelActionAvailable &&
+              !isFieldCollapsed('channel', viewMode) &&
+              Boolean(bRow.channel_id) && (
+                <Button
+                  type='button'
+                  variant='link'
+                  size='xs'
+                  className='h-auto p-0 text-xs'
+                  onClick={() => onViewChannel(bRow.channel_id!)}
+                >
+                  {t('View channel only')}
+                </Button>
+              )}
+          </TableCell>
+        </TableRow>
+      ))}
+
       {Boolean(row.breakdown_truncated) && (
-        <p className='text-muted-foreground px-1 text-xs'>
-          {t('… and {{n}} more rows omitted', { n: row.breakdown_truncated })}
-        </p>
+        <TableRow className='hover:bg-transparent'>
+          <TableCell
+            colSpan={totalColSpan}
+            className='text-muted-foreground p-2 text-xs'
+          >
+            {t('… and {{n}} more rows omitted', { n: row.breakdown_truncated })}
+          </TableCell>
+        </TableRow>
       )}
-    </div>
+    </>
   )
 }
 
@@ -493,7 +569,8 @@ export function CostDimensionTable({
   const summary: CostMoney | undefined = data?.summary
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const metricColumns = buildMetricColumns(t)
-  const totalColSpan = 2 + (dim === 'channels' ? 1 : 0) + metricColumns.length
+  // expand toggle + identity + (ratio, channels only) + metrics + actions
+  const totalColSpan = 3 + (dim === 'channels' ? 1 : 0) + metricColumns.length
 
   const toggleExpanded = (key: string | number) => {
     setExpanded((prev) => {
@@ -547,6 +624,7 @@ export function CostDimensionTable({
                   {col.header}
                 </TableHead>
               ))}
+              <TableHead className='w-28'>{t('Actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -616,20 +694,25 @@ export function CostDimensionTable({
                           {col.cell(row)}
                         </MoneyCell>
                       ))}
-                    </TableRow>
-                    {hasBreakdown && isExpanded && (
-                      <TableRow>
-                        <TableCell colSpan={totalColSpan} className='p-0'>
-                          <BreakdownTable
+                      <TableCell>
+                        {hasBreakdown && (
+                          <MergeViewSelect
                             dim={dim}
-                            row={row}
-                            metricColumns={metricColumns}
                             viewMode={getViewMode(key)}
                             onViewModeChange={(mode) => setViewMode(key, mode)}
-                            onViewChannel={handleViewChannel}
                           />
-                        </TableCell>
-                      </TableRow>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {hasBreakdown && isExpanded && (
+                      <BreakdownRows
+                        dim={dim}
+                        row={row}
+                        metricColumns={metricColumns}
+                        viewMode={getViewMode(key)}
+                        onViewChannel={handleViewChannel}
+                        totalColSpan={totalColSpan}
+                      />
                     )}
                   </Fragment>
                 )
@@ -657,6 +740,7 @@ export function CostDimensionTable({
                     {col.cell(summary)}
                   </MoneyCell>
                 ))}
+                <TableCell />
               </TableRow>
             </TableFooter>
           )}

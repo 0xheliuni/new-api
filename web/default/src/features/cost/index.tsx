@@ -20,7 +20,6 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { dateToUnixTimestamp, getRollingDateRange } from '@/lib/time'
 import { SectionPageLayout } from '@/components/layout'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getCostOverview } from './api'
@@ -29,6 +28,7 @@ import { CostDimensionTable } from './components/cost-dimension-table'
 import {
   CostFilter,
   DEFAULT_EXCHANGE_RATE,
+  defaultFilterValue,
   type CostFilterValue,
 } from './components/cost-filter'
 import { CostKpiCards } from './components/cost-kpi-cards'
@@ -41,9 +41,11 @@ export function CostAccounting() {
   const search = route.useSearch()
   const navigate = route.useNavigate()
 
-  const defaultRange = useMemo(() => getRollingDateRange(7), [])
-  const start = search.start ?? dateToUnixTimestamp(defaultRange.start)
-  const end = search.end ?? dateToUnixTimestamp(defaultRange.end)
+  // First page load (no start/end in the URL) queries TODAY, matching the
+  // filter bar's own default/Reset behavior.
+  const defaultRange = useMemo(() => defaultFilterValue(), [])
+  const start = search.start ?? defaultRange.start
+  const end = search.end ?? defaultRange.end
   const tab: CostDimension = search.tab ?? 'users'
   const page = search.p ?? 1
   const username = search.username
