@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useRef } from 'react';
-import { Card, Form, Button, Banner, Space } from '@douyinfe/semi-ui';
+import { Card, Form, Button, Banner, Typography } from '@douyinfe/semi-ui';
+import { IconSearch } from '@douyinfe/semi-icons';
 import CardPro from '../common/ui/CardPro';
 import CostCharts from './CostCharts';
 import CostTables from './CostTables';
@@ -26,6 +27,13 @@ import { useCostData } from './useCostData';
 import { createCardProPagination } from '../../helpers/utils';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
+import {
+  deriveUsdFromCny,
+  formatDualMoney,
+  getMoneyPrimaryCurrency,
+} from './costFormat';
+
+const { Text } = Typography;
 
 const profitStyle = (v) => ({
   color:
@@ -60,6 +68,26 @@ const CostAccounting = () => {
 
   const totals = overview?.totals || {};
   const unpricedCount = overview?.unpriced_channel_count || 0;
+  // 当前查询实际生效的汇率：以响应回显的 exchange_rate 为准（与后端换算口径
+  // 一致），未加载时兜底为筛选栏当前值。
+  const appliedExchangeRate = overview?.exchange_rate || filters.exchangeRate;
+  const primaryCurrency = getMoneyPrimaryCurrency();
+
+  const revenueMoney = formatDualMoney(
+    totals.revenue_usd,
+    totals.revenue_cny,
+    primaryCurrency,
+  );
+  const costMoney = formatDualMoney(
+    deriveUsdFromCny(totals.cost_cny, appliedExchangeRate),
+    totals.cost_cny,
+    primaryCurrency,
+  );
+  const profitMoney = formatDualMoney(
+    deriveUsdFromCny(totals.profit_cny, appliedExchangeRate),
+    totals.profit_cny,
+    primaryCurrency,
+  );
 
   const statsArea = (
     <div className='flex flex-col gap-3 mb-2'>
@@ -76,12 +104,10 @@ const CostAccounting = () => {
       <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
         <Card bordered className='!rounded-2xl'>
           <div className='text-xs text-gray-500 mb-1'>{t('收入')}</div>
-          <div className='text-lg font-semibold'>
-            ${Number(totals.revenue_usd || 0).toFixed(2)}
-          </div>
-          <div className='text-xs text-gray-500'>
-            ¥{Number(totals.revenue_cny || 0).toFixed(2)}
-          </div>
+          <div className='text-lg font-semibold'>{revenueMoney.primary}</div>
+          <Text type='tertiary' size='small'>
+            {revenueMoney.secondary}
+          </Text>
           {Number(totals.refund_usd || 0) > 0 && (
             <div
               className='text-xs mt-1'
@@ -93,9 +119,10 @@ const CostAccounting = () => {
         </Card>
         <Card bordered className='!rounded-2xl'>
           <div className='text-xs text-gray-500 mb-1'>{t('成本')}</div>
-          <div className='text-lg font-semibold'>
-            ¥{Number(totals.cost_cny || 0).toFixed(2)}
-          </div>
+          <div className='text-lg font-semibold'>{costMoney.primary}</div>
+          <Text type='tertiary' size='small'>
+            {costMoney.secondary}
+          </Text>
         </Card>
         <Card bordered className='!rounded-2xl'>
           <div className='text-xs text-gray-500 mb-1'>{t('利润')}</div>
@@ -103,8 +130,11 @@ const CostAccounting = () => {
             className='text-lg font-semibold'
             style={profitStyle(totals.profit_cny)}
           >
-            ¥{Number(totals.profit_cny || 0).toFixed(2)}
+            {profitMoney.primary}
           </div>
+          <Text type='tertiary' size='small'>
+            {profitMoney.secondary}
+          </Text>
         </Card>
         <Card bordered className='!rounded-2xl'>
           <div className='text-xs text-gray-500 mb-1'>{t('利润率')}</div>
@@ -130,77 +160,87 @@ const CostAccounting = () => {
         stopValidateWithError={false}
         getFormApi={(api) => (filterFormApiRef.current = api)}
       >
-        <div className='flex flex-col sm:flex-row flex-wrap gap-2 items-start sm:items-end'>
-          <Form.DatePicker
-            field='dateRange'
-            type='dateTimeRange'
-            label={t('时间范围')}
-            className='w-full sm:w-[300px]'
-            placeholder={[t('开始时间'), t('结束时间')]}
-            presets={DATE_RANGE_PRESETS.map((preset) => ({
-              text: t(preset.text),
-              start: preset.start(),
-              end: preset.end(),
-            }))}
-            showClear
-            size='small'
-          />
-          <Form.Input
-            field='username'
-            label={t('用户名称')}
-            placeholder={t('用户名称')}
-            className='w-full sm:w-[160px]'
-            showClear
-            size='small'
-          />
-          <Form.InputNumber
-            field='channel'
-            label={t('渠道ID')}
-            placeholder={t('渠道ID')}
-            className='w-full sm:w-[140px]'
-            min={0}
-            size='small'
-          />
-          <Form.Input
-            field='modelName'
-            label={t('模型名称')}
-            placeholder={t('模型名称')}
-            className='w-full sm:w-[160px]'
-            showClear
-            size='small'
-          />
-          <Form.InputNumber
-            field='exchangeRate'
-            label={t('汇率')}
-            placeholder='6.8'
-            className='w-full sm:w-[180px]'
-            min={0}
-            step={0.01}
-            prefix='$1 ='
-            suffix='CNY'
-            size='small'
-          />
-          <Space>
-            <Button
-              theme='solid'
-              type='primary'
-              htmlType='submit'
-              loading={overviewLoading}
+        <div className='flex flex-col gap-2'>
+          <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2'>
+            <div className='col-span-1 lg:col-span-2'>
+              <Form.DatePicker
+                field='dateRange'
+                className='w-full'
+                type='dateTimeRange'
+                placeholder={[t('开始时间'), t('结束时间')]}
+                showClear
+                pure
+                size='small'
+                presets={DATE_RANGE_PRESETS.map((preset) => ({
+                  text: t(preset.text),
+                  start: preset.start(),
+                  end: preset.end(),
+                }))}
+              />
+            </div>
+
+            <Form.Input
+              field='username'
+              prefix={<IconSearch />}
+              placeholder={t('用户名称')}
+              showClear
+              pure
               size='small'
-            >
-              {t('查询')}
-            </Button>
-            <Button
-              type='tertiary'
+            />
+
+            <Form.InputNumber
+              field='channel'
+              placeholder={t('渠道ID')}
+              showClear
+              pure
+              min={0}
               size='small'
-              onClick={() => {
-                filterFormApiRef.current?.setValues(defaultFilters);
-                resetFilters();
-              }}
-            >
-              {t('重置')}
-            </Button>
-          </Space>
+            />
+
+            <Form.Input
+              field='modelName'
+              prefix={<IconSearch />}
+              placeholder={t('模型名称')}
+              showClear
+              pure
+              size='small'
+            />
+
+            <Form.InputNumber
+              field='exchangeRate'
+              placeholder='6.8'
+              showClear
+              pure
+              min={0}
+              step={0.01}
+              prefix='$1 ='
+              suffix='CNY'
+              size='small'
+            />
+          </div>
+
+          <div className='flex flex-col sm:flex-row justify-end items-start sm:items-center gap-3'>
+            <div className='flex gap-2 w-full sm:w-auto justify-end'>
+              <Button
+                type='tertiary'
+                htmlType='submit'
+                loading={overviewLoading}
+                size='small'
+              >
+                {t('查询')}
+              </Button>
+              <Button
+                type='tertiary'
+                size='small'
+                onClick={() => {
+                  filterFormApiRef.current?.setValues(defaultFilters);
+                  resetFilters();
+                }}
+              >
+                {t('重置')}
+              </Button>
+            </div>
+          </div>
         </div>
       </Form>
     </Card>
