@@ -3892,6 +3892,8 @@
     "不含每日明细": "Exclude daily detail",
     "明细不分模型": "Detail not split by model",
     "成本核算": "Cost Accounting",
+    "渠道成本统计": "Channel cost statistics",
+    "关闭后隐藏成本核算菜单并禁止其接口访问": "When disabled, hides the cost accounting menu and blocks its API access",
     "用户维度": "By User",
     "模型维度": "By Model",
     "供应商维度": "By Channel",

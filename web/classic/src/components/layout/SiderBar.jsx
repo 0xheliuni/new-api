@@ -161,6 +161,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
+        text: t('成本核算'),
+        itemKey: 'cost',
+        to: '/cost',
+        className:
+          isRoot() &&
+          localStorage.getItem('cost_accounting_enabled') !== 'false'
+            ? ''
+            : 'tableHiddle',
+      },
+      {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
@@ -196,12 +206,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/setting',
         className: isRoot() ? '' : 'tableHiddle',
       },
-      {
-        text: t('成本核算'),
-        itemKey: 'cost',
-        to: '/cost',
-        className: isRoot() ? '' : 'tableHiddle',
-      },
     ];
 
     // 根据配置过滤项目
@@ -211,7 +215,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [
+    isAdmin(),
+    isRoot(),
+    localStorage.getItem('cost_accounting_enabled'),
+    t,
+    isModuleVisible,
+  ]);
 
   const chatMenuItems = useMemo(() => {
     const items = [

@@ -390,6 +390,17 @@ export default function GeneralSettings(props) {
                   onChange={handleFieldChange('SelfUseModeEnabled')}
                 />
               </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'CostAccountingEnabled'}
+                  label={t('成本核算')}
+                  extraText={t('关闭后隐藏成本核算菜单并禁止其接口访问')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={handleFieldChange('CostAccountingEnabled')}
+                />
+              </Col>
             </Row>
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
