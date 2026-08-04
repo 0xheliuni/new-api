@@ -88,7 +88,7 @@ model/option.go  updateOptionMap  ──►  common.AvailabilityMonitorEnabled
 | `model/option.go` `updateOptionMap` switch | `case "AvailabilityMonitorEnabled": common.AvailabilityMonitorEnabled = boolValue` |
 | `controller/misc.go` `GetStatus` | `"availability_monitor_enabled": common.AvailabilityMonitorEnabled,` |
 | `middleware/availability_monitor.go`（新建） | 导出 `AvailabilityMonitorEnabled() gin.HandlerFunc`，关闭时 403 |
-| `i18n/` en + zh | 新增一条「功能已关闭」文案（若 `MsgFeatureDisabled` 已可复用则复用） |
+| `i18n/` en + zh | **无需改动**：已确认 `i18n/keys.go:17` 的 `MsgFeatureDisabled = "common.feature_disabled"` 正是 `middleware/cost_accounting.go` 使用的通用文案，直接复用 |
 
 `/api/status` 是公开接口，多下发一个功能开关布尔值不泄露敏感信息——`enable_drawing`、`cost_accounting_enabled` 已是同样处理。
 
@@ -287,7 +287,9 @@ RPM 卡片独立 `useQuery`，`refetchInterval: 10_000`。维度经 `validateSea
 
 ## 前端改动 — classic 主题
 
-技术栈：React 18 + Vite + Semi Design。**不使用 Tailwind**，因此采用「带作用域 CSS 的忠实移植」：用 Semi 的 `Collapse` / `Tabs` / `Card` 承载结构，配一个 CSS Module 复刻圆角卡片、低饱和配色与等宽数字。图表复用 Recharts（classic 已有图表依赖，实现时确认；若无则用 `@douyinfe/semi-ui` 图表）。
+技术栈：React 18 + Vite + Semi Design。**不使用 Tailwind**，因此采用「带作用域 CSS 的忠实移植」：用 Semi 的 `Collapse` / `Tabs` / `Card` 承载结构，配一个 CSS Module 复刻圆角卡片、低饱和配色与等宽数字。
+
+图表库已确认：classic **没有 Recharts**，其图表依赖是 `@visactor/react-vchart` `~1.8.8`（default 用的是 `recharts` 3.8.1）。因此 classic 的折线图用 VChart 的 `line` 图元实现，`best` 线通过 `lineDash` 系列配置表达。两个主题的图表库不同但配色、阈值与格式化规则共用同一套取值，保证观感一致。
 
 ### 路由与页面
 
