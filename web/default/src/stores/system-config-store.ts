@@ -44,6 +44,7 @@ export interface SystemConfig {
   demoSiteEnabled?: boolean
   displayTokenStatEnabled?: boolean
   costAccountingEnabled?: boolean
+  availabilityMonitorEnabled?: boolean
   currency: CurrencyConfig
 }
 

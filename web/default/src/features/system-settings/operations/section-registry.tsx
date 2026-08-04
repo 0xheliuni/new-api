@@ -39,6 +39,7 @@ const OPERATIONS_SECTIONS = [
           DemoSiteEnabled: settings.DemoSiteEnabled,
           SelfUseModeEnabled: settings.SelfUseModeEnabled,
           CostAccountingEnabled: settings.CostAccountingEnabled,
+          AvailabilityMonitorEnabled: settings.AvailabilityMonitorEnabled,
         }}
       />
     ),

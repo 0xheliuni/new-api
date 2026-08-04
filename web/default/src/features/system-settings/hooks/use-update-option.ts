@@ -28,6 +28,7 @@ const STATUS_RELATED_KEYS = [
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'CostAccountingEnabled',
+  'AvailabilityMonitorEnabled',
   'Notice',
   'LogConsumeEnabled',
   'QuotaPerUnit',

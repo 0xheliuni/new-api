@@ -23,6 +23,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  HeartPulse,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -51,8 +52,11 @@ export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const userRole = useAuthStore((s) => s.auth.user?.role)
   const isSuperAdmin = userRole !== undefined && userRole >= ROLE.SUPER_ADMIN
-  const { costAccountingEnabled } = useSystemConfig()
+  const isAdmin = userRole !== undefined && userRole >= ROLE.ADMIN
+  const { costAccountingEnabled, availabilityMonitorEnabled } =
+    useSystemConfig()
   const showCostAccounting = isSuperAdmin && costAccountingEnabled !== false
+  const showAvailability = isAdmin && availabilityMonitorEnabled !== false
 
   return {
     navGroups: [
@@ -141,6 +145,15 @@ export function useSidebarData(): SidebarData {
                   title: t('Cost Accounting'),
                   url: '/cost' as const,
                   icon: Calculator,
+                },
+              ]
+            : []),
+          ...(showAvailability
+            ? [
+                {
+                  title: t('Availability Monitor'),
+                  url: '/availability' as const,
+                  icon: HeartPulse,
                 },
               ]
             : []),
