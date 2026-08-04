@@ -203,7 +203,7 @@ DB.Model(&PerfMetric{}).
 
 ## 前端改动 — default 主题
 
-技术栈：React 19 + TanStack Router（文件路由，`routeTree.gen.ts` 自动生成，**不得手改**）+ Base UI + Tailwind v4 + Recharts。
+技术栈：React 19 + TanStack Router（文件路由，`routeTree.gen.ts` 自动生成，**不得手改**）+ Base UI + Tailwind v4 + VChart（`@visactor/react-vchart` ^2.0.22）。
 
 ### 路由与页面
 
@@ -218,7 +218,7 @@ DB.Model(&PerfMetric{}).
 |---|---|
 | `index.tsx` | 页面骨架，`SectionPageLayout` + 数据获取编排 |
 | `components/overall-banner.tsx` | 总体状态横幅：脉冲圆点 + 文案 + 更新时间 |
-| `components/live-rpm-card.tsx` | 实时 RPM 卡片：轮询、点累积、Recharts `Area` sparkline |
+| `components/live-rpm-card.tsx` | 实时 RPM 卡片：轮询、点累积、VChart `area` sparkline |
 | `components/dimension-tabs.tsx` | `groups \| models` 切换，带计数 chip |
 | `components/entity-accordion.tsx` | entity 列表容器（`allowsMultipleExpanded`，首项默认展开） |
 | `components/entity-row.tsx` | 折叠头：状态点、名称、24h 请求数、右侧四指标摘要条 |
@@ -289,7 +289,7 @@ RPM 卡片独立 `useQuery`，`refetchInterval: 10_000`。维度经 `validateSea
 
 技术栈：React 18 + Vite + Semi Design。**不使用 Tailwind**，因此采用「带作用域 CSS 的忠实移植」：用 Semi 的 `Collapse` / `Tabs` / `Card` 承载结构，配一个 CSS Module 复刻圆角卡片、低饱和配色与等宽数字。
 
-图表库已确认：classic **没有 Recharts**，其图表依赖是 `@visactor/react-vchart` `~1.8.8`（default 用的是 `recharts` 3.8.1）。因此 classic 的折线图用 VChart 的 `line` 图元实现，`best` 线通过 `lineDash` 系列配置表达。两个主题的图表库不同但配色、阈值与格式化规则共用同一套取值，保证观感一致。
+图表库已确认：**两个主题都用 VChart**，不用 Recharts。default 的依赖是 `@visactor/react-vchart` ^2.0.22，classic 是 ~1.8.8。default 的 `package.json` 虽然列了 `recharts` 3.8.1，但全仓库只有 `components/ui/chart.tsx` 这个未被任何文件引用的 shadcn 原语在 import 它——现有 8 个图表特性（cost、dashboard、rankings、pricing）一律用 VChart。因此新页面沿用 VChart 的 `line` 图元，`best` 线通过 `lineDash` 系列配置表达，并复用 `lib/use-chart-theme.ts` 与 `lib/vchart.ts` 两个既有辅助。两个主题的 VChart 大版本不同，但配色、阈值与格式化规则共用同一套取值，保证观感一致。
 
 ### 路由与页面
 

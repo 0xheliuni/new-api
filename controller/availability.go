@@ -72,11 +72,18 @@ func GetAvailabilityStatus(c *gin.Context) {
 	}
 
 	now := time.Now().Unix()
-	rows, err := model.QueryAvailabilityRows(model.AvailabilityStartTime(now))
+	startTs := model.AvailabilityStartTime(now)
+	rows, err := model.QueryAvailabilityRows(startTs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 合并未落库的热桶：当前小时的桶不会被 flush 写入，只查库会让
+	// 最右侧的点永远是空的，current 也只能看到已完结的小时。
+	// 先查库再读热桶：若某个桶恰在两次读取之间被 flush 落库，
+	// 这一小时的数据会短暂缺失（下次刷新即恢复），而反序会造成重复计数。
+	rows = append(rows, perfmetrics.HotAvailabilityRows(startTs)...)
 
 	payload := model.BuildAvailability(rows, dimension, now)
 	storeAvailabilityCache(dimension, payload)
