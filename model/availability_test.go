@@ -316,3 +316,26 @@ func TestQueryAvailabilityRowsAgainstSQLite(t *testing.T) {
 	require.Len(t, resp.Entities, 2)
 	require.Equal(t, "default", resp.Entities[0].Id) // 请求数更多
 }
+
+// TestBuildAvailabilityAccumulatesDuplicateKeys 锁定 controller 合并热桶所依赖的前提：
+// 同一 (模型, 分组, 桶) 出现多行时必须累加而非覆盖。
+// 库里已落盘的行与内存热桶的行会以相同键同时传入，若是覆盖语义，
+// 当前小时的数据就会互相顶掉。
+func TestBuildAvailabilityAccumulatesDuplicateKeys(t *testing.T) {
+	rows := []AvailabilityRow{
+		{ModelName: "gpt-4", GroupName: "default", BucketTs: 3600, RequestCount: 6, SuccessCount: 6, TotalLatencyMs: 600},
+		{ModelName: "gpt-4", GroupName: "default", BucketTs: 3600, RequestCount: 4, SuccessCount: 2, TotalLatencyMs: 400},
+	}
+
+	resp := BuildAvailability(rows, "group", 3600)
+	require.Len(t, resp.Entities, 1)
+
+	entity := resp.Entities[0]
+	require.Equal(t, int64(10), entity.Requests, "两行必须累加为 10 次请求")
+
+	require.NotNil(t, entity.Current.SuccessRatePct)
+	require.InDelta(t, 80.0, *entity.Current.SuccessRatePct, 0.001, "成功率应按合计计算 8/10")
+
+	require.NotNil(t, entity.Current.LatencyMs)
+	require.InDelta(t, 100.0, *entity.Current.LatencyMs, 0.001, "延迟应按合计计算 1000/10")
+}
