@@ -266,6 +266,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           title: t('成本核算'),
           description: t('渠道成本统计'),
         },
+        {
+          key: 'availability',
+          title: t('可用性监控'),
+          description: t('模型与分组可用性'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'deployment',

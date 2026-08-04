@@ -52,6 +52,7 @@ const OperationSetting = () => {
     DemoSiteEnabled: false,
     SelfUseModeEnabled: false,
     CostAccountingEnabled: true,
+    AvailabilityMonitorEnabled: true,
 
     /* 顶栏模块管理 */
     HeaderNavModules: '',

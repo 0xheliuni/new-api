@@ -51,6 +51,7 @@ const routerMap = {
   personal: '/console/personal',
   bill: '/console/bill',
   cost: '/console/cost',
+  availability: '/console/availability',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -171,6 +172,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             : 'tableHiddle',
       },
       {
+        text: t('可用性监控'),
+        itemKey: 'availability',
+        to: '/availability',
+        className:
+          isAdmin() &&
+          localStorage.getItem('availability_monitor_enabled') !== 'false'
+            ? ''
+            : 'tableHiddle',
+      },
+      {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
@@ -219,6 +230,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     isAdmin(),
     isRoot(),
     localStorage.getItem('cost_accounting_enabled'),
+    localStorage.getItem('availability_monitor_enabled'),
     t,
     isModuleVisible,
   ]);

@@ -30,6 +30,10 @@ export function setStatusData(data) {
   localStorage.setItem('enable_task', data.enable_task);
   localStorage.setItem('enable_data_export', data.enable_data_export);
   localStorage.setItem('cost_accounting_enabled', data.cost_accounting_enabled);
+  localStorage.setItem(
+    'availability_monitor_enabled',
+    data.availability_monitor_enabled,
+  );
   localStorage.setItem('chats', JSON.stringify(data.chats));
   localStorage.setItem(
     'data_export_default_time',

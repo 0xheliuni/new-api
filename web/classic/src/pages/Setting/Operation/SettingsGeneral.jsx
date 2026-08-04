@@ -58,6 +58,7 @@ export default function GeneralSettings(props) {
     DemoSiteEnabled: false,
     SelfUseModeEnabled: false,
     CostAccountingEnabled: true,
+    AvailabilityMonitorEnabled: true,
     'token_setting.max_user_tokens': 1000,
   });
   const refForm = useRef();
@@ -404,6 +405,17 @@ export default function GeneralSettings(props) {
               </Col>
             </Row>
             <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'AvailabilityMonitorEnabled'}
+                  label={t('可用性监控')}
+                  extraText={t('关闭后隐藏可用性监控菜单并禁止其接口访问')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={handleFieldChange('AvailabilityMonitorEnabled')}
+                />
+              </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   label={t('用户最大令牌数量')}

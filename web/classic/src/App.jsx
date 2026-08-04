@@ -54,6 +54,7 @@ import SetupCheck from './components/layout/SetupCheck';
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Cost = lazy(() => import('./pages/Cost'));
+const Availability = lazy(() => import('./pages/Availability'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -181,6 +182,16 @@ function App() {
                 <Cost />
               </Suspense>
             </RootRoute>
+          }
+        />
+        <Route
+          path='/console/availability'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Availability />
+              </Suspense>
+            </AdminRoute>
           }
         />
         <Route
