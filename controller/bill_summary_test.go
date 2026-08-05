@@ -57,8 +57,9 @@ func TestBillSummaryAgg_AggregatesByDayModel(t *testing.T) {
 	if r.CacheReadTokens != 5 { // 4 + 1
 		t.Fatalf("cache read = %d, want 5", r.CacheReadTokens)
 	}
-	if r.CacheCreationTokens != 3 { // 2 + 1(5m)
-		t.Fatalf("cache creation = %d, want 3", r.CacheCreationTokens)
+	// cache_creation_tokens 本身即总量，_5m/_1h 是其拆分项，不能相加（会翻倍）。
+	if r.CacheCreationTokens != 2 { // max(2, 1(5m)) = 2
+		t.Fatalf("cache creation = %d, want 2", r.CacheCreationTokens)
 	}
 }
 

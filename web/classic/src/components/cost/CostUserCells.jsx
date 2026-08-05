@@ -265,8 +265,8 @@ export const RequestOutcomeCell = ({ requestCount, errorCount, successRate, perc
 );
 
 /**
- * 总 tokens 悬浮明细：数字 + 悬浮列出 输入/输出/缓存读取/缓存创建 四项，
- * 替代旧的点击弹窗。
+ * 总 tokens 悬浮明细：数字 + 悬浮列出 非缓存输入/输出/缓存读取/缓存创建 四项。
+ * 四项互不重叠，相加恒等于总 tokens。
  */
 export const TokensHoverCell = ({ row, t }) => (
   <Popover
@@ -276,7 +276,7 @@ export const TokensHoverCell = ({ row, t }) => (
     content={
       <div style={{ minWidth: 200, padding: '8px 4px', lineHeight: 1.8 }}>
         {[
-          ['输入 tokens', row.prompt_tokens],
+          ['非缓存输入 tokens', row.prompt_tokens],
           ['输出 tokens', row.completion_tokens],
           ['缓存读取 tokens', row.cache_read_tokens],
           ['缓存创建 tokens', row.cache_creation_tokens],

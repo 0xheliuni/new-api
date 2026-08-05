@@ -205,7 +205,12 @@ export function mergeBreakdown(
 
   const merged = Array.from(groups.values())
   for (const acc of merged) {
-    acc.total_tokens = acc.prompt_tokens + acc.completion_tokens
+    // prompt_tokens is normalized server-side to "non-cached input", so the
+    // four token buckets never overlap and sum to the total. Cache rate uses
+    // input tokens as the denominator — output can never be a cache hit.
+    const inputTokens =
+      acc.prompt_tokens + acc.cache_read_tokens + acc.cache_creation_tokens
+    acc.total_tokens = inputTokens + acc.completion_tokens
     acc.profit_rate =
       acc.revenue_cny === 0 ? 0 : round6(acc.profit_cny / acc.revenue_cny)
     acc.success_rate =
@@ -213,9 +218,7 @@ export function mergeBreakdown(
         ? 1
         : round6(acc.request_count / (acc.request_count + acc.error_count))
     acc.cache_rate =
-      acc.prompt_tokens === 0
-        ? 0
-        : round6(acc.cache_read_tokens / acc.prompt_tokens)
+      inputTokens === 0 ? 0 : round6(acc.cache_read_tokens / inputTokens)
     acc.avg_ttft_ms = acc.frt_count === 0 ? 0 : round6(acc.frt_sum_ms / acc.frt_count)
   }
 

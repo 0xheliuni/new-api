@@ -229,6 +229,31 @@ function UserDiscountHeader() {
   )
 }
 
+/** Header help for the cache hit rate — the denominator needs explaining. */
+function CacheRateHeader() {
+  const { t } = useTranslation()
+  return (
+    <CostHelpHover label={t('Cache Hit Rate')}>
+      <div className='flex flex-col gap-2'>
+        <CostHelpFormula
+          term={t('Cache hit rate')}
+          expression={t('cache read ÷ total input tokens')}
+        />
+        <CostHelpFormula
+          term={t('Total input tokens')}
+          expression={t('uncached input + cache read + cache creation')}
+        />
+        <CostHelpNotes
+          notes={[
+            t('Output tokens are excluded — they can never be a cache hit.'),
+            t('Claude reports input excluding cache while OpenAI includes it; both are normalized to uncached input so channels stay comparable.'),
+          ]}
+        />
+      </div>
+    </CostHelpHover>
+  )
+}
+
 function buildMetricColumns(
   t: ReturnType<typeof useTranslation>['t'],
   primary: MoneyPrimaryCurrency,
@@ -340,7 +365,7 @@ function buildMetricColumns(
     },
     {
       id: 'cache_rate',
-      header: t('Cache Rate'),
+      header: <CacheRateHeader />,
       cell: (row) => formatRate(row.cache_rate),
     },
     {

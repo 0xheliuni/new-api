@@ -77,7 +77,15 @@ type logPricingInfo struct {
 	CacheCreationRatio5m  float64 `json:"cache_creation_ratio_5m"`
 	CacheCreationTokens1h int     `json:"cache_creation_tokens_1h"`
 	CacheCreationRatio1h  float64 `json:"cache_creation_ratio_1h"`
+	CacheWriteTokens      int     `json:"cache_write_tokens"`
 	Frt                   float64 `json:"frt"` // 首字延迟毫秒；<=0 视为未记录
+
+	// 上游 usage 语义，决定 prompt_tokens 是否已含缓存 tokens：
+	// "anthropic" → 不含（Claude 原厂 input_tokens 与 cache 互斥）；
+	// 其余（含缺失的旧日志）→ 含。Claude 为最终上游格式时 claude=true，
+	// 老日志可能只有后者，故两者取或。写入点见 service/text_quota.go。
+	UsageSemantic string `json:"usage_semantic"`
+	Claude        bool   `json:"claude"`
 
 	// Tiered-expression billing keys written by InjectTieredBillingInfo.
 	// expr_b64 is the base64 expression; matched_tier names the tier that
@@ -458,6 +466,43 @@ func resolveExportColumns(raw string) []logExportColumn {
 // Numeric tokens are returned as int (so Excel treats them as numbers); the
 // rest are strings. The billing column is the only one that contains \n —
 // rendering callers must apply a WrapText style to it.
+// cacheCreationTokensOf 归一化单条日志的缓存创建 tokens。
+//
+// `cache_creation_tokens` 本身就是总量（Anthropic 的 cache_creation_input_tokens
+// 恒等于 ephemeral_5m + ephemeral_1h，见 dto/claude.go），`_5m`/`_1h` 是它的拆分
+// 项——三者相加会在存在拆分时翻倍。计费侧 service/text_quota.go 的
+// cacheWriteTokensTotal 用的是 max(总量, 5m+1h)，并把结果写进 `cache_write_tokens`；
+// 这里优先读该字段，缺失的旧日志退回同样的 max 语义。
+func cacheCreationTokensOf(info *logPricingInfo) int {
+	if info == nil {
+		return 0
+	}
+	if info.CacheWriteTokens > 0 {
+		return info.CacheWriteTokens
+	}
+	if split := info.CacheCreationTokens5m + info.CacheCreationTokens1h; split > info.CacheCreationTokens {
+		return split
+	}
+	return info.CacheCreationTokens
+}
+
+// promptTokensExcludingCache 把 Log.PromptTokens 归一化为「非缓存输入 tokens」，
+// 使 输入+输出+缓存读取+缓存创建 恒等于总 tokens，且跨渠道可加。
+//
+// Claude 语义（usage_semantic=anthropic / claude=true）的 prompt_tokens 与缓存
+// 互斥，原样返回；OpenAI/Gemini/DeepSeek 等的 prompt_tokens 已含缓存读取，需减去
+// （与计费侧 service/text_quota.go 的 baseTokens 分叉口径一致）。缓存创建对后者
+// 不计入 prompt_tokens，故不减。裁剪到 0 以防脏日志导致负数。
+func promptTokensExcludingCache(promptTokens int, cacheReadTokens int, info *logPricingInfo) int {
+	if info != nil && (info.UsageSemantic == "anthropic" || info.Claude) {
+		return promptTokens
+	}
+	if n := promptTokens - cacheReadTokens; n > 0 {
+		return n
+	}
+	return 0
+}
+
 // getCacheTokensFromOther extracts a single integer field from Log.Other JSON.
 func getCacheTokensFromOther(log *model.Log, field string) int {
 	if log == nil || strings.TrimSpace(log.Other) == "" {
@@ -479,25 +524,11 @@ func getCacheTokensFromOther(log *model.Log, field string) int {
 	}
 }
 
-// getCacheCreationTokensFromOther sums all cache creation token variants
-// (legacy + 5m + 1h) to give a single "total cache creation tokens" number.
+// getCacheCreationTokensFromOther returns a single normalized "total cache
+// creation tokens" number for a log. See cacheCreationTokensOf for why the
+// variants must not simply be summed.
 func getCacheCreationTokensFromOther(log *model.Log) int {
-	if log == nil || strings.TrimSpace(log.Other) == "" {
-		return 0
-	}
-	var m map[string]any
-	if err := common.UnmarshalJsonStr(log.Other, &m); err != nil {
-		return 0
-	}
-	total := 0
-	for _, key := range []string{"cache_creation_tokens", "cache_creation_tokens_5m", "cache_creation_tokens_1h"} {
-		if v, ok := m[key]; ok {
-			if n, ok2 := v.(float64); ok2 {
-				total += int(n)
-			}
-		}
-	}
-	return total
+	return cacheCreationTokensOf(parseLogPricingInfo(log))
 }
 
 func cellValue(col logExportColumn, log *model.Log) any {

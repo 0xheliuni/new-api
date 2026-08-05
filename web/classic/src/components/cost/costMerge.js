@@ -39,9 +39,11 @@ export const RAW_ADDITIVE_FIELDS = [
   'frt_count',
 ];
 
-// 重新派生 v2 指标，零分母兜底规则与后端 costMoney.deriveRates() 一致：
+// 重新派生 v2 指标，公式与零分母兜底规则与后端 costMoney.deriveRates() 一致：
+// - total_tokens：非缓存输入 + 输出 + 缓存读取 + 缓存创建（后端已把 prompt_tokens
+//   归一化为「非缓存输入」，四项互不重叠）
+// - cache_rate：缓存读取 / 总输入（分母含缓存创建，不含输出；分母 0 → 0）
 // - success_rate：request_count+error_count 为 0 时兜底为 1
-// - cache_rate：prompt_tokens 为 0 时兜底为 0
 // - avg_ttft_ms：frt_count 为 0 时兜底为 0
 // - profit_rate：revenue_cny 为 0 时兜底为 0
 export function deriveCostRates(row) {
@@ -50,15 +52,17 @@ export function deriveCostRates(row) {
   const requestCount = Number(row.request_count) || 0;
   const errorCount = Number(row.error_count) || 0;
   const cacheReadTokens = Number(row.cache_read_tokens) || 0;
+  const cacheCreationTokens = Number(row.cache_creation_tokens) || 0;
   const frtSumMs = Number(row.frt_sum_ms) || 0;
   const frtCount = Number(row.frt_count) || 0;
   const revenueCny = Number(row.revenue_cny) || 0;
   const profitCny = Number(row.profit_cny) || 0;
 
-  row.total_tokens = promptTokens + completionTokens;
+  const inputTokens = promptTokens + cacheReadTokens + cacheCreationTokens;
+  row.total_tokens = inputTokens + completionTokens;
   row.success_rate =
     requestCount + errorCount === 0 ? 1 : requestCount / (requestCount + errorCount);
-  row.cache_rate = promptTokens === 0 ? 0 : cacheReadTokens / promptTokens;
+  row.cache_rate = inputTokens === 0 ? 0 : cacheReadTokens / inputTokens;
   row.avg_ttft_ms = frtCount === 0 ? 0 : frtSumMs / frtCount;
   row.profit_rate = revenueCny === 0 ? 0 : profitCny / revenueCny;
   return row;

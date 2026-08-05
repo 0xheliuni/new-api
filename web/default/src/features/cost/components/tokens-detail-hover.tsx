@@ -44,7 +44,8 @@ function TokenRow({ label, value }: { label: string; value: number }) {
 
 /**
  * Breaks a row's `total_tokens` down into its four raw components on hover —
- * a small info marker next to the number, no click or dialog needed.
+ * a small info marker next to the number, no click or dialog needed. The four
+ * buckets are disjoint (input excludes cache), so they sum to the total.
  */
 export function TokensDetailHover({
   promptTokens,
@@ -71,7 +72,7 @@ export function TokensDetailHover({
       </HoverCardTrigger>
       <HoverCardContent className='w-56'>
         <div className='flex flex-col divide-y'>
-          <TokenRow label={t('Input Tokens')} value={promptTokens} />
+          <TokenRow label={t('Uncached Input Tokens')} value={promptTokens} />
           <TokenRow label={t('Output Tokens')} value={completionTokens} />
           <TokenRow label={t('Cache Read Tokens')} value={cacheReadTokens} />
           <TokenRow

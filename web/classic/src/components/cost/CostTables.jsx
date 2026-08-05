@@ -277,9 +277,9 @@ const buildMetricColumns = (t, exchangeRate, primaryCurrency, activeTab, onEditR
   },
   {
     key: 'cache_rate',
-    title: t('缓存率'),
+    title: t('缓存命中率'),
     align: 'right',
-    width: 90,
+    width: 100,
     render: (_, row) => (row.__isNote ? null : <span>{percent(row.cache_rate)}</span>),
   },
   {

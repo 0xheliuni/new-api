@@ -414,9 +414,11 @@ func TestCostMoney_ZeroRevenueRate(t *testing.T) {
 }
 
 // TestCostCube_ErrorAndMetrics 覆盖 v2 立方体新增指标：错误计数、缓存 tokens、
-// 首字延迟（TTFT）。同一用户/模型/渠道/日桶下：2 条消费 + 1 条错误 + 1 条退款，
-// 折叠后 SuccessRate = 2/(2+1)，CacheRate = 40/合计prompt，AvgTtftMs 只取
-// frt>0 的行（第二条消费 frt=-1000 视为未记录，不计入 FrtCount/FrtSumMs）。
+// 首字延迟（TTFT）。同一用户/模型/渠道/日桶下：2 条消费 + 1 条错误 + 1 条退款。
+// 两条消费均为 OpenAI 语义（无 usage_semantic/claude 标记），prompt_tokens 已含
+// 缓存读取，故归一化后的非缓存输入为 (100-40) + 50 = 110。
+// 折叠后 SuccessRate = 2/(2+1)；CacheRate = 40/总输入；AvgTtftMs 只取 frt>0 的行
+// （第二条消费 frt=-1000 视为未记录，不计入 FrtCount/FrtSumMs）。
 func TestCostCube_ErrorAndMetrics(t *testing.T) {
 	c := newCostCube()
 	c.addBatch([]*model.Log{
@@ -448,8 +450,13 @@ func TestCostCube_ErrorAndMetrics(t *testing.T) {
 	if alice.CacheReadTokens != 40 {
 		t.Fatalf("cache_read_tokens = %d, want 40", alice.CacheReadTokens)
 	}
-	if alice.CacheCreationTokens != 8 {
-		t.Fatalf("cache_creation_tokens = %d, want 8", alice.CacheCreationTokens)
+	// max(5, 3(5m)) = 5：cache_creation_tokens 已是总量，不与拆分项相加。
+	if alice.CacheCreationTokens != 5 {
+		t.Fatalf("cache_creation_tokens = %d, want 5", alice.CacheCreationTokens)
+	}
+	// OpenAI 语义：(100-40) + (50-0) = 110 非缓存输入。
+	if alice.PromptTokens != 110 {
+		t.Fatalf("prompt_tokens = %d, want 110", alice.PromptTokens)
 	}
 	if alice.FrtCount != 1 {
 		t.Fatalf("frt_count = %d, want 1", alice.FrtCount)
@@ -461,21 +468,23 @@ func TestCostCube_ErrorAndMetrics(t *testing.T) {
 	if alice.SuccessRate != wantSuccessRate {
 		t.Fatalf("success_rate = %v, want %v", alice.SuccessRate, wantSuccessRate)
 	}
-	wantCacheRate := roundTo6(40.0 / 150.0)
+	// 总输入 = 非缓存输入 110 + 缓存读取 40 + 缓存创建 5 = 155。
+	wantCacheRate := roundTo6(40.0 / 155.0)
 	if alice.CacheRate != wantCacheRate {
 		t.Fatalf("cache_rate = %v, want %v", alice.CacheRate, wantCacheRate)
 	}
 	if alice.AvgTtftMs != 120.5 {
 		t.Fatalf("avg_ttft_ms = %v, want 120.5", alice.AvgTtftMs)
 	}
-	if alice.TotalTokens != 180 {
-		t.Fatalf("total_tokens = %d, want 180", alice.TotalTokens)
+	// 155 总输入 + 30 输出。
+	if alice.TotalTokens != 185 {
+		t.Fatalf("total_tokens = %d, want 185", alice.TotalTokens)
 	}
 }
 
-// TestCostMoneyDerivedRates 覆盖三条零分母兜底规则：
-// 请求+错误数为 0 → SuccessRate=1；PromptTokens=0 → CacheRate=0；
-// FrtCount=0 → AvgTtftMs=0。并附一组非零分母的正常路径校验公式本身正确。
+// TestCostMoneyDerivedRates 覆盖零分母兜底规则：请求+错误数为 0 → SuccessRate=1；
+// 总输入为 0 → CacheRate=0；FrtCount=0 → AvgTtftMs=0。并附一组非零分母的正常路径
+// 校验公式本身正确。
 func TestCostMoneyDerivedRates(t *testing.T) {
 	m1 := costMoneyFromRow(&costCubeRow{}, 2.5, 7.0)
 	if m1.SuccessRate != 1 {
@@ -488,9 +497,13 @@ func TestCostMoneyDerivedRates(t *testing.T) {
 		t.Fatalf("avg_ttft_ms = %v, want 0", m1.AvgTtftMs)
 	}
 
+	// 全部输入都来自缓存读取 → 命中率 100%（分母是总输入，不是非缓存输入）。
 	m2 := costMoneyFromRow(&costCubeRow{PromptTokens: 0, CacheReadTokens: 10}, 2.5, 7.0)
-	if m2.CacheRate != 0 {
-		t.Fatalf("cache_rate = %v, want 0", m2.CacheRate)
+	if m2.CacheRate != 1 {
+		t.Fatalf("cache_rate = %v, want 1", m2.CacheRate)
+	}
+	if m2.TotalTokens != 10 {
+		t.Fatalf("total_tokens = %d, want 10", m2.TotalTokens)
 	}
 
 	m3 := costMoneyFromRow(&costCubeRow{FrtCount: 0, FrtSumMs: 999}, 2.5, 7.0)
@@ -498,15 +511,74 @@ func TestCostMoneyDerivedRates(t *testing.T) {
 		t.Fatalf("avg_ttft_ms = %v, want 0", m3.AvgTtftMs)
 	}
 
-	m4 := costMoneyFromRow(&costCubeRow{RequestCount: 3, ErrorCount: 1, PromptTokens: 100, CacheReadTokens: 25, FrtCount: 2, FrtSumMs: 200}, 2.5, 7.0)
+	m4 := costMoneyFromRow(&costCubeRow{RequestCount: 3, ErrorCount: 1, PromptTokens: 100, CompletionTokens: 20, CacheReadTokens: 25, CacheCreationTokens: 15, FrtCount: 2, FrtSumMs: 200}, 2.5, 7.0)
 	if want := roundTo6(3.0 / 4.0); m4.SuccessRate != want {
 		t.Fatalf("success_rate = %v, want %v", m4.SuccessRate, want)
 	}
-	if want := roundTo6(25.0 / 100.0); m4.CacheRate != want {
+	// 总输入 = 100 + 25 + 15 = 140。
+	if want := roundTo6(25.0 / 140.0); m4.CacheRate != want {
 		t.Fatalf("cache_rate = %v, want %v", m4.CacheRate, want)
+	}
+	if m4.TotalTokens != 160 {
+		t.Fatalf("total_tokens = %d, want 160", m4.TotalTokens)
 	}
 	if want := roundTo6(200.0 / 2.0); m4.AvgTtftMs != want {
 		t.Fatalf("avg_ttft_ms = %v, want %v", m4.AvgTtftMs, want)
+	}
+}
+
+// TestCostCube_UsageSemanticNormalization 覆盖 prompt_tokens 的语义分叉：
+// Claude 的 input_tokens 与缓存互斥（原样保留），OpenAI 的 prompt_tokens 已含
+// 缓存读取（需减去）。两条日志的 tokens 完全相同，归一化后非缓存输入不同，
+// 但同一桶内可直接相加——这正是归一化要保证的跨渠道可加性。
+func TestCostCube_UsageSemanticNormalization(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		// Claude 语义：input_tokens=100 不含缓存 → 非缓存输入 100。
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "claude-opus", Quota: 100, PromptTokens: 100, CompletionTokens: 10,
+			Other: `{"group_ratio":1,"usage_semantic":"anthropic","cache_tokens":30,"cache_creation_tokens":20}`},
+		// OpenAI 语义：prompt_tokens=100 已含 cache_read 30 → 非缓存输入 70。
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "claude-opus", Quota: 100, PromptTokens: 100, CompletionTokens: 10,
+			Other: `{"group_ratio":1,"cache_tokens":30}`},
+	})
+
+	rows := foldCostCube(c, costDimUser, testChannels(), 7.0)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	r := rows[0]
+	if r.PromptTokens != 170 { // 100 (claude) + 70 (openai)
+		t.Fatalf("prompt_tokens = %d, want 170", r.PromptTokens)
+	}
+	if r.CacheReadTokens != 60 || r.CacheCreationTokens != 20 {
+		t.Fatalf("cache tokens = %d/%d, want 60/20", r.CacheReadTokens, r.CacheCreationTokens)
+	}
+	// 四项互不重叠，相加恒等于总数：170 + 60 + 20 + 20 = 270。
+	if r.TotalTokens != 270 {
+		t.Fatalf("total_tokens = %d, want 270", r.TotalTokens)
+	}
+	if want := roundTo6(60.0 / 250.0); r.CacheRate != want {
+		t.Fatalf("cache_rate = %v, want %v", r.CacheRate, want)
+	}
+}
+
+// 老日志只有 claude=true 而无 usage_semantic 时也必须按 Claude 语义处理，
+// 否则 prompt_tokens 会被误减一次缓存读取。
+func TestCostCube_LegacyClaudeFlagNormalization(t *testing.T) {
+	c := newCostCube()
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "claude-opus", Quota: 100, PromptTokens: 80, CompletionTokens: 5,
+			Other: `{"group_ratio":1,"claude":true,"cache_tokens":25}`},
+	})
+	rows := foldCostCube(c, costDimUser, testChannels(), 7.0)
+	if rows[0].PromptTokens != 80 {
+		t.Fatalf("prompt_tokens = %d, want 80 (claude semantics: no subtraction)", rows[0].PromptTokens)
+	}
+	if rows[0].TotalTokens != 110 { // 80 + 25 + 0 + 5
+		t.Fatalf("total_tokens = %d, want 110", rows[0].TotalTokens)
 	}
 }
 

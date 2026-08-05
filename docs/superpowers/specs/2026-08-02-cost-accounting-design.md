@@ -276,17 +276,24 @@ SubSuppliers []ChannelSubSupplier `json:"sub_suppliers,omitempty"` // {name, cos
 
 ## A3. 指标扩展（立方体新增列）
 
-`costCubeRow` 新增：`ErrorCount`（type=5 行计数，注意 channel_id=0 归入"未知渠道"桶）、`CacheReadTokens`（other.cache_tokens）、`CacheCreationTokens`（cache_creation_tokens 含 _5m/_1h，复用 log_export.go 现有 helper）、`FrtSumMs/FrtCount`（other.frt 毫秒，仅 >0 计入）。
+`costCubeRow` 新增：`ErrorCount`（type=5 行计数，注意 channel_id=0 归入"未知渠道"桶）、`CacheReadTokens`（other.cache_tokens）、`CacheCreationTokens`（归一化总量，见下）、`FrtSumMs/FrtCount`（other.frt 毫秒，仅 >0 计入）。
+
+**Token 口径归一化（2026-08-05 修正）**：上游 usage 语义不一致——Claude（`usage_semantic=anthropic` 或 `claude=true`）的 `input_tokens` 与缓存互斥，OpenAI/Gemini/DeepSeek 的 `prompt_tokens` 已含 `cache_read`（反证见 `service/text_quota.go:238,247` 计费侧的同款分叉）。采集时统一归一化为「非缓存输入」（`promptTokensExcludingCache`）：Claude 原样取，其余减去 cache_read。这样四项 token 互不重叠、相加恒等于总数，且跨渠道混合聚合无歧义。
+
+缓存创建 tokens 用 `cacheCreationTokensOf` 取归一化总量（优先读 `other.cache_write_tokens`，缺失则退回 `max(cache_creation_tokens, _5m + _1h)`）——`cache_creation_tokens` 本身即总量，`_5m`/`_1h` 是其拆分项，旧实现三者相加会在存在拆分时**翻倍**（该 bug 同时影响账单汇总/对照/日志导出，已一并修复）。
 
 `costMoney` DTO 新增（原始可加和字段 + 派生字段都下发，便于前端行内合并重算）：
 
 ```
 cache_read_tokens, cache_creation_tokens, error_count, frt_sum_ms, frt_count   // 可加和
-total_tokens = prompt + completion                                              // 派生
+prompt_tokens = 非缓存输入（已按语义归一化）                                     // 可加和
+total_tokens = prompt + completion + cache_read + cache_creation                // 派生
 success_rate = request_count / (request_count + error_count)（分母 0 → 1）
-cache_rate   = cache_read_tokens / prompt_tokens（分母 0 → 0）
+cache_rate   = cache_read_tokens / (prompt + cache_read + cache_creation)（分母 0 → 0）
 avg_ttft_ms  = frt_sum_ms / frt_count（分母 0 → 0）
 ```
+
+命中率分母取**总输入**而非总 tokens：输出 tokens 永远不可能命中缓存，计入分母会系统性压低命中率。
 
 ## A4. 明细列与行内合并操作（三维度对齐）
 

@@ -26,13 +26,15 @@ type costCubeRow struct {
 	Quota            float64
 	ListQuota        float64
 	RefundQuota      float64 // 退款行 quota 正数累计（仅展示用，净额已含在 Quota/ListQuota）
+	// PromptTokens 为「非缓存输入」（已按 usage 语义扣除缓存读取），与
+	// CacheReadTokens/CacheCreationTokens 互不重叠，四项可直接相加得总 tokens。
 	PromptTokens     int
 	CompletionTokens int
 	RequestCount     int // 消费且非 settle 补扣行（任务多行只按 pre_consume 计 1 次）
 
 	ErrorCount          int     // LogTypeError 行计数（同一用户/模型/渠道/日桶）
 	CacheReadTokens     int     // 累计缓存读取 tokens（消费非退款行）
-	CacheCreationTokens int     // 累计缓存创建 tokens（legacy + 5m + 1h 合计）
+	CacheCreationTokens int     // 累计缓存创建 tokens（归一化后的总量，非各变体相加）
 	FrtSumMs            float64 // 首字延迟毫秒累加（仅 info.Frt > 0 的行）
 	FrtCount            int     // 参与 FrtSumMs 累加的行数
 }
@@ -79,10 +81,15 @@ func (c *costCube) addBatch(logs []*model.Log) {
 		}
 		row.Quota += float64(log.Quota)
 		row.ListQuota += listQ
-		row.PromptTokens += log.PromptTokens
+		cacheRead := 0
+		if info != nil {
+			cacheRead = info.CacheTokens
+		}
+		// PromptTokens 归一化为「非缓存输入」，四项 token 才能相加得总数且跨渠道可加。
+		row.PromptTokens += promptTokensExcludingCache(log.PromptTokens, cacheRead, info)
 		row.CompletionTokens += log.CompletionTokens
-		row.CacheReadTokens += getCacheTokensFromOther(log, "cache_tokens")
-		row.CacheCreationTokens += getCacheCreationTokensFromOther(log)
+		row.CacheReadTokens += cacheRead
+		row.CacheCreationTokens += cacheCreationTokensOf(info)
 		if info != nil && info.Frt > 0 {
 			row.FrtSumMs += info.Frt
 			row.FrtCount++
@@ -107,6 +114,8 @@ type costMoney struct {
 	ProfitRate float64 `json:"profit_rate"`
 	RefundUsd  float64 `json:"refund_usd"`
 
+	// PromptTokens 为「非缓存输入」tokens：与 CacheReadTokens/CacheCreationTokens
+	// 互不重叠，四项相加恒等于 TotalTokens（前端悬浮明细依赖该恒等式）。
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	RequestCount     int `json:"request_count"`
@@ -184,7 +193,7 @@ type costDimensionRow struct {
 // revenue_usd = 实付/QuotaPerUnit；cost_cny = 刊例USD × 渠道倍率；
 // profit = revenue_cny − cost_cny；收入为 0 时利润率置 0。
 // 同时派生 v2 指标：total_tokens、success_rate、cache_rate、avg_ttft_ms
-// （零分母兜底规则见 deriveCostMoneyRates）。
+// （公式与零分母兜底规则见 deriveRates）。
 func costMoneyFromRow(r *costCubeRow, ratio, exchangeRate float64) costMoney {
 	m := costMoney{
 		RevenueUsd:          roundTo6(r.Quota / common.QuotaPerUnit),
@@ -209,21 +218,28 @@ func costMoneyFromRow(r *costCubeRow, ratio, exchangeRate float64) costMoney {
 	return m
 }
 
-// deriveRates 重新计算 v2 派生指标：total_tokens 恒为 prompt+completion；
-// success_rate 在请求+错误数为 0 时兜底为 1；cache_rate 在 prompt tokens 为
-// 0 时兜底为 0；avg_ttft_ms 在无 frt 采样时兜底为 0。add() 汇总原始字段后
-// 必须重新调用本方法，不能直接对派生字段做加法。
+// deriveRates 重新计算 v2 派生指标。add() 汇总原始字段后必须重新调用本方法，
+// 不能直接对派生字段做加法。
+//
+//	total_tokens = 非缓存输入 + 输出 + 缓存读取 + 缓存创建
+//	cache_rate   = 缓存读取 / 总输入（非缓存输入 + 缓存读取 + 缓存创建）
+//
+// PromptTokens 在采集时已归一化为「非缓存输入」（见 promptTokensExcludingCache），
+// 故四项互不重叠、直接相加即为总数，且 Claude 与 OpenAI 语义的行可混合累加。
+// 命中率分母取总输入而非总 tokens——输出 tokens 永远不可能命中缓存，计入分母会
+// 系统性压低命中率。零分母兜底：success_rate → 1（无请求视为无失败），其余 → 0。
 func (m *costMoney) deriveRates() {
-	m.TotalTokens = m.PromptTokens + m.CompletionTokens
+	inputTokens := m.PromptTokens + m.CacheReadTokens + m.CacheCreationTokens
+	m.TotalTokens = inputTokens + m.CompletionTokens
 	if m.RequestCount+m.ErrorCount == 0 {
 		m.SuccessRate = 1
 	} else {
 		m.SuccessRate = roundTo6(float64(m.RequestCount) / float64(m.RequestCount+m.ErrorCount))
 	}
-	if m.PromptTokens == 0 {
+	if inputTokens == 0 {
 		m.CacheRate = 0
 	} else {
-		m.CacheRate = roundTo6(float64(m.CacheReadTokens) / float64(m.PromptTokens))
+		m.CacheRate = roundTo6(float64(m.CacheReadTokens) / float64(inputTokens))
 	}
 	if m.FrtCount == 0 {
 		m.AvgTtftMs = 0
