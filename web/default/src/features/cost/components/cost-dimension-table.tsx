@@ -103,6 +103,35 @@ function rowKey(dim: CostDimension, row: CostDimensionRow, index: number) {
   return `c-${row.channel_id ?? `i${index}`}`
 }
 
+/**
+ * Card-style row grouping, built on the SINGLE table rather than one table per
+ * group: `border-separate` + `border-spacing-y-2` puts real whitespace between
+ * groups, and each group draws its own border/rounding. Column widths stay
+ * governed by one table layout, so parent and child cells line up exactly —
+ * splitting into per-group tables would require a hand-tuned width budget and
+ * reintroduce the misalignment this table was rebuilt to avoid.
+ *
+ * `border-separate` disables the `border-b` row rule from `ui/table`, so every
+ * edge is drawn explicitly per cell here. Classes are written out in full
+ * (no interpolation) because Tailwind only generates classes it can see
+ * statically in the source.
+ */
+const GROUP_ROW_SIDES =
+  '[&>td]:border-border/80 [&>td:first-child]:border-l [&>td:last-child]:border-r'
+const GROUP_ROW_TOP =
+  '[&>td]:border-t [&>td:first-child]:rounded-tl-lg [&>td:last-child]:rounded-tr-lg'
+const GROUP_ROW_BOTTOM =
+  '[&>td]:border-b [&>td:first-child]:rounded-bl-lg [&>td:last-child]:rounded-br-lg'
+
+/** Border classes for a row at a given position within its group. */
+function groupRowClass(isFirst: boolean, isLast: boolean): string {
+  return cn(
+    GROUP_ROW_SIDES,
+    isFirst && GROUP_ROW_TOP,
+    isLast && GROUP_ROW_BOTTOM
+  )
+}
+
 function MoneyCell({
   children,
   className,
@@ -141,6 +170,7 @@ type MetricRow = CostMoney &
       | 'group_ratio'
       | 'group_ratio_known'
       | 'group_ratio_special'
+      | 'group_ratio_mixed'
     >
   > &
   Partial<Pick<CostBreakdownRow, 'cost_mode' | 'cost_ratio' | 'cost_discount' | 'effective_ratio'>>
@@ -215,13 +245,14 @@ function UserDiscountHeader() {
       <div className='flex flex-col gap-2'>
         <CostHelpFormula
           term={t('User Discount')}
-          expression={t("the group ratio of the user's current group; a dedicated ratio takes priority when configured")}
+          expression={t('revenue ÷ list price over the selected range')}
         />
         <CostHelpNotes
           notes={[
-            t('A dedicated ratio is the (user group × token group) override, read as the user using their own group.'),
-            t('This is a current-config snapshot, not weighted over the selected range.'),
-            t('Shows "-" when the group has no ratio configured.'),
+            t('This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.'),
+            t('Hover a value to compare it against the group\'s currently configured ratio.'),
+            t('A dedicated ratio is the (user group × token group) override, which takes priority over the group ratio.'),
+            t('Shows the configured value instead when the range has no list price (free or unpriced models).'),
           ]}
         />
       </div>
@@ -580,6 +611,7 @@ function BreakdownRows({
         group_ratio: row.group_ratio,
         group_ratio_known: row.group_ratio_known,
         group_ratio_special: row.group_ratio_special,
+        group_ratio_mixed: row.group_ratio_mixed,
       }
     }
     return b
@@ -588,11 +620,17 @@ function BreakdownRows({
   // field (the parent row already is the channel), so there's no "view
   // channel only" action to show there.
   const channelActionAvailable = dim !== 'channels'
+  const subSuppliers = dim === 'channels' ? row.sub_suppliers : undefined
+  const truncated = Boolean(row.breakdown_truncated)
+  // The group's closing edge belongs to whichever child row renders last.
+  const lastIndex = breakdown.length - 1
+  const bottomOnTruncationNote = truncated
+  const bottomOnLastBreakdown = !truncated
 
   return (
     <>
-      {dim === 'channels' && row.sub_suppliers && row.sub_suppliers.length > 0 && (
-        <TableRow className='hover:bg-transparent'>
+      {subSuppliers && subSuppliers.length > 0 && (
+        <TableRow className={cn('hover:bg-transparent', GROUP_ROW_SIDES)}>
           <TableCell colSpan={totalColSpan} className='bg-muted/30 p-0'>
             <div className='flex flex-col gap-1.5 p-2'>
               <p className='text-muted-foreground text-xs'>
@@ -613,7 +651,7 @@ function BreakdownRows({
                     cell: (supplier) => supplier.cost_ratio ?? '-',
                   },
                 ]}
-                data={row.sub_suppliers}
+                data={subSuppliers}
                 tableClassName='text-xs'
               />
             </div>
@@ -624,8 +662,15 @@ function BreakdownRows({
       {breakdown.map((bRow, index) => {
         const enriched = enrich(bRow)
         return (
-          <TableRow key={index} className='bg-muted/20 hover:bg-muted/30'>
-            <TableCell />
+          <TableRow
+            key={index}
+            className={cn(
+              'bg-muted/20 hover:bg-muted/30',
+              groupRowClass(false, bottomOnLastBreakdown && index === lastIndex)
+            )}
+          >
+            {/* 2px rail on the leading cell ties every child visually to its parent. */}
+            <TableCell className='border-primary/30 border-l-2' />
             <TableCell>
               <BreakdownIdentityCell dim={dim} row={bRow} viewMode={viewMode} />
             </TableCell>
@@ -660,8 +705,13 @@ function BreakdownRows({
         )
       })}
 
-      {Boolean(row.breakdown_truncated) && (
-        <TableRow className='hover:bg-transparent'>
+      {truncated && (
+        <TableRow
+          className={cn(
+            'hover:bg-transparent',
+            groupRowClass(false, bottomOnTruncationNote)
+          )}
+        >
           <TableCell
             colSpan={totalColSpan}
             className='text-muted-foreground p-2 text-xs'
@@ -819,8 +869,9 @@ export function CostDimensionTable({
 
   return (
     <div className='flex flex-col gap-2'>
-      <div className='overflow-x-auto rounded-lg border'>
-        <Table>
+      {/* No outer border: each row group draws its own card frame instead. */}
+      <div className='overflow-x-auto'>
+        <Table className='border-separate border-spacing-y-2'>
           <TableHeader>
             <TableRow>
               <TableHead className='w-8' />
@@ -836,14 +887,17 @@ export function CostDimensionTable({
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, index) => (
-                <TableRow key={`skeleton-${index}`}>
+                <TableRow
+                  key={`skeleton-${index}`}
+                  className={groupRowClass(true, true)}
+                >
                   <TableCell colSpan={totalColSpan}>
                     <Skeleton className='h-6 w-full' />
                   </TableCell>
                 </TableRow>
               ))
             ) : items.length === 0 ? (
-              <TableRow>
+              <TableRow className={groupRowClass(true, true)}>
                 <TableCell
                   colSpan={totalColSpan}
                   className='text-muted-foreground h-24 text-center'
@@ -856,9 +910,19 @@ export function CostDimensionTable({
                 const key = rowKey(dim, row, index)
                 const hasBreakdown = Boolean(row.breakdown?.length)
                 const isExpanded = expanded.has(key)
+                // Collapsed (or childless) rows are a one-row group, so the
+                // parent carries both the opening and closing edge.
+                const childrenVisible = hasBreakdown && isExpanded
                 return (
                   <Fragment key={key}>
-                    <TableRow>
+                    <TableRow
+                      className={cn(
+                        groupRowClass(true, !childrenVisible),
+                        // Tint the parent while its children are showing, so
+                        // the eye can find the group head in a long list.
+                        childrenVisible && 'bg-accent/40'
+                      )}
+                    >
                       <TableCell>
                         {hasBreakdown && (
                           <Button
@@ -919,7 +983,8 @@ export function CostDimensionTable({
           </TableBody>
           {summary && items.length > 0 && (
             <TableFooter>
-              <TableRow>
+              {/* Its own single-row card, matching the group frames above. */}
+              <TableRow className={groupRowClass(true, true)}>
                 <TableCell />
                 <TableCell className='font-semibold'>
                   {summaryLabel(dim, t)}

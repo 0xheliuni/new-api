@@ -304,3 +304,54 @@ avg_ttft_ms  = frt_sum_ms / frt_count（分母 0 → 0）
 ## A5. 页脚
 
 不改代码（CLAUDE.md Rule 5 保护品牌信息）。使用系统自带 Footer 设置（系统设置 → 通用 → Footer，支持 HTML，两套前端运行时整体替换默认页脚），操作说明随交付提供。已获用户确认。
+
+---
+
+# 附录 B：v3 迭代（2026-08-05）—— 折扣口径 / 展示货币 / 时间粒度 / 行分组
+
+## B1. 用户折扣：实际加权为主，配置快照为辅（修 bug）
+
+**问题**：`resolveUserDiscount` 只查二维表的**对角线** `GetGroupGroupRatio(group, group)`，而 `groupGroupRatio` 的语义是 `[用户分组][使用分组]`（计费链路见 `relay/helper/price.go:53`）。因此 `vip → default = 0.7` 这类**跨分组专属倍率**查不到，静默回退一维 `groupRatio["vip"]`，报表显示的折扣与客户实付不符。
+
+注意：**钱一直是算对的** —— `logListQuota()`（`bill_summary.go:178-181`）早已按「`user_group_ratio` 有效则优先」反推刊例价。本次只修**展示列**，无需数据修正。
+
+**方案**（已确认）：
+
+1. **主口径改为实际加权折扣** `effective_discount = revenue_usd / list_usd`，在 `costMoney.deriveRates()` 内派生。该商本身即区间内按额度加权的真实折扣，专属倍率、跨分组混用、区间内倍率变更全部自动正确，且**不需要**查任何配置。`list_usd == 0`（免费/未定价模型）时 `known=false`。
+2. **配置快照修正为按实际使用分组查表**：`costCubeRow.QuotaByGroup`（`Log.Group` → 净额度）刻意**不进 cube 键**（进键会让立方体行数按使用分组数翻倍，而三个维度都不按它折叠），只由 `attachUserGroupRatios` 消费。单一使用分组精确查表；多分组按额度加权并置 `group_ratio_mixed`；加权分母只算「已配置倍率」的额度，避免未配置分组把折扣稀释成偏低值。
+3. **前端**：主显实际折扣，hover 出配置对照；两者相差 > 0.005 时给 warning，提示「可能换过分组或区间内调过倍率」—— 这正是原设计 §9 表格里「配置快照 vs 区间实际」那条已知偏差的显式化。
+
+## B2. 图表展示货币跟随运营设置
+
+两张图此前硬编码 `¥`（`formatCny` 写死 `currency:'CNY'`；classic 标题写死「收支趋势（¥）」），而 KPI 与表格早已通过 `useMoneyPrimaryCurrency()` 跟随 `quota_display_type`。
+
+- 新前端：export `getBillingDisplayMeta` + 新增 `useCostCurrency()`；classic：新增 `getCostChartCurrency()`（复用 `helpers/render.jsx` 的 `getCurrencyConfig()`）。
+- `TOKENS` 退回 USD（金额用 token 表达无意义），`CUSTOM` 用自定义符号 + 自定义汇率（无 ISO code，`Intl` 的 `style:'currency'` 不可用，改为符号 + 纯小数）。
+- **两个汇率不可混用**（本项最易埋 bug 处）：**查询汇率**（筛选栏输入，默认 6.8，成本核算口径，后端已用它算出全部 `*_cny`）vs **展示汇率**（`usdExchangeRate`，全站展示口径）。故 `format()` 只接受 **USD**：持有 `*_cny` 的调用方必须先 `deriveUsdFromCny` 折回美元，保证只换算一次。
+- 单位标在卡片标题（单轴图没有别处能确认币种）。
+
+## B3. 自适应时间粒度 + 空桶补零
+
+页面**默认筛选就是「今天」**（`cost-filter.tsx:76-81`），日粒度下趋势图只有一个孤点 —— 每个用户打开都会看到，不是边缘场景。
+
+- `normalizeCostGranularity(raw, start, end)`：跨度 ≤ 2 天自适应 `hour`（桶标签 `2006-01-02 15`），否则 `day`；`granularity` 参数可显式覆盖（对齐 `bill_summary.go:65` 的 `normalizeBillGranularity` 既有模式）。分桶纯应用层 `time.Format`，不新增 SQL，天然三库兼容。
+- **粒度必须纳入缓存键**：粒度决定分桶键，串用会直接产出错误的趋势序列。
+- `costBucketRange` 补齐区间内无消费的桶（补零），顺带修掉日粒度下**已存在**的断线问题；只补到 `min(end, now)`（未来桶补零会画出假的归零走势），并设 800 桶护栏。堆叠图**不**补零（桶 × 渠道笛卡尔积会按渠道数放大数据量，而柱子缺失即 0 高度，无歧义）。
+- 前端按 `granularity` 切轴标签（`HH:mm` / `MM-DD`），小时粒度抽样最多 12 个刻度（点全保留，只是标签隔几个画一次）。
+
+## B4. 父子表格卡片式分组
+
+- **新前端**：保持**单表格** + `border-separate border-spacing-y-2`，每组行自绘边框圆角。列宽仍由同一表格布局统一决定，**无列错位风险** —— 拆成「每组一个 table」需要手工列宽预算，正是 `CostTables.jsx:606-607` 注释里记录的那个已被推翻的旧方案。`border-separate` 会使 `ui/table` 的 `border-b` 行分隔线失效，故每条边显式绘制；Tailwind 只识别静态字面量，类名不做插值。子行首列加 2px 左导轨，展开中的父行加 `bg-accent/40`；骨架屏 / 空态 / 汇总行各自成单行卡片。
+- **classic**（Semi `CardTable`）：改用 `onRow` 注入类名 —— 父行上边 2px 强分隔 + 子行左导轨 + 展开父行底色。**不**套用 `border-separate`：Semi 自带 colgroup 与 sticky 滚动容器，改 `border-collapse` 会连带影响列宽计算与表头吸顶，收益不值风险。
+
+## B5. 附带优化
+
+- 未填倍率警示条可下钻：`unpriced_channels: [{channel_id, channel_name}]`（复用已有 `unpriced` map，零额外计算）。
+- 图表空态：`themeReady && !loading` 但序列为空时给显式文案，而非空白画布。
+
+## B6. 测试
+
+- 单测：跨分组专属倍率（**回退修复后确实变红**，已验证）、多使用分组加权、`effective_discount` 派生与 `add()` 汇总重算、粒度自适应边界（1h/1d/2d/2d+1s/7d + 手动覆盖）、空桶补零与不越过 `now`、缓存键含粒度。
+- 集成测试（`controller/cost_integration_test.go`，走真实 `model.InitDB()` + 临时 SQLite）：覆盖单测覆盖不到的 `buildCostCube` 全链路（HTTP 参数 → `GetAllLogsForExport` 流式扫描 → 渠道/用户分组映射 → 折叠 → 折扣解析），以及 JSON 契约（新字段确实下发、内部 `UsingGroupQuota` 不泄漏）。
+  - 注：不能手搓 `gorm.Open` + `AutoMigrate` —— 成本查询依赖 `initCol()` 初始化的保留字列名变量（`commonGroupCol` 等），而 `initCol` 是 model 包私有、仅在 `chooseDB` 内触发，绕过会让 `GetAllUserGroups` 拼出 `SELECT username,  FROM users`。
+

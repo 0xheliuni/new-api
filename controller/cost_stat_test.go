@@ -318,6 +318,80 @@ func TestAttachUserGroupRatios(t *testing.T) {
 	}
 }
 
+// TestAttachUserGroupRatios_CrossGroupDedicatedRatio 跨分组专属倍率：
+// groupGroupRatio 的语义是 [用户分组][使用分组]，用户在 vip 组、拿 default 分组的
+// 令牌发请求时应命中 {"vip":{"default":0.7}}。旧实现只查对角线
+// GetGroupGroupRatio(g, g)，这类配置查不到、会静默回退一维分组倍率。
+func TestAttachUserGroupRatios_CrossGroupDedicatedRatio(t *testing.T) {
+	if err := ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":0.9}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ratio_setting.UpdateGroupGroupRatioByJSONString(`{"vip":{"default":0.7}}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// dave 属于 vip 组，本区间内的消费全部走 default 使用分组。
+	rows := []costDimensionRow{{Username: "dave", UsingGroupQuota: map[string]float64{"default": 1000}}}
+	attachUserGroupRatios(rows, map[string]string{"dave": "vip"})
+
+	if !rows[0].GroupRatioKnown || !rows[0].GroupRatioSpecial {
+		t.Fatalf("cross-group dedicated ratio must be found: %+v", rows[0])
+	}
+	if rows[0].GroupRatio != 0.7 {
+		t.Fatalf("group_ratio = %v, want 0.7 (dedicated), not 0.9 (plain vip ratio)", rows[0].GroupRatio)
+	}
+}
+
+// TestAttachUserGroupRatios_MixedUsingGroups 用户在区间内跨多个使用分组消费时，
+// 配置折扣按各分组额度加权，并置 GroupRatioMixed 供前端标注。
+func TestAttachUserGroupRatios_MixedUsingGroups(t *testing.T) {
+	if err := ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":0.9}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ratio_setting.UpdateGroupGroupRatioByJSONString(`{"vip":{"default":0.7,"vip":0.5}}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3/4 额度走 default(0.7)、1/4 走 vip(0.5) → 0.7*0.75 + 0.5*0.25 = 0.65
+	rows := []costDimensionRow{{Username: "erin",
+		UsingGroupQuota: map[string]float64{"default": 750, "vip": 250}}}
+	attachUserGroupRatios(rows, map[string]string{"erin": "vip"})
+
+	if !rows[0].GroupRatioMixed {
+		t.Fatalf("multiple using-groups must set GroupRatioMixed: %+v", rows[0])
+	}
+	if got := rows[0].GroupRatio; got < 0.6499 || got > 0.6501 {
+		t.Fatalf("weighted group_ratio = %v, want 0.65", got)
+	}
+}
+
+// TestEffectiveDiscountDerivation 实际加权折扣 = 收入$ ÷ 刊例$：
+// 该商本身即区间内按额度加权的真实生效折扣，专属倍率/跨分组/倍率变更全自动正确。
+// 刊例为 0（免费或未定价模型）时商无意义，置 Known=false 由前端显示 "-"。
+func TestEffectiveDiscountDerivation(t *testing.T) {
+	// 8 折：实付 800 / 刊例 1000
+	m := costMoney{RevenueUsd: 8, ListUsd: 10}
+	m.deriveRates()
+	if !m.EffectiveDiscountKnown || m.EffectiveDiscount != 0.8 {
+		t.Fatalf("effective discount = %v (known=%v), want 0.8", m.EffectiveDiscount, m.EffectiveDiscountKnown)
+	}
+
+	// 刊例为 0 → 无意义
+	zero := costMoney{RevenueUsd: 0, ListUsd: 0}
+	zero.deriveRates()
+	if zero.EffectiveDiscountKnown {
+		t.Fatalf("zero list price must leave discount unknown: %+v", zero)
+	}
+
+	// add() 汇总两行不同折扣后按总额重算：(8+5) / (10+10) = 0.65
+	sum := costMoney{RevenueUsd: 8, ListUsd: 10}
+	sum.deriveRates()
+	sum.add(costMoney{RevenueUsd: 5, ListUsd: 10})
+	if got := sum.EffectiveDiscount; got < 0.6499 || got > 0.6501 {
+		t.Fatalf("aggregated discount = %v, want 0.65 (total revenue ÷ total list)", got)
+	}
+}
+
 func seedCube() *costCube {
 	c := newCostCube()
 	c.addBatch([]*model.Log{

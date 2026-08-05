@@ -20,9 +20,11 @@ For commercial licensing, please contact support@quantumnous.com
 // 成本报表的双币种展示：与站点管理员在「系统设置 → 运营设置 → 额度展示类型」
 // (quota_display_type) 里选择的口径保持一致 —— 与 helpers/render.jsx 的
 // renderQuota()/getQuotaDisplayType() 读取同一个 localStorage key。
-// 成本报表始终展示美元(USD)与人民币(CNY)两条线（不支持 TOKENS/CUSTOM 口径，
-// 报表口径本身就是"上游计价美元 + 结算成本人民币"，与全站计费展示类型无关，
-// 仅用它来决定"哪种货币在前"）。
+// 表格与 KPI 始终展示美元(USD)与人民币(CNY)两条线（报表口径本身就是"上游计价
+// 美元 + 结算成本人民币"），仅用展示类型决定"哪种货币在前"；
+// 图表只有一条轴，走 getCostChartCurrency() 解析出单一展示货币。
+
+import { getCurrencyConfig } from '../../helpers/render';
 
 /** 读取管理员配置的额度展示类型，兜底 'USD'。 */
 export function getQuotaDisplayType() {
@@ -84,4 +86,35 @@ export function effectiveCostRatioOf(row) {
   const costCny = Number(row?.cost_cny || 0);
   if (!listUsd) return null;
   return costCny / listUsd;
+}
+
+/**
+ * 图表的单一展示货币，跟随「额度展示类型」。
+ *
+ * 表格/KPI 能并排放两种货币，图表只有一条轴，必须收敛成一种：
+ * CNY → ¥ + 站点汇率；CUSTOM → 自定义符号 + 自定义汇率；
+ * USD / TOKENS → $（金额用 token 表达无意义，与新前端 getBillingDisplayMeta 同口径）。
+ *
+ * ## 两个汇率不能混用
+ * - **查询汇率**（筛选栏输入，默认 6.8）：成本核算口径，后端已用它算出全部
+ *   *_cny 字段；
+ * - **展示汇率**（getCurrencyConfig().rate）：全站展示口径。
+ *
+ * 因此 format() 只接受**美元**。持有 *_cny 的调用方必须先用查询汇率除回美元
+ * （deriveUsdFromCny），保证只换算一次——直接喂 CNY 会叠加两个汇率。
+ *
+ * @returns {{symbol: string, rateFromUsd: number, format: (usd: number) => string}}
+ */
+export function getCostChartCurrency() {
+  const { symbol, rate, type } = getCurrencyConfig();
+  // TOKENS 没有货币语义，退回美元；其余沿用 getCurrencyConfig 的符号与汇率。
+  const isTokens = type === 'TOKENS';
+  const displaySymbol = isTokens ? '$' : symbol;
+  const rateFromUsd = isTokens ? 1 : Number(rate) || 1;
+  return {
+    symbol: displaySymbol,
+    rateFromUsd,
+    format: (usd, digits = 2) =>
+      `${displaySymbol}${(Number(usd || 0) * rateFromUsd).toFixed(digits)}`,
+  };
 }

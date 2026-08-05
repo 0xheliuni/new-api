@@ -52,6 +52,10 @@ export interface PricingCellRow {
   group_ratio?: number
   group_ratio_known?: boolean
   group_ratio_special?: boolean
+  group_ratio_mixed?: boolean
+  /** Quota-weighted discount actually applied over the range (revenue ÷ list). */
+  effective_discount?: number
+  effective_discount_known?: boolean
 }
 
 const hoverTriggerClass =
@@ -205,12 +209,20 @@ export function CostRatioDiscountCell({
 }
 
 /**
- * The user's *current* discount: the dedicated (user-group × using-group)
- * ratio when one is configured, otherwise the group's plain ratio. A
- * query-time config snapshot — the hover states that explicitly, because a
- * user who changed groups mid-range will not see this value reflected in the
- * range's revenue. Works on parent rows (users dim) and sub-rows (all dims)
- * alike; renders '-' when the row has no single user.
+ * The user's discount, in two layers:
+ *
+ *  - **shown**: the discount actually applied over the range
+ *    (`effective_discount` = revenue ÷ list price, quota-weighted). This is
+ *    what the customer really paid, and it reflects dedicated ratios,
+ *    cross-group usage and mid-range ratio changes without consulting any
+ *    config;
+ *  - **hover**: the *current* configured ratio (dedicated when one applies),
+ *    plus a warning when config and reality disagree — which is exactly the
+ *    signal that the user changed groups or a ratio was edited mid-range.
+ *
+ * Renders '-' when the row has no single user, and falls back to the config
+ * value when list price is 0 (free/unpriced models make the quotient
+ * meaningless).
  */
 export function UserDiscountCell({ row }: { row: PricingCellRow }) {
   const { t } = useTranslation()
@@ -219,8 +231,22 @@ export function UserDiscountCell({ row }: { row: PricingCellRow }) {
     return <span className='text-muted-foreground'>-</span>
   }
 
-  const known = Boolean(row.group_ratio_known)
+  const configKnown = Boolean(row.group_ratio_known)
   const special = Boolean(row.group_ratio_special)
+  const mixed = Boolean(row.group_ratio_mixed)
+  const actualKnown = Boolean(row.effective_discount_known)
+  const actual = row.effective_discount
+
+  // Nothing to show at all: no usage to derive from and no config to fall back on.
+  if (!actualKnown && !configKnown) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+
+  // Config and reality disagree beyond rounding — surfaced in the hover.
+  const drifted =
+    actualKnown &&
+    configKnown &&
+    Math.abs((actual ?? 0) - (row.group_ratio ?? 0)) > 0.005
 
   return (
     <HoverCard>
@@ -230,32 +256,54 @@ export function UserDiscountCell({ row }: { row: PricingCellRow }) {
         tabIndex={0}
         className={hoverTriggerClass}
       >
-        {known ? (
-          <span className='inline-flex items-center gap-1'>
-            {t(special ? '{{v}} / dedicated' : '{{v}} / group', {
-              v: trimRatioNumber(row.group_ratio),
-            })}
+        {actualKnown ? (
+          <span
+            className={
+              drifted ? 'text-warning inline-flex items-center gap-1' : undefined
+            }
+          >
+            {trimRatioNumber(actual)}
           </span>
         ) : (
-          <span className='text-muted-foreground'>-</span>
+          // No list price to divide by — show the configured value instead,
+          // marked as such so it is not read as a measured number.
+          <span className='text-muted-foreground'>
+            {t('{{v}} / configured', { v: trimRatioNumber(row.group_ratio) })}
+          </span>
         )}
       </HoverCardTrigger>
-      <HoverCardContent align='end' className='w-72'>
+      <HoverCardContent align='end' className='w-80'>
         <div className='flex flex-col gap-1.5 text-xs'>
+          {actualKnown && (
+            <div className='flex items-center justify-between gap-4'>
+              <span className='text-muted-foreground'>
+                {t('Actual discount (this range)')}
+              </span>
+              <span className='tabular-nums'>{trimRatioNumber(actual)}</span>
+            </div>
+          )}
           <div className='flex items-center justify-between gap-4'>
             <span className='text-muted-foreground'>{t('Current group')}</span>
             <span className='font-medium'>{row.user_group}</span>
           </div>
-          {known ? (
+          {configKnown ? (
             <div className='flex items-center justify-between gap-4'>
               <span className='text-muted-foreground'>
                 {special ? t('Dedicated ratio') : t('Group ratio')}
               </span>
-              <span className='tabular-nums'>{row.group_ratio}</span>
+              <span className='tabular-nums'>
+                {mixed ? '≈' : ''}
+                {trimRatioNumber(row.group_ratio)}
+              </span>
             </div>
           ) : (
             <p className='text-muted-foreground'>
               {t('This group has no ratio configured.')}
+            </p>
+          )}
+          {actualKnown && (
+            <p className='text-muted-foreground'>
+              {t('Actual discount is revenue ÷ list price over the selected range.')}
             </p>
           )}
           {special && (
@@ -265,11 +313,27 @@ export function UserDiscountCell({ row }: { row: PricingCellRow }) {
               )}
             </p>
           )}
-          <p className='text-muted-foreground'>
-            {t(
-              "The user's group as configured now — not weighted over the selected range, so it may differ if the user changed groups."
-            )}
-          </p>
+          {mixed && (
+            <p className='text-muted-foreground'>
+              {t(
+                'The user spent across several token groups in this range; the configured ratio shown is quota-weighted.'
+              )}
+            </p>
+          )}
+          {drifted && (
+            <p className='text-warning'>
+              {t(
+                'Actual and configured discounts differ — the user may have changed groups, or the ratio was edited during this range.'
+              )}
+            </p>
+          )}
+          {!actualKnown && (
+            <p className='text-muted-foreground'>
+              {t(
+                'No list price in this range (free or unpriced models), so the actual discount cannot be derived.'
+              )}
+            </p>
+          )}
         </div>
       </HoverCardContent>
     </HoverCard>

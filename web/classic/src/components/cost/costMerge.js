@@ -46,6 +46,7 @@ export const RAW_ADDITIVE_FIELDS = [
 // - success_rate：request_count+error_count 为 0 时兜底为 1
 // - avg_ttft_ms：frt_count 为 0 时兜底为 0
 // - profit_rate：revenue_cny 为 0 时兜底为 0
+// - effective_discount：收入$ ÷ 刊例$（按合并后的总额重算，非各行取平均）
 export function deriveCostRates(row) {
   const promptTokens = Number(row.prompt_tokens) || 0;
   const completionTokens = Number(row.completion_tokens) || 0;
@@ -65,6 +66,9 @@ export function deriveCostRates(row) {
   row.cache_rate = inputTokens === 0 ? 0 : cacheReadTokens / inputTokens;
   row.avg_ttft_ms = frtCount === 0 ? 0 : frtSumMs / frtCount;
   row.profit_rate = revenueCny === 0 ? 0 : profitCny / revenueCny;
+  const listUsd = Number(row.list_usd) || 0;
+  row.effective_discount_known = listUsd !== 0;
+  row.effective_discount = listUsd === 0 ? 0 : (Number(row.revenue_usd) || 0) / listUsd;
   return row;
 }
 
@@ -87,7 +91,13 @@ export function mergeBreakdown(rows, keyFields) {
     carryFields.push('cost_mode', 'cost_ratio', 'cost_discount', 'effective_ratio');
   }
   if (keyFields.includes('username')) {
-    carryFields.push('user_group', 'group_ratio', 'group_ratio_known', 'group_ratio_special');
+    carryFields.push(
+      'user_group',
+      'group_ratio',
+      'group_ratio_known',
+      'group_ratio_special',
+      'group_ratio_mixed',
+    );
   }
 
   const groups = new Map();

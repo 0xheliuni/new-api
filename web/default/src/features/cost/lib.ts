@@ -16,8 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMemo } from 'react'
 import { useSystemConfigStore } from '@/stores/system-config-store'
-import type { CostBreakdownRow, CostMoney, CostStackPoint } from './types'
+import { getBillingDisplayMeta } from '@/lib/currency'
+import type {
+  CostBreakdownRow,
+  CostGranularity,
+  CostMoney,
+  CostStackPoint,
+} from './types'
 
 /**
  * Fixed-currency formatters for the cost accounting page. Unlike
@@ -65,6 +72,70 @@ export function useMoneyPrimaryCurrency(): MoneyPrimaryCurrency {
     (s) => s.config.currency.quotaDisplayType
   )
   return quotaDisplayType === 'CNY' ? 'cny' : 'usd'
+}
+
+/**
+ * The single display currency the cost **charts** render in, following the
+ * admin's 系统设置 → 运营设置 → 额度展示类型 (`quota_display_type`).
+ *
+ * The tables and KPI cards show USD and CNY side by side (that pairing is the
+ * report's own semantics: list price is quoted in USD, upstream cost settles in
+ * CNY). A chart axis has room for exactly one unit, so it resolves to a single
+ * currency here — CNY / USD / the admin's custom currency, falling back to USD
+ * for TOKENS via `getBillingDisplayMeta` (an amount expressed in tokens is
+ * meaningless on a money axis).
+ *
+ * ## Two different exchange rates — do not conflate them
+ *
+ * - **query rate** (`exchange_rate` in the filter bar, default 6.8): a *cost
+ *   accounting* input. The backend already applied it to produce every `*_cny`
+ *   field, including `cost_cny`, which came from `list_usd × cost ratio`.
+ * - **display rate** (`usdExchangeRate` / `customCurrencyExchangeRate`): a
+ *   *presentation* setting for the whole site.
+ *
+ * `format()` therefore takes **USD**, never CNY. Callers holding a `*_cny`
+ * value must divide by the query rate first (`deriveUsdFromCny`) so the number
+ * passes through exactly one conversion; feeding CNY straight in would apply
+ * both rates and inflate the axis by ~7x.
+ */
+export interface CostCurrency {
+  symbol: string
+  /** Multiplier from USD to the display currency. */
+  rateFromUsd: number
+  /** Format a **USD** amount into the display currency. */
+  format: (usdValue: number | null | undefined) => string
+}
+
+export function useCostCurrency(): CostCurrency {
+  const currency = useSystemConfigStore((s) => s.config.currency)
+  return useMemo(() => {
+    const meta = getBillingDisplayMeta(currency)
+    // getBillingDisplayMeta never returns 'tokens'; the guard keeps the union
+    // exhaustive for the type checker.
+    const symbol = meta.kind === 'tokens' ? '$' : meta.symbol
+    const rateFromUsd = meta.kind === 'tokens' ? 1 : meta.exchangeRate
+    const currencyCode = meta.kind === 'currency' ? meta.currencyCode : undefined
+
+    const format = (usdValue: number | null | undefined): string => {
+      if (usdValue == null || Number.isNaN(usdValue)) return '-'
+      const value = usdValue * rateFromUsd
+      // A custom currency has no ISO code, so Intl's `style: 'currency'` can't
+      // render it — prefix the admin's symbol onto a plain decimal instead.
+      if (!currencyCode) {
+        return `${symbol}${new Intl.NumberFormat(undefined, {
+          maximumFractionDigits: 2,
+        }).format(value)}`
+      }
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: currencyCode,
+        currencyDisplay: 'narrowSymbol',
+        maximumFractionDigits: 2,
+      }).format(value)
+    }
+
+    return { symbol, rateFromUsd, format }
+  }, [currency])
 }
 
 export interface DualMoneyText {
@@ -134,6 +205,8 @@ const ZERO_MONEY: CostMoney = {
   success_rate: 0,
   cache_rate: 0,
   avg_ttft_ms: 0,
+  effective_discount: 0,
+  effective_discount_known: false,
 }
 
 /**
@@ -183,6 +256,7 @@ export function mergeBreakdown(
         acc.group_ratio = row.group_ratio
         acc.group_ratio_known = row.group_ratio_known
         acc.group_ratio_special = row.group_ratio_special
+        acc.group_ratio_mixed = row.group_ratio_mixed
       }
       groups.set(key, acc)
     }
@@ -220,6 +294,12 @@ export function mergeBreakdown(
     acc.cache_rate =
       inputTokens === 0 ? 0 : round6(acc.cache_read_tokens / inputTokens)
     acc.avg_ttft_ms = acc.frt_count === 0 ? 0 : round6(acc.frt_sum_ms / acc.frt_count)
+    // Re-derived from the summed totals, not averaged across rows — matches
+    // `deriveRates` in controller/cost_stat.go.
+    acc.effective_discount_known = acc.list_usd !== 0
+    acc.effective_discount = acc.effective_discount_known
+      ? round6(acc.revenue_usd / acc.list_usd)
+      : 0
   }
 
   merged.sort((a, b) => b.revenue_cny - a.revenue_cny)
@@ -281,6 +361,53 @@ export function formatAvgTtft(
 ): string {
   if (!row.frt_count) return '-'
   return `${Math.round(row.avg_ttft_ms)} ms`
+}
+
+/**
+ * Axis label for a bucket key produced by the backend
+ * (`2026-06-01` for day buckets, `2026-06-01 15` for hour buckets).
+ * Hour buckets render as `15:00`, day buckets as `06-01`.
+ */
+export function formatBucketLabel(
+  bucket: string,
+  granularity: CostGranularity
+): string {
+  if (granularity === 'hour') {
+    const hour = bucket.slice(11, 13)
+    return hour ? `${hour}:00` : bucket
+  }
+  return bucket.slice(5) || bucket
+}
+
+/** Full bucket text for tooltips, where the date must stay unambiguous. */
+export function formatBucketTooltip(
+  bucket: string,
+  granularity: CostGranularity
+): string {
+  if (granularity === 'hour') {
+    const day = bucket.slice(0, 10)
+    const hour = bucket.slice(11, 13)
+    return hour ? `${day} ${hour}:00` : bucket
+  }
+  return bucket
+}
+
+/**
+ * Which bucket labels get an axis tick. An hourly range renders up to ~49
+ * buckets; showing every label turns the axis into an unreadable smear, so
+ * only every Nth is kept (the series itself keeps every point).
+ */
+export function sampleBucketTicks(
+  buckets: string[],
+  maxTicks = 12
+): Set<string> {
+  if (buckets.length <= maxTicks) return new Set(buckets)
+  const step = Math.ceil(buckets.length / maxTicks)
+  const kept = new Set<string>()
+  for (let i = 0; i < buckets.length; i += step) kept.add(buckets[i])
+  // Always anchor the last bucket so the axis ends on the real range end.
+  kept.add(buckets[buckets.length - 1])
+  return kept
 }
 
 const THEME_CHART_COLOR_VARIABLES = [

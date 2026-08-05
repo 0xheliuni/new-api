@@ -263,7 +263,13 @@ const CostAccounting = () => {
         })}
         t={t}
       >
-        <CostCharts trend={overview?.trend} costStack={overview?.cost_stack} t={t} />
+        <CostCharts
+          trend={overview?.trend}
+          costStack={overview?.cost_stack}
+          granularity={overview?.granularity}
+          exchangeRate={overview?.exchange_rate}
+          t={t}
+        />
         <CostTables
           t={t}
           activeTab={activeTab}

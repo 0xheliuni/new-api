@@ -22,8 +22,44 @@ import { Card, Empty } from '@douyinfe/semi-ui';
 import { VChart } from '@visactor/react-vchart';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
 import { CHART_CONFIG, CARD_PROPS } from '../../constants/dashboard.constants';
+import { getCostChartCurrency, deriveUsdFromCny } from './costFormat';
 
 const MAX_STACK_SERIES = 8;
+
+// 轴刻度上限：小时粒度最多约 49 个桶，全画出来标签会糊成一片。
+const MAX_AXIS_TICKS = 12;
+
+/**
+ * 桶标签 → 轴标签。后端桶格式：日粒度 "2026-06-01"、小时粒度 "2026-06-01 15"。
+ */
+function formatBucketLabel(bucket, granularity) {
+  const s = String(bucket || '');
+  if (granularity === 'hour') {
+    const hour = s.slice(11, 13);
+    return hour ? `${hour}:00` : s;
+  }
+  return s.slice(5) || s;
+}
+
+/** 悬浮提示里的完整时间，日期不能省略否则跨天时有歧义。 */
+function formatBucketTooltip(bucket, granularity) {
+  const s = String(bucket || '');
+  if (granularity === 'hour') {
+    const hour = s.slice(11, 13);
+    return hour ? `${s.slice(0, 10)} ${hour}:00` : s;
+  }
+  return s;
+}
+
+/** 抽样出要显示刻度的桶：点全保留，只是标签隔几个画一次。 */
+function sampleBucketTicks(buckets, maxTicks = MAX_AXIS_TICKS) {
+  if (buckets.length <= maxTicks) return new Set(buckets);
+  const step = Math.ceil(buckets.length / maxTicks);
+  const kept = new Set();
+  for (let i = 0; i < buckets.length; i += step) kept.add(buckets[i]);
+  kept.add(buckets[buckets.length - 1]);
+  return kept;
+}
 
 // 固定配色，与 web/default 端保持一致的语义：收入蓝、成本橙、利润绿
 const TREND_COLORS = {
@@ -44,24 +80,27 @@ const STACK_COLORS = [
   '#94a3b8', // 其他
 ];
 
-// 将 trend 数据（宽表：每行含 revenue_cny/cost_cny/profit_cny）转换为 VChart 需要的长表
-function buildTrendData(trend, seriesNames) {
+// 将 trend 数据（宽表：每行含 revenue_cny/cost_cny/profit_cny）转换为 VChart 需要的长表。
+// 金额统一先按查询汇率折回美元，再由 currency.format() 换算成展示货币——后端的
+// *_cny 已经乘过一次查询汇率，直接用会叠加两个汇率。
+function buildTrendData(trend, seriesNames, queryRate) {
   const rows = [];
+  const toUsd = (cny) => deriveUsdFromCny(cny, queryRate);
   (trend || []).forEach((point) => {
     rows.push({
       date: point.date,
       series: seriesNames.revenue,
-      value: Number(point.revenue_cny) || 0,
+      value: toUsd(point.revenue_cny),
     });
     rows.push({
       date: point.date,
       series: seriesNames.cost,
-      value: Number(point.cost_cny) || 0,
+      value: toUsd(point.cost_cny),
     });
     rows.push({
       date: point.date,
       series: seriesNames.profit,
-      value: Number(point.profit_cny) || 0,
+      value: toUsd(point.profit_cny),
     });
   });
   return rows;
@@ -115,11 +154,16 @@ function foldChannelStack(points, otherLabel, maxSeries = MAX_STACK_SERIES) {
   return { data, domain };
 }
 
-const CostCharts = ({ trend, costStack, t }) => {
+const CostCharts = ({ trend, costStack, granularity = 'day', exchangeRate, t }) => {
   // 与看板保持一致的 VChart 主题初始化
   useEffect(() => {
     initVChartSemiTheme({ isWatchingThemeSwitch: true });
   }, []);
+
+  // 展示货币跟随「系统设置 → 运营设置 → 额度展示类型」；查询汇率用于把后端的
+  // *_cny 折回美元，两者不能混用（见 getCostChartCurrency 注释）。
+  const currency = useMemo(() => getCostChartCurrency(), []);
+  const queryRate = Number(exchangeRate) || 0;
 
   const seriesNames = useMemo(
     () => ({
@@ -131,13 +175,33 @@ const CostCharts = ({ trend, costStack, t }) => {
   );
 
   const trendData = useMemo(
-    () => buildTrendData(trend, seriesNames),
-    [trend, seriesNames],
+    () => buildTrendData(trend, seriesNames, queryRate),
+    [trend, seriesNames, queryRate],
   );
 
   const { data: stackData, domain: stackDomain } = useMemo(
     () => foldChannelStack(costStack, t('其他')),
     [costStack, t],
+  );
+
+  // 堆叠柱同样先折回美元，保证与折线图口径一致。
+  const stackDisplayData = useMemo(
+    () =>
+      stackData.map((d) => ({
+        ...d,
+        cost_display: deriveUsdFromCny(d.cost_cny, queryRate),
+      })),
+    [stackData, queryRate],
+  );
+
+  const trendTicks = useMemo(
+    () => sampleBucketTicks((trend || []).map((p) => p.date)),
+    [trend],
+  );
+
+  const stackTicks = useMemo(
+    () => sampleBucketTicks(Array.from(new Set(stackData.map((d) => d.date))).sort()),
+    [stackData],
   );
 
   const trendSpec = useMemo(
@@ -150,22 +214,32 @@ const CostCharts = ({ trend, costStack, t }) => {
       legends: { visible: true },
       title: {
         visible: true,
-        text: t('收支趋势（¥）'),
+        text: t('收支趋势') + `（${currency.symbol}）`,
       },
       axes: [
         {
           orient: 'left',
-          label: { formatMethod: (v) => Number(v).toFixed(0) },
+          label: { formatMethod: (v) => currency.format(Number(v) || 0, 0) },
+        },
+        {
+          orient: 'bottom',
+          label: {
+            formatMethod: (v) =>
+              trendTicks.has(String(v)) ? formatBucketLabel(v, granularity) : '',
+          },
         },
       ],
       line: { style: { lineWidth: 2 } },
       point: { visible: false },
       tooltip: {
         mark: {
+          title: {
+            value: (datum) => formatBucketTooltip(datum['date'], granularity),
+          },
           content: [
             {
               key: (datum) => datum['series'],
-              value: (datum) => Number(datum['value'] || 0).toFixed(4),
+              value: (datum) => currency.format(Number(datum['value']) || 0),
             },
           ],
         },
@@ -178,31 +252,47 @@ const CostCharts = ({ trend, costStack, t }) => {
         },
       },
     }),
-    [trendData, seriesNames, t],
+    [trendData, seriesNames, t, currency, granularity, trendTicks],
   );
 
   const stackSpec = useMemo(
     () => ({
       type: 'bar',
-      data: [{ id: 'costStack', values: stackData }],
+      data: [{ id: 'costStack', values: stackDisplayData }],
       xField: 'date',
-      yField: 'cost_cny',
+      yField: 'cost_display',
       seriesField: 'channel',
       stack: true,
       legends: { visible: true },
       title: {
         visible: true,
-        text: t('渠道成本堆叠（¥）'),
+        text: t('渠道成本堆叠') + `（${currency.symbol}）`,
       },
+      axes: [
+        {
+          orient: 'left',
+          label: { formatMethod: (v) => currency.format(Number(v) || 0, 0) },
+        },
+        {
+          orient: 'bottom',
+          label: {
+            formatMethod: (v) =>
+              stackTicks.has(String(v)) ? formatBucketLabel(v, granularity) : '',
+          },
+        },
+      ],
       bar: {
         state: { hover: { stroke: '#000', lineWidth: 1 } },
       },
       tooltip: {
         mark: {
+          title: {
+            value: (datum) => formatBucketTooltip(datum['date'], granularity),
+          },
           content: [
             {
               key: (datum) => datum['channel'],
-              value: (datum) => Number(datum['cost_cny'] || 0).toFixed(4),
+              value: (datum) => currency.format(Number(datum['cost_display']) || 0),
             },
           ],
         },
@@ -213,7 +303,7 @@ const CostCharts = ({ trend, costStack, t }) => {
         range: STACK_COLORS,
       },
     }),
-    [stackData, stackDomain, t],
+    [stackDisplayData, stackDomain, t, currency, granularity, stackTicks],
   );
 
   return (
@@ -231,7 +321,7 @@ const CostCharts = ({ trend, costStack, t }) => {
       </Card>
       <Card {...CARD_PROPS} className='!rounded-2xl' bodyStyle={{ padding: 8 }}>
         <div className='h-72'>
-          {stackData.length > 0 ? (
+          {stackDisplayData.length > 0 ? (
             <VChart spec={stackSpec} option={CHART_CONFIG} />
           ) : (
             <div className='flex h-full items-center justify-center'>

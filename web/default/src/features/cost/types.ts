@@ -39,6 +39,15 @@ export interface CostMoney {
   success_rate: number
   cache_rate: number
   avg_ttft_ms: number
+  /**
+   * Discount actually applied over the range: revenue ÷ list price, weighted
+   * by quota. Unlike `group_ratio` (a current-config snapshot) this reflects
+   * dedicated ratios, cross-group usage and mid-range ratio changes
+   * automatically. `false` when list price is 0 (free/unpriced models), where
+   * the quotient is meaningless.
+   */
+  effective_discount: number
+  effective_discount_known: boolean
 }
 
 /** Channel `setting.sub_suppliers` entry (dto.ChannelSubSupplier mirror). */
@@ -64,6 +73,8 @@ export interface CostBreakdownRow extends CostMoney {
   group_ratio?: number
   group_ratio_known?: boolean
   group_ratio_special?: boolean
+  /** Range spans several using-groups; `group_ratio` is the quota-weighted blend. */
+  group_ratio_mixed?: boolean
 }
 
 export interface CostDimensionRow extends CostMoney {
@@ -90,6 +101,8 @@ export interface CostDimensionRow extends CostMoney {
   group_ratio?: number
   group_ratio_known?: boolean
   group_ratio_special?: boolean
+  /** Range spans several using-groups; `group_ratio` is the quota-weighted blend. */
+  group_ratio_mixed?: boolean
 }
 
 export interface CostTrendPoint {
@@ -106,10 +119,22 @@ export interface CostStackPoint {
   cost_cny: number
 }
 
+/** Time-bucket size of the overview trend/stack series. */
+export type CostGranularity = 'hour' | 'day'
+
+/** A channel with no cost pricing configured (its cost counts as 0). */
+export interface CostUnpricedChannel {
+  channel_id: number
+  channel_name?: string
+}
+
 export interface CostOverview {
   totals: CostMoney
   unpriced_channel_count: number
+  unpriced_channels?: CostUnpricedChannel[]
   exchange_rate: number
+  /** Bucket size the backend chose (auto: hour for ranges <= 2 days). */
+  granularity: CostGranularity
   trend: CostTrendPoint[]
   cost_stack: CostStackPoint[]
 }

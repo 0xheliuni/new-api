@@ -177,17 +177,40 @@ export const CostRatioDiscountCell = ({ row, dim, t, onEditRatio }) => {
 };
 
 /**
- * 「用户折扣」：该行所属用户的当前折扣 —— 配置了专属倍率（用户分组×令牌分组）时
- * 专属优先，否则取分组倍率。配置快照口径，悬浮里已注明。父行（用户维度）与
- * 明细行（三个维度）共用；行没有单一用户时显示 '-'。
+ * 「用户折扣」双层口径：
+ *  - 主显：区间内**实际生效**的折扣（effective_discount = 收入 ÷ 刊例价，按额度
+ *    加权）。这是客户真正付的价，专属倍率、跨分组混用、区间内改倍率都自动反映，
+ *    不依赖任何配置查表；
+ *  - 悬浮：当前**配置**折扣（有专属倍率时专属优先），两者不一致时给出提示 ——
+ *    那正是"用户换过分组"或"区间内调过倍率"的信号。
+ *
+ * 行没有单一用户时显示 '-'；刊例价为 0（免费/未定价模型）时商无意义，退回展示
+ * 配置值并标注。
  */
 export const UserDiscountCell = ({ row, t }) => {
   if (!row.user_group) {
     return <span style={{ color: 'var(--semi-color-text-2)' }}>-</span>;
   }
 
-  const known = Boolean(row.group_ratio_known);
+  const configKnown = Boolean(row.group_ratio_known);
   const special = Boolean(row.group_ratio_special);
+  const mixed = Boolean(row.group_ratio_mixed);
+  const actualKnown = Boolean(row.effective_discount_known);
+  const actual = row.effective_discount;
+
+  // 既没有用量可反推、也没有配置可回退。
+  if (!actualKnown && !configKnown) {
+    return <span style={{ color: 'var(--semi-color-text-2)' }}>-</span>;
+  }
+
+  // 实际与配置超出舍入误差 —— 在悬浮里点明。
+  const drifted =
+    actualKnown &&
+    configKnown &&
+    Math.abs(Number(actual || 0) - Number(row.group_ratio || 0)) > 0.005;
+
+  const subtle = { color: 'var(--semi-color-text-2)' };
+  const spread = { display: 'flex', justifyContent: 'space-between', gap: 16 };
 
   return (
     <Popover
@@ -195,43 +218,65 @@ export const UserDiscountCell = ({ row, t }) => {
       trigger='hover'
       position='left'
       content={
-        <div style={{ maxWidth: 300, padding: '8px 4px', lineHeight: 1.6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-            <span style={{ color: 'var(--semi-color-text-2)' }}>{t('当前分组')}</span>
+        <div style={{ maxWidth: 320, padding: '8px 4px', lineHeight: 1.6 }}>
+          {actualKnown && (
+            <div style={spread}>
+              <span style={subtle}>{t('实际折扣（本区间）')}</span>
+              <span>{trimRatioNumber(actual)}</span>
+            </div>
+          )}
+          <div style={spread}>
+            <span style={subtle}>{t('当前分组')}</span>
             <span style={{ fontWeight: 600 }}>{row.user_group}</span>
           </div>
-          {known ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-              <span style={{ color: 'var(--semi-color-text-2)' }}>
-                {special ? t('专属倍率') : t('分组倍率')}
+          {configKnown ? (
+            <div style={spread}>
+              <span style={subtle}>{special ? t('专属倍率') : t('分组倍率')}</span>
+              <span>
+                {mixed ? '≈' : ''}
+                {trimRatioNumber(row.group_ratio)}
               </span>
-              <span>{row.group_ratio}</span>
             </div>
           ) : (
-            <div style={{ color: 'var(--semi-color-text-2)' }}>
-              {t('该分组未配置倍率。')}
+            <div style={subtle}>{t('该分组未配置倍率。')}</div>
+          )}
+          {actualKnown && (
+            <div style={{ ...subtle, marginTop: 6 }}>
+              {t('实际折扣 = 所选区间内的收入 ÷ 刊例价。')}
             </div>
           )}
           {special && (
-            <div style={{ color: 'var(--semi-color-text-2)', marginTop: 6 }}>
+            <div style={{ ...subtle, marginTop: 6 }}>
               {t('已配置专属倍率（用户分组×令牌分组），优先于分组倍率生效。')}
             </div>
           )}
-          <div style={{ color: 'var(--semi-color-text-2)', marginTop: 6 }}>
-            {t(
-              '取用户当前配置的分组，未按所选时间区间加权，用户换过分组时可能与区间内实际折扣不一致。',
-            )}
-          </div>
+          {mixed && (
+            <div style={{ ...subtle, marginTop: 6 }}>
+              {t('该用户在本区间跨多个令牌分组消费，配置倍率按额度加权。')}
+            </div>
+          )}
+          {drifted && (
+            <div style={{ color: 'var(--semi-color-warning)', marginTop: 6 }}>
+              {t('实际折扣与当前配置不一致 —— 用户可能换过分组，或区间内调整过倍率。')}
+            </div>
+          )}
+          {!actualKnown && (
+            <div style={{ ...subtle, marginTop: 6 }}>
+              {t('本区间没有刊例价（免费或未定价模型），无法反推实际折扣。')}
+            </div>
+          )}
         </div>
       }
     >
       <span style={hoverTextStyle}>
-        {known ? (
-          t(special ? '{{v}}/专属' : '{{v}}/分组', {
-            v: trimRatioNumber(row.group_ratio),
-          })
+        {actualKnown ? (
+          <span style={drifted ? { color: 'var(--semi-color-warning)' } : undefined}>
+            {trimRatioNumber(actual)}
+          </span>
         ) : (
-          <span style={{ color: 'var(--semi-color-text-2)' }}>-</span>
+          <span style={subtle}>
+            {t('{{v}}/配置', { v: trimRatioNumber(row.group_ratio) })}
+          </span>
         )}
       </span>
     </Popover>

@@ -9,7 +9,9 @@ import (
 
 func TestBuildCostOverview_TrendAndStackAndWarning(t *testing.T) {
 	cube := seedCube() // 2 users, 2 channels(3 priced, 7 unpriced), same day
-	ov := buildCostOverview(cube, testChannels(), 7.0)
+	// start/end 传 0：本用例只验证折叠结果，不触发空桶补零（补零单独在
+	// TestBuildCostOverviewFillsGaps 覆盖）。
+	ov := buildCostOverview(cube, testChannels(), 7.0, 0, 0)
 	if len(ov.Trend) != 1 || ov.Trend[0].Date != "2026-06-01" {
 		t.Fatalf("trend: %+v", ov.Trend)
 	}
@@ -39,7 +41,7 @@ func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
 		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
 			ChannelId: 0, ModelName: "gpt-4o"},
 	})
-	ov := buildCostOverview(c, testChannels(), 7.0)
+	ov := buildCostOverview(c, testChannels(), 7.0, 0, 0)
 	if ov.UnpricedChannelCount != 0 {
 		t.Fatalf("unpriced = %d, want 0 (channel_id=0 must be excluded)", ov.UnpricedChannelCount)
 	}
@@ -53,9 +55,123 @@ func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
 		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
 			ChannelId: 7, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
 	})
-	ov2 := buildCostOverview(c2, testChannels(), 7.0)
+	ov2 := buildCostOverview(c2, testChannels(), 7.0, 0, 0)
 	if ov2.UnpricedChannelCount != 1 {
 		t.Fatalf("unpriced = %d, want 1 (only real unpriced channel 7 counted)", ov2.UnpricedChannelCount)
+	}
+	// 警示条下钻：未定价渠道清单应带上渠道身份，且只含真实渠道 7。
+	if len(ov2.UnpricedChannels) != 1 || ov2.UnpricedChannels[0].ChannelId != 7 {
+		t.Fatalf("unpriced channels = %+v, want [{7 ...}]", ov2.UnpricedChannels)
+	}
+}
+
+// TestNormalizeCostGranularity 自适应粒度：短区间给小时桶（页面默认筛选就是
+// 「今天」，日粒度下只有一个点、根本画不出趋势），长区间给日桶；显式指定的
+// hour/day 覆盖自适应。
+func TestNormalizeCostGranularity(t *testing.T) {
+	const day = int64(24 * 3600)
+	cases := []struct {
+		name       string
+		raw        string
+		start, end int64
+		want       string
+	}{
+		{"single day auto -> hour", "", 0, day, costGranularityHour},
+		{"one hour auto -> hour", "auto", 0, 3600, costGranularityHour},
+		{"exactly 2 days auto -> hour", "", 0, 2 * day, costGranularityHour},
+		{"over 2 days auto -> day", "", 0, 2*day + 1, costGranularityDay},
+		{"7 days auto -> day", "", 0, 7 * day, costGranularityDay},
+		{"explicit day on short range", costGranularityDay, 0, 3600, costGranularityDay},
+		{"explicit hour on long range", costGranularityHour, 0, 30 * day, costGranularityHour},
+		{"unknown value falls back to auto", "week", 0, 30 * day, costGranularityDay},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeCostGranularity(tc.raw, tc.start, tc.end); got != tc.want {
+				t.Fatalf("normalizeCostGranularity(%q, %d, %d) = %q, want %q",
+					tc.raw, tc.start, tc.end, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCostCube_HourlyBucketing 小时粒度下同一天的不同小时必须落进不同的桶
+// （日粒度下它们会被合成一个点）。
+func TestCostCube_HourlyBucketing(t *testing.T) {
+	c := newCostCubeWithGranularity(costGranularityHour)
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 14), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
+	})
+	if len(c.rows) != 2 {
+		t.Fatalf("hourly cube rows = %d, want 2 (09 and 14 are distinct buckets)", len(c.rows))
+	}
+	for k := range c.rows {
+		if k.Bucket != "2026-06-01 09" && k.Bucket != "2026-06-01 14" {
+			t.Fatalf("unexpected bucket label %q", k.Bucket)
+		}
+	}
+}
+
+// TestBuildCostOverviewFillsGaps 空桶补零：区间内没有消费的时段也要出点，
+// 否则折线直接跨过去，读起来像那段时间在持续盈利/亏损。补零不超过 now——
+// 未来的桶尚未发生，补出来会画出一段假的归零走势。
+func TestBuildCostOverviewFillsGaps(t *testing.T) {
+	// 小时粒度：09 点与 12 点有消费，10/11 点应被补零 → 共 4 个点（09..12）。
+	c := newCostCubeWithGranularity(costGranularityHour)
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
+	})
+	start, end := tsOn("2026-06-01", 9), tsOn("2026-06-01", 12)
+	ov := buildCostOverview(c, testChannels(), 7.0, start, end)
+	if len(ov.Trend) != 4 {
+		t.Fatalf("trend points = %d, want 4 (09,10,11,12): %+v", len(ov.Trend), ov.Trend)
+	}
+	if ov.Granularity != costGranularityHour {
+		t.Fatalf("granularity = %q, want hour", ov.Granularity)
+	}
+	// 序列必须有序且中间两点为补零点。
+	wantDates := []string{"2026-06-01 09", "2026-06-01 10", "2026-06-01 11", "2026-06-01 12"}
+	for i, want := range wantDates {
+		if ov.Trend[i].Date != want {
+			t.Fatalf("trend[%d].Date = %q, want %q", i, ov.Trend[i].Date, want)
+		}
+	}
+	if ov.Trend[1].RevenueCny != 0 || ov.Trend[2].RevenueCny != 0 {
+		t.Fatalf("gap buckets must be zero-filled: %+v", ov.Trend)
+	}
+	if ov.Trend[0].RevenueCny == 0 || ov.Trend[3].RevenueCny == 0 {
+		t.Fatalf("real buckets must keep their money: %+v", ov.Trend)
+	}
+	// 堆叠图不补零（桶×渠道笛卡尔积会放大数据量），只有真实消费的两个桶。
+	if len(ov.CostStack) != 2 {
+		t.Fatalf("cost stack = %d, want 2 (gaps are not filled for stacks)", len(ov.CostStack))
+	}
+}
+
+// TestCostBucketRangeStopsAtNow 补零序列不越过当前时刻。
+func TestCostBucketRangeStopsAtNow(t *testing.T) {
+	start := tsOn("2026-06-01", 9)
+	now := tsOn("2026-06-01", 11)
+	end := tsOn("2026-06-01", 20) // 查询区间延伸到未来
+	got := costBucketRange(start, end, costGranularityHour, now)
+	want := []string{"2026-06-01 09", "2026-06-01 10", "2026-06-01 11"}
+	if len(got) != len(want) {
+		t.Fatalf("buckets = %v, want %v (must not run past now)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("buckets = %v, want %v", got, want)
+		}
+	}
+	// 未设置区间时不补零（沿用旧行为，供只验证折叠结果的用例）。
+	if b := costBucketRange(0, 0, costGranularityDay, now); b != nil {
+		t.Fatalf("zero range must produce no buckets, got %v", b)
 	}
 }
 
@@ -137,9 +253,9 @@ func TestClampCostRange(t *testing.T) {
 // TestCostCubeCacheKey_ChannelDiffers 验证 channel 过滤参数参与缓存键生成：
 // 不同 channel 值必须落在不同的缓存条目上，否则切换渠道筛选会误命中旧缓存。
 func TestCostCubeCacheKey_ChannelDiffers(t *testing.T) {
-	base := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 0)
-	withCh3 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3)
-	withCh9 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 9)
+	base := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 0, costGranularityDay)
+	withCh3 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3, costGranularityDay)
+	withCh9 := costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 9, costGranularityDay)
 	if base == withCh3 {
 		t.Fatal("expected different cache keys for channel=0 vs channel=3")
 	}
@@ -150,8 +266,12 @@ func TestCostCubeCacheKey_ChannelDiffers(t *testing.T) {
 		t.Fatal("expected different cache keys for channel=0 vs channel=9")
 	}
 	// 其余参数不变时同一 channel 值必须产生同一个键（缓存才能命中）。
-	if costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3) != withCh3 {
+	if costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3, costGranularityDay) != withCh3 {
 		t.Fatal("expected identical cache key for identical params")
+	}
+	// 粒度必须参与键：粒度决定立方体分桶键，串用会直接产出错误的趋势序列。
+	if costCubeCacheKey(100, 200, "gpt-4o", "alice", 7.0, 3, costGranularityHour) == withCh3 {
+		t.Fatal("expected different cache keys for hour vs day granularity")
 	}
 }
 

@@ -162,12 +162,14 @@ const buildMetricColumns = (t, exchangeRate, primaryCurrency, activeTab, onEditR
       <CostHelpHeader title={t('用户折扣')}>
         <CostHelpFormula
           term={t('用户折扣')}
-          expression={t('用户当前分组的分组倍率；配置了专属倍率时以专属优先')}
+          expression={t('所选区间内的收入 ÷ 刊例价')}
         />
         <CostHelpNotes
           notes={[
-            t('专属倍率为「用户分组×令牌分组」的二维覆盖，按用户使用自身分组令牌的口径取值。'),
-            t('取查询时刻的配置快照，未按所选区间加权。'),
+            t('显示的是实际生效折扣（按额度加权），专属倍率与区间内换组/改倍率都已自动反映。'),
+            t('悬浮数值可与该分组当前配置的倍率作对比。'),
+            t('专属倍率为「用户分组×令牌分组」的二维覆盖，优先于分组倍率生效。'),
+            t('区间内没有刊例价（免费或未定价模型）时改为展示配置值。'),
             t('行内没有单一用户（模型/供应商父行）时显示「-」。'),
           ]}
         />
@@ -643,6 +645,7 @@ const CostTables = ({
             group_ratio: record.group_ratio,
             group_ratio_known: record.group_ratio_known,
             group_ratio_special: record.group_ratio_special,
+            group_ratio_mixed: record.group_ratio_mixed,
           };
         }
         return bRow;
@@ -676,6 +679,30 @@ const CostTables = ({
 
   const dataSource = buildFlattenedRows();
 
+  /**
+   * 行分组视觉：多个用户/模型/渠道展开后，父子行会糊成一片，靠这三条线区分：
+   *  - 父行上边一条 2px 强分隔线 —— 组与组之间的切分；
+   *  - 子行首列一条 2px 左导轨 —— 表明"这些行属于上面那个父行"；
+   *  - 展开中的父行加底色 —— 长列表里一眼找到组头。
+   *
+   * 这里不用 web/default 端的 border-separate 卡片式留白：Semi 的 Table 自带
+   * colgroup 与 sticky 滚动容器，改表格的 border-collapse 会连带影响列宽计算与
+   * 表头吸顶，收益不值这个风险。
+   */
+  const rowClassName = (record) => {
+    if (!record) return '';
+    if (record.__isChild) {
+      return '[&>td:first-child]:border-l-2 [&>td:first-child]:border-l-[var(--semi-color-primary)]';
+    }
+    const expanded = expandedKeys.has(record.__rowKey);
+    return [
+      '[&>td]:border-t-2 [&>td]:border-t-[var(--semi-color-border)]',
+      expanded ? '[&>td]:bg-[var(--semi-color-fill-0)]' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  };
+
   return (
     <>
       <Tabs type='line' activeKey={activeTab} onChange={setActiveTab}>
@@ -690,6 +717,7 @@ const CostTables = ({
           dataSource={dataSource}
           loading={tableLoading}
           rowKey={(record) => record.__rowKey}
+          onRow={(record) => ({ className: rowClassName(record) })}
           scroll={{ x: 'max-content' }}
           hidePagination
           pagination={{
