@@ -96,15 +96,26 @@ func costTestContext(query string) (*gin.Context, *httptest.ResponseRecorder) {
 	return c, rec
 }
 
+// costSeedBaseTime 返回一个「肯定已经过去」的整点，作为造数据的基准。
+//
+// 不能用「今天 09:00」：buildCostOverview 的空桶补零刻意只补到 min(end, now)
+// （未来的桶尚未发生，补零会画出假的归零走势），因此 09:00 这种固定时刻在
+// 11:00 之前跑测试时整段区间都在未来，补零一个桶都不补，测试随时钟红/绿。
+// 从当前时间往回退，保证 at 与 at+2h 都落在过去。
+func costSeedBaseTime() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local).
+		Add(-3 * time.Hour)
+}
+
 // TestCostIntegration_UsersDimension 端到端跑通用户维度接口，验证三件事：
 //  1. 跨分组专属倍率被正确解析（0.7，而不是 vip 的一维倍率 0.9）；
 //  2. 实际加权折扣从钱反推出来（700/1000 = 0.7）且与配置一致；
 //  3. 使用分组额度确实流到了折扣解析（UsingGroupQuota 非空）。
 func TestCostIntegration_UsersDimension(t *testing.T) {
 	costIntegrationDB(t)
-	// 用"今天 09:00"，让查询落在自适应小时粒度区间内。
-	now := time.Now()
-	at := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.Local)
+	// 跨度只有几小时，落在自适应小时粒度区间内。
+	at := costSeedBaseTime()
 	seedCostIntegrationData(t, at)
 
 	start := at.Add(-time.Hour).Unix()
@@ -155,8 +166,7 @@ func TestCostIntegration_UsersDimension(t *testing.T) {
 // 09 点与 11 点有消费，10 点无消费也必须出点，否则折线会直接跨过去。
 func TestCostIntegration_OverviewFillsHourlyGaps(t *testing.T) {
 	costIntegrationDB(t)
-	now := time.Now()
-	at := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.Local)
+	at := costSeedBaseTime()
 	seedCostIntegrationData(t, at)
 
 	start := at.Unix()
@@ -197,8 +207,7 @@ func TestCostIntegration_OverviewFillsHourlyGaps(t *testing.T) {
 // omitempty 吞掉就会静默显示成 "-"。这里锁住新增字段真的会出现在响应里。
 func TestCostIntegration_JSONContract(t *testing.T) {
 	costIntegrationDB(t)
-	now := time.Now()
-	at := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.Local)
+	at := costSeedBaseTime()
 	seedCostIntegrationData(t, at)
 
 	start := at.Unix()

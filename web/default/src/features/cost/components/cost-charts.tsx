@@ -251,8 +251,8 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
     loading ? 'loading' : 'ready',
     granularity,
     currency.symbol,
-    overview?.trend.length ?? 0,
-    overview?.cost_stack.length ?? 0,
+    overview?.trend?.length ?? 0,
+    overview?.cost_stack?.length ?? 0,
   ].join('-')
 
   const chartsReady = themeReady && !loading
