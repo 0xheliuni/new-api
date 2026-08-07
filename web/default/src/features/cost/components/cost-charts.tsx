@@ -154,6 +154,15 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
             value: (datum: Record<string, unknown>) =>
               formatBucketTooltip(String(datum?.date), granularity),
           },
+          // Without an explicit content pattern VChart falls back to the raw
+          // measure value, which renders full float precision.
+          content: [
+            {
+              key: (datum: Record<string, unknown>) => String(datum?.series),
+              value: (datum: Record<string, unknown>) =>
+                currency.format(Number(datum?.value) || 0),
+            },
+          ],
         },
         mark: {
           title: {
@@ -228,6 +237,19 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
       ],
       tooltip: {
         mark: {
+          title: {
+            value: (datum: Record<string, unknown>) =>
+              formatBucketTooltip(String(datum?.date), granularity),
+          },
+          content: [
+            {
+              key: (datum: Record<string, unknown>) => String(datum?.channel),
+              value: (datum: Record<string, unknown>) =>
+                currency.format(Number(datum?.cost_display) || 0),
+            },
+          ],
+        },
+        dimension: {
           title: {
             value: (datum: Record<string, unknown>) =>
               formatBucketTooltip(String(datum?.date), granularity),
