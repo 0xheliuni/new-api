@@ -43,8 +43,8 @@ type createVersionRequest struct {
 
 // CreateChannelCostVersion POST /api/cost/channels/:id/versions
 // 追加新计价版本；版本行一经写入不可变，改价只追加不更新。
-// discount 模式下 ExchangeRate 由服务端冻结为当前汇率（operation_setting.USDExchangeRate），
-// 忽略客户端传值——确保历史成本不因日后汇率变动而漂移（设计不变量 2）。
+// discount 模式下 ExchangeRate 随版本一并冻结，之后不再随汇率配置变动而漂移
+// （设计不变量 2）；取值优先客户端传参，缺省退回服务端当前汇率，见下方注释。
 func CreateChannelCostVersion(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
@@ -99,21 +99,29 @@ func CreateChannelCostVersion(c *gin.Context) {
 		common.ApiErrorMsg(c, "a version with this effective_from already exists for this channel")
 		return
 	}
-	// discount 模式冻结服务端当前汇率，与迁移回填（seedLoadExchangeRate）同一来源。
-	// InitOptionMap 在启动时已把 options 表的值同步进 operation_setting.USDExchangeRate，
-	// 运行期直接读包级变量即可，无需再查库。
+	// discount 模式的结算汇率：客户端传了就照原样冻结，没传才退回服务端当前汇率
+	// （operation_setting.USDExchangeRate，启动时由 InitOptionMap 从 options 表同步，
+	// 运行期直接读包级变量即可，无需再查库）。
+	//
+	// 优先客户端传值而不是一律用服务端汇率，是因为本接口的主要用途就是回填历史价：
+	// 六月的那一版该按六月的汇率结算，而服务端只知道今天的汇率。用今天的汇率冻结一条
+	// 六月的版本行，等于把「冻结汇率」这条不变量反过来用——历史成本恰恰因此漂移，且
+	// 版本不可更新，事后无从修正。不传 exchange_rate 时语义是「按当下的价记一版」，
+	// 服务端汇率正是那一刻的正确答案，继续作为默认值。
 	//
 	// 汇率非正时拒绝写入，而不是像 seed 那样兜底成 7.3：seed 跑在 InitOptionMap 之前，
-	// 读到默认值是时序使然，只能兜底；而运行期读到 0 意味着汇率确实没配好，此时把 0
-	// 冻进不可变的版本行会让该版本下所有日志永久无法定价（成本记 0，显示成 100% 毛利），
-	// 且因为版本不可更新，只能靠再追加一版来绕过。让管理员改完配置重试，代价小得多。
+	// 读到默认值是时序使然，只能兜底；而运行期两边都拿不到正数意味着汇率确实没配好，
+	// 此时把 0 冻进不可变的版本行会让该版本下所有日志永久无法定价（成本记 0，显示成
+	// 100% 毛利），只能靠再追加一版来绕过。让管理员补上汇率再重试，代价小得多。
 	exRate := req.ExchangeRate
 	if mode == "discount" {
-		if operation_setting.USDExchangeRate <= 0 {
-			common.ApiErrorMsg(c, "discount mode requires a positive USDExchangeRate; configure it in system settings first")
+		if exRate <= 0 {
+			exRate = operation_setting.USDExchangeRate
+		}
+		if exRate <= 0 {
+			common.ApiErrorMsg(c, "discount mode requires a positive exchange rate; supply exchange_rate or configure USDExchangeRate in system settings first")
 			return
 		}
-		exRate = operation_setting.USDExchangeRate
 	}
 	// CreatedBy 取中间件已验证的登录用户 id，不信任客户端传值。
 	userId := c.GetInt("id")

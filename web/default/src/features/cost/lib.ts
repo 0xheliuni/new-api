@@ -313,10 +313,14 @@ export function mergeBreakdown(
       : 0
     // Re-share the accumulated basis. Without this the merged row would report
     // 0 coverage and warn that no spend has pricing info.
+    //
+    // Guarded on the sign, not just on truthiness: list_usd goes negative when
+    // the range holds a refund but not the charge it reverses, and Math.min has
+    // no lower bound — a negative denominator would surface as "-320% of spend
+    // has pricing info". Matches the backend's `> 0` gate in cost_stat.go.
     const coverageBasis = acc.discount_coverage ?? 0
-    acc.discount_coverage = acc.list_usd
-      ? round6(Math.min(coverageBasis / acc.list_usd, 1))
-      : 0
+    acc.discount_coverage =
+      acc.list_usd > 0 ? round6(Math.min(coverageBasis / acc.list_usd, 1)) : 0
   }
 
   merged.sort((a, b) => b.revenue_cny - a.revenue_cny)

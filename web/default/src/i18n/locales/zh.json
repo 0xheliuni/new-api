@@ -4780,12 +4780,12 @@
     "Cost (CNY)": "成本（人民币）",
     "profit ÷ revenue (CNY)": "利润 ÷ 收入（人民币）",
     "paid (USD) × exchange rate": "实付（美元）× 汇率",
-    "list price (USD) × channel cost ratio": "刊例价（美元）× 渠道成本倍率",
+    "list price (USD) × the cost ratio of the price version in effect for each log": "刊例价（美元）× 每条日志对应价格版本的成本倍率",
     "Revenue already includes the group discount and nets out refunds.": "收入已含用户折扣，并已冲减退款。",
     "Channels with no cost ratio set count as zero cost, which inflates the rate.": "未填成本倍率的渠道按成本 0 计，会推高利润率。",
     "Summary rows are total profit ÷ total revenue, not an average of the row rates.": "总计行是总利润 ÷ 总收入的加权值，不是各行利润率的平均。",
     "the channel bills ¥2.5 per $1 of list price": "渠道按每 $1 刊例价记成本 ¥2.5",
-    "the channel bills 80% of list price × exchange rate": "渠道按刊例价的 80% × 汇率记成本",
+    "the channel bills 80% of list price, settled at the rate frozen with that price version": "渠道按刊例价的 80% 记成本，并按该价格版本冻结的结算汇率折算",
     "User/model rows blend several channels: shown as ≈ cost ÷ list price; hover to see each channel.": "用户/模型行跨多个渠道，显示为 ≈ 成本 ÷ 刊例价 的加权值；悬浮可查看各渠道配置。",
     "\"Not set\" means the channel has no cost pricing configured and counts as zero cost.": "「未填写」表示该渠道未配置成本计价，成本按 0 计。",
     "A dedicated (user group × token group) ratio is configured and takes priority over the group ratio.": "已配置专属倍率（用户分组 × 令牌分组），优先于分组倍率生效。",
@@ -4844,6 +4844,10 @@
     "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.": "悬浮数值可查看该区间推导出的信号：专属倍率、区间内变更与定价覆盖率。",
     "Shows '-' when the range has no list price (free or unpriced models).": "区间内没有刊例价（免费或未定价模型）时展示「-」。",
     "Revenue exchange rate": "收入汇率",
-    "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "仅用于把美元收入折算成人民币展示；成本按各价格版本自带的结算汇率计算。"
+    "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "仅用于把美元收入折算成人民币展示；成本按各价格版本自带的结算汇率计算。",
+    "Saving records the current price as a new version; historical ranges keep their original price.": "保存后自动记录为当前生效价，历史区间仍按原价核算。",
+    "Failed to load price versions": "加载价格版本失败",
+    "Failed to add price version": "新增价格版本失败",
+    "Failed to delete price version": "删除价格版本失败"
   }
 }

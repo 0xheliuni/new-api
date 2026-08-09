@@ -187,7 +187,9 @@ function ProfitRateHeader() {
         />
         <CostHelpFormula
           term={t('Cost (CNY)')}
-          expression={t('list price (USD) × channel cost ratio')}
+          expression={t(
+            'list price (USD) × the cost ratio of the price version in effect for each log'
+          )}
         />
         <CostHelpNotes
           notes={[
@@ -213,7 +215,9 @@ function CostRatioHeader() {
         />
         <CostHelpFormula
           term={t('{{v}} / discount', { v: '0.8' })}
-          expression={t('the channel bills 80% of list price × exchange rate')}
+          expression={t(
+            'the channel bills 80% of list price, settled at the rate frozen with that price version'
+          )}
         />
         <CostHelpNotes
           notes={[

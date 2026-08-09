@@ -47,6 +47,11 @@ import type { ChannelCostVersion } from '../types'
 
 type CostPricingMode = 'ratio' | 'discount'
 
+/** The version api rejects with the backend's message; fall back to nothing. */
+function errorMessage(error: unknown): string | undefined {
+  return error instanceof Error ? error.message || undefined : undefined
+}
+
 interface EditRatioDialogProps {
   channelId: number
   channelName: string
@@ -254,6 +259,12 @@ export function EditRatioDialog({
           </div>
         )}
 
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Saving records the current price as a new version; historical ranges keep their original price.'
+          )}
+        </p>
+
         <Separator />
 
         <VersionHistoryPanel
@@ -293,7 +304,11 @@ function VersionHistoryPanel({
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
 
-  const { data: versions = [], isLoading } = useQuery({
+  const {
+    data: versions = [],
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['cost-versions', channelId],
     queryFn: () => getChannelCostVersions(channelId),
     enabled: open,
@@ -305,13 +320,17 @@ function VersionHistoryPanel({
     void queryClient.invalidateQueries({ queryKey: ['cost'] })
   }
 
-  // Business failures already toast in the response interceptor; these
-  // mutations only reject so success handlers don't run on a refused write.
+  // The api layer silences the global handlers, so onError here is the only
+  // toast — and it carries the backend's reason ("cannot delete the last
+  // version…") instead of a generic failure.
   const remove = useMutation({
     mutationFn: (versionId: number) => deleteChannelCostVersion(versionId),
     onSuccess: () => {
       toast.success(t('Price version deleted'))
       invalidate()
+    },
+    onError: (err) => {
+      toast.error(errorMessage(err) || t('Failed to delete price version'))
     },
   })
 
@@ -347,6 +366,10 @@ function VersionHistoryPanel({
 
       {isLoading ? (
         <p className='text-muted-foreground text-xs'>{t('Loading...')}</p>
+      ) : error ? (
+        <p className='text-destructive text-xs'>
+          {errorMessage(error) || t('Failed to load price versions')}
+        </p>
       ) : (
         <ul className='flex max-h-48 flex-col gap-1 overflow-y-auto text-xs'>
           {versions.map((v) => (
@@ -380,7 +403,9 @@ function VersionHistoryPanel({
                     size='icon'
                     className='size-6'
                     aria-label={t('Delete')}
-                    disabled={remove.isPending}
+                    // Scoped to the row in flight: one shared mutation would
+                    // otherwise grey out every other row's delete button.
+                    disabled={remove.isPending && remove.variables === v.id}
                     onClick={() => remove.mutate(v.id)}
                   >
                     <Trash2 className='size-3.5' />
@@ -422,11 +447,13 @@ function AddVersionForm({
 
   const parsedValue = Number(value)
   const parsedRate = Number(rate)
+  // Both must be > 0, not >= 0: the API refuses a zero ratio/discount because
+  // it would freeze a version whose logs can never be priced.
   const isValid =
     effectiveFrom !== undefined &&
     value.trim() !== '' &&
     Number.isFinite(parsedValue) &&
-    parsedValue >= 0 &&
+    parsedValue > 0 &&
     Number.isFinite(parsedRate) &&
     parsedRate > 0
 
@@ -446,13 +473,19 @@ function AddVersionForm({
       toast.success(t('Price version added'))
       onDone()
     },
+    onError: (err) => {
+      toast.error(errorMessage(err) || t('Failed to add price version'))
+    },
   })
 
   return (
     <div className='bg-muted/40 flex flex-col gap-2 rounded-md border p-2'>
       <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>{t('Price effective from')}</Label>
+        <Label className='text-xs' htmlFor='cost-version-from'>
+          {t('Price effective from')}
+        </Label>
         <DateTimePicker
+          id='cost-version-from'
           value={effectiveFrom}
           onChange={setEffectiveFrom}
           className='w-full'
@@ -461,7 +494,9 @@ function AddVersionForm({
 
       <div className='grid grid-cols-2 gap-2'>
         <div className='flex flex-col gap-1'>
-          <Label className='text-xs'>{t('Pricing Mode')}</Label>
+          <Label className='text-xs' htmlFor='cost-version-mode'>
+            {t('Pricing Mode')}
+          </Label>
           <Select
             value={mode}
             onValueChange={(v) => setMode(v as CostPricingMode)}
@@ -470,7 +505,7 @@ function AddVersionForm({
               { value: 'discount', label: t('Cost Discount') },
             ]}
           >
-            <SelectTrigger className='w-full'>
+            <SelectTrigger id='cost-version-mode' className='w-full'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
@@ -484,12 +519,13 @@ function AddVersionForm({
           </Select>
         </div>
         <div className='flex flex-col gap-1'>
-          <Label className='text-xs'>
+          <Label className='text-xs' htmlFor='cost-version-value'>
             {mode === 'discount' ? t('Cost Discount') : t('Cost Ratio (CNY per USD)')}
           </Label>
           <Input
+            id='cost-version-value'
             type='number'
-            min={0}
+            min={0.01}
             step={0.01}
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -498,10 +534,13 @@ function AddVersionForm({
       </div>
 
       <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>{t('Settlement exchange rate')}</Label>
+        <Label className='text-xs' htmlFor='cost-version-rate'>
+          {t('Settlement exchange rate')}
+        </Label>
         <Input
+          id='cost-version-rate'
           type='number'
-          min={0}
+          min={0.01}
           step={0.1}
           value={rate}
           onChange={(e) => setRate(e.target.value)}
@@ -512,8 +551,11 @@ function AddVersionForm({
       </div>
 
       <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>{t('Note')}</Label>
+        <Label className='text-xs' htmlFor='cost-version-note'>
+          {t('Note')}
+        </Label>
         <Input
+          id='cost-version-note'
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder={t('Optional')}

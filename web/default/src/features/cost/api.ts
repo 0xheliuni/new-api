@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { api } from '@/lib/api'
+import { api, type ApiRequestConfig } from '@/lib/api'
 import type {
   ChannelCostVersion,
   ChannelCostVersionInput,
@@ -41,24 +41,50 @@ export async function getCostByDimension(
   return res.data.data
 }
 
+/**
+ * The version endpoints reject with the backend's own message so callers can
+ * report it themselves, which means the global handlers must both stand down:
+ * the interceptor would toast the message and react-query's default onError
+ * would stack a generic "Something went wrong!" on top of it (the rejection is
+ * a plain Error, so handleServerError has no response body to read).
+ * Same idiom as `channelActionConfig` in features/channels/api.ts.
+ */
+const costVersionActionConfig = (
+  config: ApiRequestConfig = {}
+): ApiRequestConfig => ({
+  ...config,
+  skipBusinessError: true,
+  skipErrorHandler: true,
+})
+
 /** Newest first (effective_from desc), matching the backend ordering. */
 export async function getChannelCostVersions(
   channelId: number
 ): Promise<ChannelCostVersion[]> {
-  const res = await api.get(`/api/cost/channels/${channelId}/versions`)
+  const res = await api.get(
+    `/api/cost/channels/${channelId}/versions`,
+    costVersionActionConfig()
+  )
+  // Rejecting rather than falling back to []: an empty list renders as "this
+  // channel has no price history", which is a different fact from "the history
+  // could not be loaded".
+  if (!res.data?.success) throw new Error(res.data?.message)
   return res.data.data ?? []
 }
 
 /**
- * The response interceptor toasts a business failure but still resolves, so
- * mutations have to reject explicitly — otherwise react-query runs onSuccess
- * for a request the server refused (e.g. a duplicate effective_from).
+ * Rejects on a refused write (e.g. a duplicate effective_from) so react-query
+ * doesn't run onSuccess for something the server never stored.
  */
 export async function createChannelCostVersion(
   channelId: number,
   body: ChannelCostVersionInput
 ): Promise<ChannelCostVersion> {
-  const res = await api.post(`/api/cost/channels/${channelId}/versions`, body)
+  const res = await api.post(
+    `/api/cost/channels/${channelId}/versions`,
+    body,
+    costVersionActionConfig()
+  )
   if (!res.data?.success) throw new Error(res.data?.message)
   return res.data.data
 }
@@ -66,6 +92,9 @@ export async function createChannelCostVersion(
 export async function deleteChannelCostVersion(
   versionId: number
 ): Promise<void> {
-  const res = await api.delete(`/api/cost/versions/${versionId}`)
+  const res = await api.delete(
+    `/api/cost/versions/${versionId}`,
+    costVersionActionConfig()
+  )
   if (!res.data?.success) throw new Error(res.data?.message)
 }
