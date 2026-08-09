@@ -4280,6 +4280,7 @@
     "实际折扣 = 所选区间内的收入 ÷ 刊例价（按额度加权）。": "Chiết khấu thực tế = doanh thu ÷ giá niêm yết trong khoảng đã chọn (tính theo trọng số hạn mức).",
     "已删除该版本": "Đã xóa phiên bản",
     "已补录历史价": "Đã thêm giá lịch sử",
+    "成本按各计价版本分段计算，改价不影响已发生区间。": "Chi phí được tính theo từng phiên bản giá; việc đổi giá không ảnh hưởng đến các khoảng thời gian đã diễn ra.",
     "成本按各计价版本分段计算：区间内改过价的渠道带 ≈ 标记，标签显示当前生效价。": "Chi phí được tính theo từng phiên bản giá. Kênh đã đổi giá trong khoảng sẽ có dấu ≈, nhãn hiển thị giá đang áp dụng.",
     "折扣信息覆盖率 {{pct}}%，部分日志缺少定价字段，折扣仅含已知部分。": "Dữ liệu chiết khấu bao phủ {{pct}}% bản ghi; một số log thiếu trường định giá nên chiết khấu chỉ phản ánh phần đã biết.",
     "收入折算汇率": "Tỷ giá quy đổi doanh thu",

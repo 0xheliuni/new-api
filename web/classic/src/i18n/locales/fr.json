@@ -3746,6 +3746,7 @@
     "实际折扣 = 所选区间内的收入 ÷ 刊例价（按额度加权）。": "Remise réelle = revenus ÷ prix catalogue sur la période sélectionnée (pondérée par le quota).",
     "已删除该版本": "Version supprimée",
     "已补录历史价": "Prix historique ajouté",
+    "成本按各计价版本分段计算，改价不影响已发生区间。": "Le coût est calculé par version tarifaire ; une révision de prix n'affecte pas les périodes déjà écoulées.",
     "成本按各计价版本分段计算：区间内改过价的渠道带 ≈ 标记，标签显示当前生效价。": "Le coût est calculé par version tarifaire. Les canaux retarifés sur la période portent le signe ≈, et l'étiquette indique le prix actuel.",
     "折扣信息覆盖率 {{pct}}%，部分日志缺少定价字段，折扣仅含已知部分。": "Les données de remise couvrent {{pct}} % des journaux ; certains manquent de champs tarifaires, la remise ne reflète donc que la partie connue.",
     "收入折算汇率": "Taux de conversion des revenus",

@@ -267,7 +267,7 @@ const buildMetricColumns = (
         <CostHelpNotes
           notes={[
             t('收入为 0 时利润率按 0 显示。'),
-            t('成本倍率取渠道当前配置，不随历史变更回溯。'),
+            t('成本按各计价版本分段计算，改价不影响已发生区间。'),
           ]}
         />
       </CostHelpHeader>
