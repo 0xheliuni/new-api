@@ -678,6 +678,9 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 新建渠道也要落计价版本：漏掉这一步，渠道在首次编辑或重启前全程无版本，
+	// 成本报表会把它的流量算成 0 成本、100% 毛利。
+	appendNewChannelCostVersions(c, channels)
 	service.ResetProxyClientCache()
 	recordManageAudit(c, "channel.create", map[string]interface{}{
 		"name":  addChannelRequest.Channel.Name,

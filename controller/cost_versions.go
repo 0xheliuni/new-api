@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -28,6 +29,9 @@ func GetChannelCostVersions(c *gin.Context) {
 	}
 	common.ApiSuccess(c, versions)
 }
+
+// costVersionNoteMaxRunes 与 ChannelCostVersion.Note 的 varchar(255) 对齐。
+const costVersionNoteMaxRunes = 255
 
 type createVersionRequest struct {
 	// EffectiveFrom 刻意不加 binding:"required"：validator 对非指针 int64 的 required
@@ -76,6 +80,14 @@ func CreateChannelCostVersion(c *gin.Context) {
 	// discount 模式：CostDiscount<=0 时乘以汇率仍为 0，版本同样无法定价。
 	if mode == "discount" && req.CostDiscount <= 0 {
 		common.ApiErrorMsg(c, "cost_discount must be > 0 for discount mode")
+		return
+	}
+	// note 列是 varchar(255)。不校验的话同一个超长请求在三库上表现不同：PG 报
+	// 22001、MySQL 严格模式报 1406（都以裸驱动信息透给前端），SQLite 不校验声明长度
+	// 于是静默存下。按字符数而非字节数算——中文备注按字节会在 85 字左右就被拒，
+	// 而 varchar(255) 在三库上都是 255 个字符。
+	if utf8.RuneCountInString(req.Note) > costVersionNoteMaxRunes {
+		common.ApiErrorMsg(c, "note is too long (max 255 characters)")
 		return
 	}
 	// 渠道必须存在：孤儿版本行虽然当下无日志引用、不会误算成本，但会被
@@ -139,6 +151,7 @@ func CreateChannelCostVersion(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	costCubeCacheClear()
 	common.ApiSuccess(c, v)
 }
 
@@ -168,16 +181,22 @@ func DeleteChannelCostVersion(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// 计数与删除必须在同一事务内：分成两步时两个并发 DELETE 会同时读到 count=2、
-	// 同时通过校验，把渠道删空——正是这道校验要挡的状态。
+	// 校验与删除的原子性由 model 层负责（事务 + 行锁），见
+	// DeleteChannelCostVersionIfNotLast。两种拒绝都是预期内的业务结果而非内部故障，
+	// 所以各给一句可操作的提示，不走 ApiError 那条通道。
 	if err := model.DeleteChannelCostVersionIfNotLast(v.ChannelId, vid); err != nil {
-		if errors.Is(err, model.ErrLastVersion) {
+		switch {
+		case errors.Is(err, model.ErrBaselineVersion):
+			common.ApiErrorMsg(c, "cannot delete the baseline version; it prices every log before the next version and cannot be recreated")
+			return
+		case errors.Is(err, model.ErrLastVersion):
 			common.ApiErrorMsg(c, "cannot delete the last version of a channel; add a replacement version first")
 			return
 		}
 		common.ApiError(c, err)
 		return
 	}
+	costCubeCacheClear()
 	common.ApiSuccess(c, nil)
 }
 
@@ -185,6 +204,21 @@ func DeleteChannelCostVersion(c *gin.Context) {
 // 前端 → JSON → float64 往返后可能差出几个 ULP，逐字节比较会把「没改价」判成
 // 改价，于是每保存一次渠道就多一条内容完全相同的版本。
 const costVersionFloatEpsilon = 1e-9
+
+// versionInEffect 从降序版本列表中取出 ts 时刻生效的那条：即 effective_from <= ts
+// 中 effective_from 最大的一条。列表为降序，第一条满足条件的就是答案。
+// 全部版本都在 ts 之后（该渠道当时还没有任何定价）时返回 ok=false。
+//
+// 与 model.VersionAt 的取舍：这里复用调用方已经读到的 versions 切片，避免为同一次
+// 保存再查一遍库；语义（闭区间起点、取最后一个不晚于 ts 的版本）与之保持一致。
+func versionInEffect(versions []model.ChannelCostVersion, ts int64) (model.ChannelCostVersion, bool) {
+	for _, v := range versions {
+		if v.EffectiveFrom <= ts {
+			return v, true
+		}
+	}
+	return model.ChannelCostVersion{}, false
+}
 
 // costVersionChanged 比对渠道当前最新版本与新设置的计价字段是否真的不同。
 // 抽成纯函数是为了能被单测直接钉住——「只改 API key 不该产生版本」这条回归
@@ -229,12 +263,18 @@ func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSet
 			": unknown cost_mode " + s.CostMode)
 		return
 	}
-	versions, err := model.GetChannelCostVersions(channelId) // 降序，[0] 为最新
+	versions, err := model.GetChannelCostVersions(channelId) // 按 effective_from 降序
 	if err != nil {
 		common.SysError("load cost versions failed: " + err.Error())
 		return
 	}
-	if len(versions) > 0 && !costVersionChanged(versions[0], s) {
+	// 比对基准取「此刻生效中」的版本，而不是 versions[0]。
+	//
+	// versions[0] 是 effective_from 最大的一条，可能尚未生效（创建接口只拒
+	// effective_from=0，未来时间点是允许的）。拿未来那条比对会把真实改价误判成没变：
+	// 基线 2.5 生效中、排期一条明天的 3.0、再把渠道当前价改成 3.0 —— 与未来那条相等，
+	// 于是不追版本，今天的流量继续按 2.5 计成本，而渠道设置写着 3.0。
+	if inEffect, ok := versionInEffect(versions, time.Now().Unix()); ok && !costVersionChanged(inEffect, s) {
 		return
 	}
 	// discount 模式冻结服务端当前汇率，与 CreateChannelCostVersion 同一来源
@@ -279,5 +319,41 @@ func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSet
 	}
 	if err := model.CreateChannelCostVersion(v); err != nil {
 		common.SysError("auto append cost version failed: " + err.Error())
+		return
+	}
+	// 新价已生效，缓存里那份按旧版本算出的成本必须作废——否则改完渠道价立刻看报表
+	// 仍是旧数字。放在这里而非两个调用点，编辑与新建两条路径就都覆盖到了。
+	costCubeCacheClear()
+}
+
+// appendNewChannelCostVersions 为一批新建的渠道补计价版本。
+//
+// 为什么新建也要挂钩子：没有它，"新建带价渠道 → 流量立刻进来"这条最普通的路径下渠道
+// 全程无版本，VersionAt 解析不到，成本报表把它算成 0 成本、100% 毛利。自愈只发生在
+// 下次编辑或进程重启，所以长期不重启的实例上错误数字能挂满整个运行周期，且毫无征兆。
+//
+// 逐个复用 appendCostVersionIfChanged，而不另写一套：hasCost 门槛、汇率非正时放弃、
+// 首版本写 effective_from=0 这三条判断都得跟编辑路径完全一致，复制一遍就是复制三个
+// 未来会走偏的分支。新渠道零版本，所以那里的比对必然判定为"变了"。
+//
+// 依赖 BatchInsertChannels 把自增 Id 回填进传入的 channels（由
+// model.TestBatchInsertChannels_BackfillsIds 钉住）：Id 为 0 时会写出 channel_id=0
+// 的孤儿版本行，比没有版本更难查，所以下面仍显式挡一道。
+func appendNewChannelCostVersions(c *gin.Context, channels []model.Channel) {
+	for i := range channels {
+		ch := &channels[i]
+		if ch.Id <= 0 {
+			common.SysError("skip auto cost version: channel id not backfilled after insert, name=" + ch.Name)
+			continue
+		}
+		if ch.Setting == nil || *ch.Setting == "" {
+			continue
+		}
+		var s dto.ChannelSettings
+		if err := common.UnmarshalJsonStr(*ch.Setting, &s); err != nil {
+			common.SysError("parse channel setting for cost version failed: " + err.Error())
+			continue
+		}
+		appendCostVersionIfChanged(c, ch.Id, &s)
 	}
 }

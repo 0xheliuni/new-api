@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ChannelCostVersion 渠道成本计价历史版本。
@@ -112,21 +113,56 @@ func DeleteChannelCostVersion(id int) error {
 // （返回可读提示而非 500）。
 var ErrLastVersion = errors.New("cannot delete the last version of a channel")
 
-// DeleteChannelCostVersionIfNotLast 在同一事务内完成「计数 + 删除」：计数 <=1 时
-// 返回 ErrLastVersion 且不删除。
+// ErrBaselineVersion 目标是 effective_from=0 的基线版本时返回。
+var ErrBaselineVersion = errors.New("cannot delete the baseline (effective_from=0) version")
+
+// DeleteChannelCostVersionIfNotLast 删除指定版本，但挡住两种会造成不可逆损失的删除：
+// 目标是 effective_from=0 的基线版本（ErrBaselineVersion），或该渠道仅剩一条版本
+// （ErrLastVersion）。
 //
-// 必须放在事务里：计数与删除若是两次独立请求，两个并发 DELETE 可以同时读到 count=2、
-// 同时通过校验、同时删除，最终把渠道清空——正是这道校验要挡的状态。
-// 用事务而非 SELECT ... FOR UPDATE：后者 SQLite 不支持，而三库兼容是硬约束。
+// 基线保护是这里真正的不变量。基线覆盖「自古以来到下一个版本」的全部日志，一旦删除，
+// 那段区间 VersionAt 解析不到版本，成本永久记 0（显示成 100% 毛利），而补回的路径
+// 全部堵死：创建接口硬拒 effective_from=0（该值保留给迁移回填），自动追版本只在渠道
+// 零版本时才用 0，重启回填又按「是否存在任意版本」跳过该渠道，版本行本身还不可更新。
+// 其余版本没有这个问题——它们都能用 POST 原样重建，所以只有基线需要硬保护。
+//
+// 关于并发：事务只给原子性，不给互斥——普通 COUNT(*) 在三库上都是不加锁的读，两个
+// 并发 DELETE 会同时读到 count=2、同时通过计数校验，把渠道删空。基线保护挡掉了大部分
+// 后果（剩下的行都能用 POST 原样重建），但历史遗留的无基线渠道恰好只剩计数这一道防线，
+// 而那正是并发下失效的一环。所以这里对 channel_id 的全部版本行加行锁，把「数」和
+// 「删」真正串起来：第二个事务阻塞到第一个提交后重读，看到 count=1 并正确拒绝。
+//
+// SQLite 不支持 FOR UPDATE，按 Rule 2 分支跳过：它的写事务本身互斥，第二个删除要么
+// 排在第一个之后（重读到 count=1，同样被拒），要么直接拿到 SQLITE_BUSY——失败得很响，
+// 不会静默删空。
+//
+// 顺带把原先的三次查询压成两次：加锁的这次 SELECT 同时充当目标行查找与计数。
 func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var count int64
-		if err := tx.Model(&ChannelCostVersion{}).
-			Where("channel_id = ?", channelId).
-			Count(&count).Error; err != nil {
+		q := tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", channelId)
+		if !common.UsingSQLite {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var rows []ChannelCostVersion
+		if err := q.Select("id", "effective_from").Find(&rows).Error; err != nil {
 			return err
 		}
-		if count <= 1 {
+		// 在事务内重新定位目标行：调用方读取与本次删除之间该行可能已被删掉，
+		// 那种情况下期望的终态已经达成，按幂等处理返回成功。
+		idx := -1
+		for i := range rows {
+			if rows[i].Id == versionId {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return nil
+		}
+		if rows[idx].EffectiveFrom == 0 {
+			return ErrBaselineVersion
+		}
+		if len(rows) <= 1 {
 			return ErrLastVersion
 		}
 		return tx.Where("id = ?", versionId).Delete(&ChannelCostVersion{}).Error

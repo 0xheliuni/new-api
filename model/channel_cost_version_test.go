@@ -126,7 +126,12 @@ func TestSeedChannelCostVersions_SkipsSeededChannelsIdempotently(t *testing.T) {
 }
 
 // 最后一条版本不可删：删光后该渠道全部历史日志失去成本基准，且版本行不可更新，
-// 损失不可逆。计数与删除必须在一个事务里，否则并发 DELETE 能同时越过这道校验。
+// 损失不可逆。
+//
+// 这里刻意全部用非零 effective_from：基线（effective_from=0）由
+// TestDeleteChannelCostVersion_BaselineIsProtected 单独覆盖，且基线保护会先于计数
+// 校验命中。用非基线行才能把「仅剩一条」这道计数校验单独钉住——它正是历史遗留的
+// 无基线渠道所依赖的第二道防线。
 func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
 	DB.Exec("DELETE FROM channel_cost_versions")
 	t.Cleanup(func() { DB.Exec("DELETE FROM channel_cost_versions") })
@@ -142,7 +147,7 @@ func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
 		return v
 	}
 
-	only := mk(1, 0)
+	only := mk(1, 1000)
 	if err := DeleteChannelCostVersionIfNotLast(1, only.Id); !errors.Is(err, ErrLastVersion) {
 		t.Fatalf("deleting sole version: err = %v, want ErrLastVersion", err)
 	}
@@ -164,9 +169,92 @@ func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
 	}
 
 	// 计数按渠道隔离：别的渠道有多条，不能让本渠道的最后一条变得可删
-	mk(2, 0)
+	mk(2, 1000)
 	mk(2, 3000)
 	if err := DeleteChannelCostVersionIfNotLast(1, only.Id); !errors.Is(err, ErrLastVersion) {
 		t.Fatalf("count must scope to the channel: err = %v, want ErrLastVersion", err)
+	}
+}
+
+// effective_from=0 的基线版本不可删——这是整条历史的成本地基，且删掉无法补回。
+//
+// 为什么单靠 count>1 不够：渠道有 [0, T1] 两条时 count=2，校验放行，于是基线被删。
+// 此后 T1 之前的全部日志 VersionAt 解析不到版本，成本永久记 0（显示成 100% 毛利）。
+// 补救路径全部堵死：POST 硬拒 effective_from=0；appendCostVersionIfChanged 只在
+// 渠道「零版本」时才写 0，而此时还剩 T1；重启时 seedChannelCostVersions 的 seeded
+// 集合按「该渠道是否存在任意版本」判定，同样跳过。版本行又不可更新。
+//
+// 两个前端都已隐藏基线行的删除按钮，并注明理由是"接口会拒绝"——这条测试确保
+// 那句注释成立，而不是把不变量只寄托在客户端。
+func TestDeleteChannelCostVersion_BaselineIsProtected(t *testing.T) {
+	DB.Exec("DELETE FROM channel_cost_versions")
+	t.Cleanup(func() { DB.Exec("DELETE FROM channel_cost_versions") })
+
+	mk := func(channelId int, effectiveFrom int64) *ChannelCostVersion {
+		v := &ChannelCostVersion{
+			ChannelId: channelId, EffectiveFrom: effectiveFrom,
+			CostMode: "ratio", CostRatio: 2.5,
+		}
+		if err := CreateChannelCostVersion(v); err != nil {
+			t.Fatalf("create version: %v", err)
+		}
+		return v
+	}
+
+	baseline := mk(7, 0)
+	later := mk(7, 1754000000)
+
+	// count=2 会让 count<=1 那道校验放行，所以这里必须由基线保护挡住。
+	if err := DeleteChannelCostVersionIfNotLast(7, baseline.Id); !errors.Is(err, ErrBaselineVersion) {
+		t.Fatalf("deleting the effective_from=0 baseline: err = %v, want ErrBaselineVersion", err)
+	}
+	var survives int64
+	DB.Model(&ChannelCostVersion{}).Where("id = ?", baseline.Id).Count(&survives)
+	if survives != 1 {
+		t.Fatal("baseline row was deleted; every log before the next version now prices at 0")
+	}
+
+	// 非基线版本仍然可删：它可以用 POST 原样重建，删除不造成不可逆损失。
+	if err := DeleteChannelCostVersionIfNotLast(7, later.Id); err != nil {
+		t.Fatalf("deleting a non-baseline version: %v", err)
+	}
+
+	// 只剩基线时，两道校验都该挡住（此时 count<=1 也生效）。
+	if err := DeleteChannelCostVersionIfNotLast(7, baseline.Id); err == nil {
+		t.Fatal("deleting the sole remaining baseline must fail")
+	}
+}
+
+// BatchInsertChannels 必须把自增主键回填进调用方的切片。
+//
+// 新建渠道的追版本逻辑依赖这一点：AddChannel 在批量插入之后遍历同一个切片取 Id 去写
+// 版本行。若 Id 没有回填，写进去的会是 channel_id=0 —— 一批指向不存在渠道的孤儿版本，
+// 而真正的新渠道仍然没有任何定价，成本永久记 0，且现象与"忘了写版本"完全一样，难查。
+//
+// 这条回填**不是**自动发生的，所以必须钉住：GORM 确实会把自增主键写回它收到的那个
+// 切片，但 samber/lo v1.52 的 Chunk 返回的是**拷贝**而非共享底层数组的子切片
+// （已实测：改 chunk[0][0] 不影响原切片），于是 GORM 只填到了那份拷贝上，函数内部
+// 的 AddAbilities 能拿到正确 Id，调用方却只看到 0。BatchInsertChannels 因此显式把 Id
+// 拷回原切片。升级 lo 或改写分片逻辑时，这条测试会挡住回归。
+func TestBatchInsertChannels_BackfillsIds(t *testing.T) {
+	DB.Exec("DELETE FROM channels")
+	t.Cleanup(func() { DB.Exec("DELETE FROM channels") })
+
+	setting := `{"cost_mode":"ratio","cost_ratio":2.5}`
+	channels := []Channel{
+		{Name: "batch-a", Key: "ka", Setting: &setting},
+		{Name: "batch-b", Key: "kb", Setting: &setting},
+	}
+	if err := BatchInsertChannels(channels); err != nil {
+		t.Fatalf("batch insert: %v", err)
+	}
+	for i, ch := range channels {
+		if ch.Id <= 0 {
+			t.Fatalf("channels[%d].Id = %d, want a backfilled positive id "+
+				"(the add-channel cost version hook reads it straight from this slice)", i, ch.Id)
+		}
+	}
+	if channels[0].Id == channels[1].Id {
+		t.Fatalf("both channels share id %d", channels[0].Id)
 	}
 }

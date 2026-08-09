@@ -28,14 +28,19 @@ func costIntegrationDB(t *testing.T) {
 	prevPath := common.SQLitePath
 	prevDB, prevLogDB := model.DB, model.LOG_DB
 	prevMaster := common.IsMasterNode
+	prevRedis := common.RedisEnabled
 	common.SQLitePath = filepath.Join(t.TempDir(), "cost-test.db")
 	common.IsMasterNode = true
+	// RedisEnabled 默认 true，而 RDB 只在 InitRedisClient 里赋值——测试不调它，于是
+	// 任何走用户缓存的路径（如 AddChannel 结尾的审计日志）都会对 nil RDB 解引用。
+	common.RedisEnabled = false
 	t.Cleanup(func() {
 		if sqlDB, err := model.DB.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
 		common.SQLitePath = prevPath
 		common.IsMasterNode = prevMaster
+		common.RedisEnabled = prevRedis
 		model.DB, model.LOG_DB = prevDB, prevLogDB
 	})
 
@@ -314,5 +319,57 @@ func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
 	}
 	if versions[0].EffectiveFrom == 0 {
 		t.Fatal("second version must start at the moment of change, not 0")
+	}
+}
+
+// 追版本的比对基准必须是「此刻生效中」的版本，而不是 effective_from 最大的那条。
+//
+// GetChannelCostVersions 按 effective_from 降序返回，[0] 是时间上最靠后的一条——
+// 它可能尚未生效（创建接口只拒 effective_from=0，未来时间点是允许的）。拿未来那条
+// 做比对，会把「当前价确实变了」误判成没变：
+//
+//   基线 2.5 生效中 → 管理员排期一条明天生效的 3.0 → 再把渠道当前价改成 3.0
+//   → 与未来那条一比「相等」→ 不追版本
+//
+// 结果是今天的流量继续按 2.5 计成本，而渠道设置里写着 3.0，两边对不上且无人察觉。
+func TestAppendCostVersion_ComparesAgainstVersionInEffectNotFuture(t *testing.T) {
+	costIntegrationDB(t)
+
+	const chID = 4343
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	// 基线 2.5（自古以来生效中）
+	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5})
+
+	// 排期一条明天才生效的 3.0
+	future := &model.ChannelCostVersion{
+		ChannelId: chID, EffectiveFrom: time.Now().Add(24 * time.Hour).Unix(),
+		CostMode: "ratio", CostRatio: 3.0,
+	}
+	if err := model.CreateChannelCostVersion(future); err != nil {
+		t.Fatalf("create future version: %v", err)
+	}
+
+	// 把渠道当前价改成 3.0：相对「此刻生效中」的 2.5 是改价，必须追一条版本
+	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 3.0})
+
+	versions, err := model.GetChannelCostVersions(chID)
+	if err != nil {
+		t.Fatalf("load versions: %v", err)
+	}
+	if len(versions) != 3 {
+		t.Fatalf("versions = %d, want 3 (baseline 2.5 + scheduled 3.0 + new 3.0 effective now); "+
+			"comparing against the future row hides a real repricing", len(versions))
+	}
+	// 新版本必须从此刻生效，让今天的流量立刻按 3.0 计价
+	now := time.Now().Unix()
+	var foundNow bool
+	for _, v := range versions {
+		if v.EffectiveFrom > 0 && v.EffectiveFrom <= now && v.CostRatio == 3.0 {
+			foundNow = true
+		}
+	}
+	if !foundNow {
+		t.Fatalf("no version priced 3.0 is in effect now; versions = %+v", versions)
 	}
 }

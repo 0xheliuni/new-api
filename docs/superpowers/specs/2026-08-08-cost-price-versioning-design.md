@@ -235,17 +235,41 @@ GET    /api/cost/channels/:id/versions
 
 POST   /api/cost/channels/:id/versions
     body: {effective_from, cost_mode, cost_ratio, cost_discount, exchange_rate, note}
-    校验：effective_from 不得为 0；同渠道同 effective_from 已存在时返回 409
+    校验：effective_from 不得为 0（该值保留给迁移回填的基线版本）；
+         cost_mode 只接受空/ratio/discount；对应模式的价必须 > 0；
+         渠道必须存在；同渠道同 effective_from 已存在时拒绝；
+         note 上限 255 字符（与列宽对齐，按字符数而非字节数算）。
+    discount 模式：汇率非正时拒绝写入，不兜底默认值——把 0 冻进不可变的版本行会让
+         该版本覆盖的日志永久算不出成本，且只能靠再追加一版绕过。
 
 DELETE /api/cost/versions/:vid
-    幂等；已被引用的版本（如果实现引用计数，留作二期）直接删除
+    幂等（目标已不存在时返回成功）。两种拒绝：
+      - effective_from=0 的基线版本不可删：它覆盖「自古以来到下一版本」的全部日志，
+        删除后那段区间永久无价，且补回路径全部堵死（POST 硬拒 0、自动追版本只在零
+        版本时用 0、重启回填按「是否存在任意版本」跳过、版本行不可更新）。
+      - 渠道仅剩一条版本时不可删。
+    校验与删除在同一事务内并对该渠道的版本行加行锁（SQLite 除外，其写事务本身互斥）：
+    事务只给原子性，不给互斥，裸 COUNT 下两个并发 DELETE 能同时通过计数校验。
 ```
+
+**错误返回口径**：全部走项目统一信封（HTTP 200 + `{success:false, message}`，见
+`common.ApiErrorMsg`），不使用 4xx 状态码。前端各处已按 `success` 字段判定，单独为这
+几个接口改用 HTTP 语义会让它成为全站唯一的例外。
 
 渠道编辑页保存时（`UpdateChannel`）：若 `CostRatio`/`CostMode`/`CostDiscount` 有变化，后端自动 `POST /api/cost/channels/:id/versions` 追加 `effective_from = now`，无需前端感知。
 
-### 4.8 缓存键更新
+### 4.8 缓存键与失效
 
 `costCubeCacheKey` 不需改动（筛选栏查询汇率不再影响成本；版本数据随 `VersionMap` 整体进缓存，不参与键）。
+
+但正因为版本不进键，**版本一旦变化必须整体清空 `costCubeCache`**（`costCubeCacheClear`）。
+缓存里的 `cost_cny` 是用当时那份 `VersionMap` 逐条日志算出来的，一条新版本行会改写它
+覆盖区间内所有日志的成本，而键里没有版本指纹，无法判断哪些条目受影响——补录一条 6 月
+的历史价甚至会改到「上半年」这类早已缓存的区间。
+
+不清的后果不止「晚 60 秒更新」：「改完价立刻看报表」正是这个功能最自然的操作顺序，管理员
+会看到旧价、以为没生效，于是重复追加版本。四个写入点全部挂钩：API 创建、API 删除、渠道
+编辑自动追版本、新建渠道自动追版本（后两者合并在 `appendCostVersionIfChanged` 成功后统一清）。
 
 ### 4.9 测试
 

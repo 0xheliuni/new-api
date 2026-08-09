@@ -139,6 +139,22 @@ func costCubeCachePut(key string, entry *costCubeCacheEntry) {
 	costCubeCache.Store(key, entry)
 }
 
+// costCubeCacheClear 丢弃全部缓存条目，在计价版本发生变化时调用。
+//
+// 为什么必须全清而不是按渠道/时间清：缓存里的 cost_cny 是用当时那份 VersionMap
+// 逐条日志算出来的，一条新版本行会改写它覆盖区间内所有日志的成本，而缓存键只含
+// 查询参数、不含版本指纹，无法判断哪些条目受影响（补录一条 6 月的历史价甚至会
+// 改到"上半年"这种早已缓存的区间）。
+//
+// 不清的后果不是"数字晚 60 秒更新"这么轻——「改完价立刻看报表」正是这个功能最
+// 自然的操作顺序，管理员会看到旧价、以为没生效，于是重复追加版本。
+func costCubeCacheClear() {
+	costCubeCache.Range(func(k, _ any) bool {
+		costCubeCache.Delete(k)
+		return true
+	})
+}
+
 // costCubeData 一次 buildCostCube 的产出集合，避免多返回值随字段增长继续膨胀。
 type costCubeData struct {
 	cube     *costCube
