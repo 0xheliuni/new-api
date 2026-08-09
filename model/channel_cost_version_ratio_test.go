@@ -42,11 +42,13 @@ func TestVersionMap_CrossVersionBoundary(t *testing.T) {
 		{ChannelId: 3, EffectiveFrom: 0, CostMode: "ratio", CostRatio: 2.5},
 		{ChannelId: 3, EffectiveFrom: 2000, CostMode: "ratio", CostRatio: 2.3},
 	})
-	if r, _ := vm.RatioAt(3, 1999); r != 2.5 {
-		t.Fatalf("before boundary: want 2.5, got %v", r)
+	r, ok := vm.RatioAt(3, 1999)
+	if !ok || r != 2.5 {
+		t.Fatalf("before boundary (ts=1999): want (2.5,true), got (%v,%v)", r, ok)
 	}
-	if r, _ := vm.RatioAt(3, 2000); r != 2.3 {
-		t.Fatalf("at boundary: want 2.3, got %v", r)
+	r, ok = vm.RatioAt(3, 2000)
+	if !ok || r != 2.3 {
+		t.Fatalf("at boundary (ts=2000): want (2.3,true), got (%v,%v)", r, ok)
 	}
 }
 
@@ -69,6 +71,18 @@ func TestVersionMap_ZeroRatioUnpriced(t *testing.T) {
 		{ChannelId: 7, EffectiveFrom: 0, CostMode: "ratio", CostRatio: 0},
 	}).RatioAt(7, 9999); ok {
 		t.Fatal("zero ratio must return ok=false")
+	}
+}
+
+// Channel key present but with empty version slice.
+// Different from unknown channel ID (which is also absent from map) because it takes
+// a different code path: the channel exists as a map key but has no versions to search.
+func TestVersionMap_EmptyVersionSlice(t *testing.T) {
+	vm := VersionMap{
+		9: {}, // channel 9 exists but has no versions
+	}
+	if _, ok := vm.RatioAt(9, 5000); ok {
+		t.Fatal("empty version slice must return ok=false")
 	}
 }
 
