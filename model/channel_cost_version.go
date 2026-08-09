@@ -1,12 +1,14 @@
 package model
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"gorm.io/gorm"
 )
 
 // ChannelCostVersion 渠道成本计价历史版本。
@@ -104,6 +106,31 @@ func CreateChannelCostVersion(v *ChannelCostVersion) error {
 // DeleteChannelCostVersion 删除指定版本（幂等）。
 func DeleteChannelCostVersion(id int) error {
 	return DB.Where("id = ?", id).Delete(&ChannelCostVersion{}).Error
+}
+
+// ErrLastVersion 目标是该渠道仅存版本时返回，供调用方与数据库错误区分处理
+// （返回可读提示而非 500）。
+var ErrLastVersion = errors.New("cannot delete the last version of a channel")
+
+// DeleteChannelCostVersionIfNotLast 在同一事务内完成「计数 + 删除」：计数 <=1 时
+// 返回 ErrLastVersion 且不删除。
+//
+// 必须放在事务里：计数与删除若是两次独立请求，两个并发 DELETE 可以同时读到 count=2、
+// 同时通过校验、同时删除，最终把渠道清空——正是这道校验要挡的状态。
+// 用事务而非 SELECT ... FOR UPDATE：后者 SQLite 不支持，而三库兼容是硬约束。
+func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&ChannelCostVersion{}).
+			Where("channel_id = ?", channelId).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count <= 1 {
+			return ErrLastVersion
+		}
+		return tx.Where("id = ?", versionId).Delete(&ChannelCostVersion{}).Error
+	})
 }
 
 // VersionExists 检查同渠道同 effective_from 是否已有版本，用于 409 冲突检测。

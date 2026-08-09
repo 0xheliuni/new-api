@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -121,5 +122,51 @@ func TestSeedChannelCostVersions_SkipsSeededChannelsIdempotently(t *testing.T) {
 	}
 	if _, ok := discVer.EffectiveRatio(); !ok {
 		t.Fatal("seeded discount version must yield a usable ratio")
+	}
+}
+
+// 最后一条版本不可删：删光后该渠道全部历史日志失去成本基准，且版本行不可更新，
+// 损失不可逆。计数与删除必须在一个事务里，否则并发 DELETE 能同时越过这道校验。
+func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
+	DB.Exec("DELETE FROM channel_cost_versions")
+	t.Cleanup(func() { DB.Exec("DELETE FROM channel_cost_versions") })
+
+	mk := func(channelId int, effectiveFrom int64) *ChannelCostVersion {
+		v := &ChannelCostVersion{
+			ChannelId: channelId, EffectiveFrom: effectiveFrom,
+			CostMode: "ratio", CostRatio: 2.5,
+		}
+		if err := CreateChannelCostVersion(v); err != nil {
+			t.Fatalf("create version: %v", err)
+		}
+		return v
+	}
+
+	only := mk(1, 0)
+	if err := DeleteChannelCostVersionIfNotLast(1, only.Id); !errors.Is(err, ErrLastVersion) {
+		t.Fatalf("deleting sole version: err = %v, want ErrLastVersion", err)
+	}
+	var stillThere int64
+	DB.Model(&ChannelCostVersion{}).Where("channel_id = ?", 1).Count(&stillThere)
+	if stillThere != 1 {
+		t.Fatalf("sole version was deleted despite the guard: count = %d", stillThere)
+	}
+
+	// 两条时可删，且删的是指定那条
+	second := mk(1, 2000)
+	if err := DeleteChannelCostVersionIfNotLast(1, second.Id); err != nil {
+		t.Fatalf("deleting one of two: %v", err)
+	}
+	var remaining []ChannelCostVersion
+	DB.Where("channel_id = ?", 1).Find(&remaining)
+	if len(remaining) != 1 || remaining[0].Id != only.Id {
+		t.Fatalf("wrong row deleted: remaining = %+v", remaining)
+	}
+
+	// 计数按渠道隔离：别的渠道有多条，不能让本渠道的最后一条变得可删
+	mk(2, 0)
+	mk(2, 3000)
+	if err := DeleteChannelCostVersionIfNotLast(1, only.Id); !errors.Is(err, ErrLastVersion) {
+		t.Fatalf("count must scope to the channel: err = %v, want ErrLastVersion", err)
 	}
 }
