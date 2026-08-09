@@ -2,6 +2,7 @@ package model
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -116,6 +117,7 @@ func VersionExists(channelId int, effectiveFrom int64) (bool, error) {
 
 // seedChannelCostVersions 迁移回填：对已配置成本计价但版本表无记录的渠道，
 // 插入 effective_from=0 的初始版本。幂等，重复调用跳过已有渠道。
+// 每个渠道独立处理：单渠道插入失败只记日志并继续，下次启动会重试该渠道。
 func seedChannelCostVersions() error {
 	type cid struct{ ChannelId int }
 	var existing []cid
@@ -131,10 +133,10 @@ func seedChannelCostVersions() error {
 	if err := DB.Select("id", "setting").Find(&channels).Error; err != nil {
 		return err
 	}
-	er := operation_setting.USDExchangeRate
-	if er <= 0 {
-		er = 7.3
-	}
+	// 从 options 表直接读汇率快照：seedChannelCostVersions 在 InitOptionMap() 之前
+	// 被 migrateDB() 调用，此时 operation_setting.USDExchangeRate 尚未从 DB 加载，
+	// 仍是包级默认值 7.3。直接查 options 表才能拿到管理员配置的值。
+	er := seedLoadExchangeRate()
 	for _, ch := range channels {
 		if seeded[ch.Id] || ch.Setting == nil || *ch.Setting == "" {
 			continue
@@ -155,8 +157,32 @@ func seedChannelCostVersions() error {
 			Note: "migrated from channel settings",
 		}
 		if err := CreateChannelCostVersion(v); err != nil {
-			return err
+			// 非致命：记日志并继续，让其余渠道正常回填；
+			// 失败渠道在下次启动时会被再次尝试（seeded map 不含它）。
+			common.SysError("seedChannelCostVersions: channel " +
+				strconv.Itoa(ch.Id) + ": " + err.Error())
 		}
 	}
 	return nil
+}
+
+// seedLoadExchangeRate 直接从 options 表查 USDExchangeRate，返回解析后的 float64。
+// 查询失败或值不合法时回退到 operation_setting.USDExchangeRate（包级默认）。
+// 此函数仅在 migrateDB() 内调用，此时 InitOptionMap() 尚未运行。
+// key 是三库保留字，必须用 commonKeyCol 引用（PG 用双引号，MySQL/SQLite 用反引号）。
+func seedLoadExchangeRate() float64 {
+	// 用 Find 而非 First：First 在无记录时返回 ErrRecordNotFound，GORM 会把它
+	// 记成错误日志——但"选项没配过"是完全正常的启动状态，不该制造日志噪声。
+	var opts []Option
+	err := DB.Where(commonKeyCol+" = ?", "USDExchangeRate").Limit(1).Find(&opts).Error
+	if err == nil && len(opts) > 0 {
+		if r, parseErr := strconv.ParseFloat(opts[0].Value, 64); parseErr == nil && r > 0 {
+			return r
+		}
+	}
+	// 回退到包级变量（默认 7.3，或已被其他路径提前设置的值）
+	if operation_setting.USDExchangeRate > 0 {
+		return operation_setting.USDExchangeRate
+	}
+	return 7.3
 }
