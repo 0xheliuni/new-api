@@ -571,3 +571,69 @@ func TestFoldCostCube_DeterministicOrderOnTies(t *testing.T) {
 		}
 	}
 }
+
+// 跨版本折叠：改价前后的日志各自按当时生效的版本定价，成本是两段的和而非
+// 任一单价 × 总量；同时 RatioMixed 必须为 true。
+//
+// 这条用例针对的是一个已经踩过的坑：RatioMixed 若在单个立方体格子里判定
+// （len(RatioVersionSeen) > 1），日粒度下改价前后的日志分属不同时间桶，每格
+// 都只看到一个版本，恒为 false——标记永远不会亮，而它正是为这个场景存在的。
+// 所以判定必须在折叠层对版本身份做并集。
+func TestFoldCostCube_CrossVersionPricing(t *testing.T) {
+	boundary := tsOn("2026-06-02", 0)
+	versions := model.VersionMap{
+		3: {
+			{ChannelId: 3, EffectiveFrom: 0, CostRatio: 2.5},
+			{ChannelId: 3, EffectiveFrom: boundary, CostRatio: 2.0},
+		},
+	}
+	c := newCostCubeWithGranularity(costGranularityDay)
+	// 两条日志刊例各 $1（quota 500000 / group_ratio 1），分落改价前后。
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 500000, Other: `{"group_ratio":1}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-02", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 500000, Other: `{"group_ratio":1}`},
+	}, versions)
+
+	rows := foldCostCube(c, costDimChannel, testChannels(), versions, 7.0, tsOn("2026-06-02", 23))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	row := rows[0]
+	// $1×2.5 + $1×2.0 = ¥4.5。若成本仍在折叠末尾统一乘一个倍率，这里会得到
+	// ¥5.0（全按 2.5）或 ¥4.0（全按 2.0）。
+	if diff := row.CostCny - 4.5; diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("cost = %v, want 4.5 (1×2.5 + 1×2.0)", row.CostCny)
+	}
+	if !row.RatioMixed {
+		t.Fatal("RatioMixed = false, want true (price changed mid-range)")
+	}
+	// 加权真实倍率 = 4.5 / 2 = 2.25，落在两个版本之间。
+	if diff := row.EffectiveRatio - 2.25; diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("effective ratio = %v, want 2.25 (weighted across versions)", row.EffectiveRatio)
+	}
+	// 区间内未改价的渠道不应被标记
+	if row.Priced != true {
+		t.Fatalf("priced = %v, want true (both versions price successfully)", row.Priced)
+	}
+}
+
+// 单一版本覆盖整个区间时 RatioMixed 必须为 false——否则"改过价"的标记会对
+// 所有渠道常亮，等于没有标记。
+func TestFoldCostCube_SingleVersionNotMixed(t *testing.T) {
+	c := newCostCubeWithGranularity(costGranularityDay)
+	c.addBatch([]*model.Log{
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 500000, Other: `{"group_ratio":1}`},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-02", 10), UserId: 1, Username: "alice",
+			ChannelId: 3, ModelName: "gpt-4o", Quota: 500000, Other: `{"group_ratio":1}`},
+	}, testVersions())
+	rows := foldCostCube(c, costDimChannel, testChannels(), testVersions(), 7.0, tsOn("2026-06-02", 23))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].RatioMixed {
+		t.Fatal("RatioMixed = true, want false (one version covers the whole range)")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
@@ -278,4 +279,40 @@ func TestCostIntegration_JSONContract(t *testing.T) {
 func nearly(got, want float64) bool {
 	d := got - want
 	return d < 1e-6 && d > -1e-6
+}
+
+// 渠道的**首个**自动版本必须落在 effective_from=0，而不是 now。
+//
+// 用 now 会同时挖两个坑：渠道创建到首次编辑之间的日志永远落在版本区间之前，
+// VersionAt 解析不到版本，那段成本永久记 0（显示成 100% 毛利）；而且一旦写入，
+// seedChannelCostVersions 的 seeded 集合就认为该渠道"已回填"，重启补种也不再
+// 管它。版本行不可变、创建接口又硬拒 effective_from=0，事后无从补救。
+func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
+	costIntegrationDB(t)
+
+	const chID = 4242
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5})
+
+	versions, err := model.GetChannelCostVersions(chID)
+	if err != nil {
+		t.Fatalf("load versions: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Fatalf("versions = %d, want 1", len(versions))
+	}
+	if versions[0].EffectiveFrom != 0 {
+		t.Fatalf("first version effective_from = %d, want 0 (must cover logs written before the first edit)",
+			versions[0].EffectiveFrom)
+	}
+
+	// 第二次改价才用 now：历史区间归首版，新价从改动时刻起生效。
+	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.0})
+	versions, _ = model.GetChannelCostVersions(chID) // 降序，[0] 为最新
+	if len(versions) != 2 {
+		t.Fatalf("versions after repricing = %d, want 2", len(versions))
+	}
+	if versions[0].EffectiveFrom == 0 {
+		t.Fatal("second version must start at the moment of change, not 0")
+	}
 }

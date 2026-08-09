@@ -36,10 +36,13 @@ func TestBuildCostOverview_TrendAndStackAndWarning(t *testing.T) {
 // （日志未选择渠道，非真实渠道）的错误行不应计入 unpriced 渠道数——0 只是
 // "未选择渠道"的兜底值，把它算作未定价渠道会让告警横幅误报。
 func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
+	// 主角必须是 channel 0 的**消费**行：错误行在累加 UnpricedListQuota 之前就 continue
+	// 了，用错误行做用例时 `UnpricedListQuota > 0` 这一半条件本身就为假，把
+	// `&& k.ChannelId != 0` 整个删掉断言照样通过——那样这条测试就什么都没钉住。
 	c := newCostCube()
 	c.addBatch([]*model.Log{
-		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
-			ChannelId: 0, ModelName: "gpt-4o"},
+		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
+			ChannelId: 0, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
 	}, testVersions())
 	ov := buildCostOverview(c, testChannels(), 7.0, 0, 0)
 	if ov.UnpricedChannelCount != 0 {

@@ -214,6 +214,13 @@ func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSet
 	if !hasCost {
 		return
 	}
+	// 与 CreateChannelCostVersion 的白名单保持一致：未知 cost_mode 落进不可变的版本行
+	// 后无法修正，而渠道保存路径本身并不校验这个字段。
+	if s.CostMode != "" && s.CostMode != "ratio" && s.CostMode != "discount" {
+		common.SysError("skip auto cost version for channel " + strconv.Itoa(channelId) +
+			": unknown cost_mode " + s.CostMode)
+		return
+	}
 	versions, err := model.GetChannelCostVersions(channelId) // 降序，[0] 为最新
 	if err != nil {
 		common.SysError("load cost versions failed: " + err.Error())
@@ -236,13 +243,25 @@ func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSet
 			": discount mode requires a positive USDExchangeRate")
 		return
 	}
-	now := time.Now().Unix()
-	if exists, _ := model.VersionExists(channelId, now); exists {
-		return // 同一秒内重复保存，跳过（版本不可变，同一时间点重复写入会造成歧义）
+	// 首个版本用 effective_from=0（自古以来），而不是 now。
+	//
+	// 用 now 会同时挖两个坑：渠道创建到首次编辑之间的日志永远落在版本区间之前，
+	// VersionAt 返回 false，这段成本永久记 0（显示成 100% 毛利）；而且一旦写入，
+	// seedChannelCostVersions 的 seeded 集合就认为该渠道"已回填"，重启补种也不会
+	// 再管它。版本行不可变、创建接口又硬拒 effective_from=0，事后无从补救。
+	//
+	// 取 0 与 seedChannelCostVersions 的语义完全一致（它同样把当前配置按
+	// effective_from=0 落库），把这条历史缺口从源头堵上。
+	effectiveFrom := int64(0)
+	if len(versions) > 0 {
+		effectiveFrom = time.Now().Unix()
+		if exists, _ := model.VersionExists(channelId, effectiveFrom); exists {
+			return // 同一秒内重复保存，跳过（版本不可变，同一时间点重复写入会造成歧义）
+		}
 	}
 	v := &model.ChannelCostVersion{
 		ChannelId:     channelId,
-		EffectiveFrom: now,
+		EffectiveFrom: effectiveFrom,
 		CostMode:      s.CostMode,
 		CostRatio:     s.CostRatio,
 		CostDiscount:  s.CostDiscount,
