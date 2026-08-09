@@ -297,8 +297,17 @@ type costMoney struct {
 	EffectiveRatioKnown bool    `json:"effective_ratio_known,omitempty"`
 	RatioMixed          bool    `json:"ratio_mixed,omitempty"`
 	// 用户折扣信号（从日志历史值派生，替代查配置）
-	DiscountMixed    bool    `json:"discount_mixed,omitempty"`
-	DiscountSpecial  bool    `json:"discount_special,omitempty"`
+	DiscountMixed   bool `json:"discount_mixed,omitempty"`
+	DiscountSpecial bool `json:"discount_special,omitempty"`
+
+	// DiscountListBasis/DiscountTotalBasis 覆盖率的分子与分母，单位 $，随行向上累加。
+	// 之所以把两个基数一路带上来而不是只带比值：比值不可加权合并。ListQuota 对每一笔
+	// 退款都冲减，DiscountTotalBasis 只在退款带折扣信息时才冲减（见 addBatch），两者
+	// 口径不同，单个格子的 ListUsd 可以是 0 或负数，拿它当权重会把结果推出 [0,1]。
+	// 与 EffectiveRatio/EffectiveDiscount 同一套做法：累加绝对量，最后除一次。
+	DiscountListBasis  float64 `json:"discount_list_basis,omitempty"`
+	DiscountTotalBasis float64 `json:"discount_total_basis,omitempty"`
+	// DiscountCoverage = DiscountListBasis / DiscountTotalBasis，由 deriveRates 派生。
 	DiscountCoverage float64 `json:"discount_coverage,omitempty"`
 }
 
@@ -387,12 +396,13 @@ func costMoneyFromRow(r *costCubeRow, exchangeRate float64) costMoney {
 	if m.RevenueCny != 0 {
 		m.ProfitRate = roundTo6(m.ProfitCny / m.RevenueCny)
 	}
-	// 折扣信号。分母用 DiscountTotalBasis 而非 ListQuota：后者对所有退款都冲减，
-	// 与只在有折扣信息时才冲减的分子口径不同，比值会越过 1。采集阶段已让分子分母
-	// 共用同一个门槛（见 addBatch），因此 DiscountTotalBasis ≥ DiscountListBasis
-	// 恒成立；下面的 min 只是兜底，真要触发说明采集侧的门槛又被拆开了。
+	// 折扣信号。两个基数原样带上（换算成 $），比值交给 deriveRates 统一派生——
+	// 单格子和折叠后的父行走同一条公式，避免两处口径漂移。
+	m.DiscountListBasis = roundTo6(r.DiscountListBasis / common.QuotaPerUnit)
+	m.DiscountTotalBasis = roundTo6(r.DiscountTotalBasis / common.QuotaPerUnit)
+	// mixed/special 是采集到的事实而非金额的函数，仍在这里定，且只在本格子确有
+	// 折扣信息时才置位：没有信息就不该声称"混用"或"专属"。
 	if r.DiscountTotalBasis > 0 && r.DiscountListBasis > 0 {
-		m.DiscountCoverage = roundTo6(min(r.DiscountListBasis/r.DiscountTotalBasis, 1))
 		m.DiscountMixed = r.DiscountMixed
 		m.DiscountSpecial = r.DiscountSpecialSum > 0
 	}
@@ -448,16 +458,18 @@ func (m *costMoney) deriveRates() {
 		m.EffectiveRatio = roundTo6(m.CostCny / m.ListUsd)
 		m.EffectiveRatioKnown = true
 	}
+	// 覆盖率同样是「两个累加后的基数相除」，不是各行比值的平均。分子分母在采集侧
+	// 共用同一个门槛（见 addBatch），故分母 ≥ 分子恒成立，min 只是兜底。
+	// 两者都要求为正：净额退成 0 或负时比值无意义，此时不给覆盖率（omitempty 后
+	// 前端按 0 处理，会如实显示"缺折扣信息"而不是编一个数）。
+	if m.DiscountTotalBasis > 0 && m.DiscountListBasis > 0 {
+		m.DiscountCoverage = roundTo6(min(m.DiscountListBasis/m.DiscountTotalBasis, 1))
+	} else {
+		m.DiscountCoverage = 0
+	}
 }
 
 func (m *costMoney) add(o costMoney) {
-	// 覆盖率按 ListUsd 加权合并，必须先做：权重是累加**之前**的两侧 ListUsd，
-	// 放到数值累加之后 m.ListUsd 已含 o.ListUsd，会把 o 侧重复计一次。
-	// 任一侧为 0 覆盖率时按 0 参与加权，保证"有缺失就拉低"。
-	if totalList := m.ListUsd + o.ListUsd; totalList > 0 {
-		m.DiscountCoverage = roundTo6(
-			(m.DiscountCoverage*m.ListUsd + o.DiscountCoverage*o.ListUsd) / totalList)
-	}
 	// 布尔信号取或：任一子行跨版本/跨折扣，父行即为 mixed。
 	// RatioMixed 的兄弟格子场景由 foldCostCube 的版本并集覆盖，这里的或只保证
 	// 已经确定 mixed 的子行在向上合并时不丢失该状态。
@@ -469,6 +481,8 @@ func (m *costMoney) add(o costMoney) {
 	m.RevenueCny = roundTo6(m.RevenueCny + o.RevenueCny)
 	m.ListUsd = roundTo6(m.ListUsd + o.ListUsd)
 	m.CostCny = roundTo6(m.CostCny + o.CostCny)
+	m.DiscountListBasis = roundTo6(m.DiscountListBasis + o.DiscountListBasis)
+	m.DiscountTotalBasis = roundTo6(m.DiscountTotalBasis + o.DiscountTotalBasis)
 	m.ProfitCny = roundTo6(m.ProfitCny + o.ProfitCny)
 	m.RefundUsd = roundTo6(m.RefundUsd + o.RefundUsd)
 	m.PromptTokens += o.PromptTokens
