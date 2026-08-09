@@ -120,6 +120,8 @@
   "Sync from upstream": "Sync from upstream",
   "Available after aggregator API integration": "Available after aggregator API integration",
   "No sub-suppliers configured yet.": "No sub-suppliers configured yet.",
+  "list price (USD) × the cost ratio of the price version in effect for each log": "list price (USD) × the cost ratio of the price version in effect for each log",
+  "the channel bills 80% of list price, settled at the rate frozen with that price version": "the channel bills 80% of list price, settled at the rate frozen with that price version",
   "Actual discount (this range)": "Actual discount (this range)",
   "Actual discount is revenue ÷ list price over the selected range.": "Actual discount is revenue ÷ list price over the selected range.",
   "The user spent across several token groups in this range; the configured ratio shown is quota-weighted.": "The user spent across several token groups in this range; the configured ratio shown is quota-weighted.",
@@ -139,7 +141,8 @@
   "Frozen with this version so historical cost never drifts.": "Frozen with this version so historical cost never drifts.",
   "Price version added": "Price version added",
   "Price version deleted": "Price version deleted",
-  "Weighted across price versions": "Weighted across price versions",
+  "Actual cost ratio: cost ÷ list price": "Actual cost ratio: cost ÷ list price",
+  "Weighted across price versions: cost ÷ list price": "Weighted across price versions: cost ÷ list price",
   "Cost ratio changed during this range": "Cost ratio changed during this range",
   "Dedicated ratio applied: a user-group × token-group ratio was active.": "Dedicated ratio applied: a user-group × token-group ratio was active.",
   "Discount changed during this range — the user may have changed groups or a ratio was edited.": "Discount changed during this range — the user may have changed groups or a ratio was edited.",
@@ -147,5 +150,9 @@
   "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.": "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.",
   "Shows '-' when the range has no list price (free or unpriced models).": "Shows '-' when the range has no list price (free or unpriced models).",
   "Revenue exchange rate": "Revenue exchange rate",
-  "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate."
+  "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.",
+  "Saving records the current price as a new version; historical ranges keep their original price.": "Saving records the current price as a new version; historical ranges keep their original price.",
+  "Failed to load price versions": "Failed to load price versions",
+  "Failed to add price version": "Failed to add price version",
+  "Failed to delete price version": "Failed to delete price version"
 }

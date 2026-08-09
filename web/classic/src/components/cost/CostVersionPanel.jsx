@@ -129,6 +129,8 @@ const AddVersionForm = ({
           <Text size='small' type='tertiary'>
             {t('该价格自何时起生效')}
           </Text>
+          {/* 每个控件都要自带 aria-label：上面的 <Text> 只是视觉标签，既没有 id
+              关联也不会被读屏软件念出来，否则整张表单在读屏下都是无名字段。 */}
           <DatePicker
             className='w-full'
             type='dateTime'
@@ -136,6 +138,7 @@ const AddVersionForm = ({
             value={effectiveFrom}
             onChange={setEffectiveFrom}
             placeholder={t('选择生效时间')}
+            aria-label={t('该价格自何时起生效')}
           />
         </div>
         <div>
@@ -151,6 +154,7 @@ const AddVersionForm = ({
               { label: t('成本折扣'), value: 'discount' },
             ]}
             onChange={setMode}
+            aria-label={t('计价方式')}
           />
         </div>
         <div>
@@ -164,6 +168,9 @@ const AddVersionForm = ({
             step={0.01}
             value={value}
             onChange={setValue}
+            aria-label={
+              mode === 'discount' ? t('成本折扣') : t('成本倍率（人民币:美元）')
+            }
           />
         </div>
         {mode === 'discount' && (
@@ -178,6 +185,7 @@ const AddVersionForm = ({
               step={0.1}
               value={rate}
               onChange={setRate}
+              aria-label={t('结算汇率')}
             />
           </div>
         )}
@@ -191,6 +199,7 @@ const AddVersionForm = ({
             value={note}
             onChange={setNote}
             placeholder={t('选填')}
+            aria-label={t('备注')}
           />
         </div>
       </div>

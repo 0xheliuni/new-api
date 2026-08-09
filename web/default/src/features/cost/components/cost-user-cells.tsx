@@ -23,13 +23,13 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from '@/components/ui/hover-card'
-import type { CostBreakdownRow, CostDimension } from '../types'
 import {
   breakdownChannelCount,
   effectiveCostRatioOf,
   formatCostRatio,
   trimRatioNumber,
 } from '../lib'
+import type { CostBreakdownRow, CostDimension } from '../types'
 import { EditRatioDialog } from './edit-ratio-dialog'
 
 /**
@@ -114,12 +114,17 @@ function WeightedCostRatio({ row }: { row: PricingCellRow }) {
       </HoverCardTrigger>
       <HoverCardContent align='end' className='w-72'>
         <div className='flex flex-col gap-1.5'>
+          {/* Every branch has to describe a *derived* number: the value shown is
+              cost ÷ list price over the row's own money, never a stored config.
+              Saying "configured" here contradicts the list below whenever the
+              channel is discount-mode (0.8 configured renders as 5.76 derived)
+              or part of the range has no price version. */}
           <p className='text-muted-foreground text-xs'>
             {blended
               ? t('Weighted across channels: cost ÷ list price')
               : versioned
-                ? t('Weighted across price versions')
-                : t('Cost ratio configured on the channel')}
+                ? t('Weighted across price versions: cost ÷ list price')
+                : t('Actual cost ratio: cost ÷ list price')}
           </p>
           <div className='flex flex-col divide-y'>
             {breakdown.map((b, index) => (
@@ -130,7 +135,7 @@ function WeightedCostRatio({ row }: { row: PricingCellRow }) {
                 <span className='truncate'>
                   {b.channel_name || t('Unknown channel')}
                 </span>
-                <span className='tabular-nums whitespace-nowrap'>
+                <span className='whitespace-nowrap tabular-nums'>
                   {configuredPricingLabel(b, t) ?? t('Not set')}
                 </span>
               </div>
@@ -276,11 +281,15 @@ export function UserDiscountCell({ row }: { row: PricingCellRow }) {
             <span className='tabular-nums'>{trimRatioNumber(actual)}</span>
           </div>
           <p className='text-muted-foreground'>
-            {t('Actual discount is revenue ÷ list price over the selected range.')}
+            {t(
+              'Actual discount is revenue ÷ list price over the selected range.'
+            )}
           </p>
           {special && (
             <p className='text-muted-foreground'>
-              {t('Dedicated ratio applied: a user-group × token-group ratio was active.')}
+              {t(
+                'Dedicated ratio applied: a user-group × token-group ratio was active.'
+              )}
             </p>
           )}
           {mixed && (
@@ -324,11 +333,15 @@ export function RequestOutcomeCell({
   return (
     <div className='flex flex-col items-end leading-tight'>
       <span className='tabular-nums'>
-        <span className={requestCount ? 'text-success' : 'text-muted-foreground'}>
+        <span
+          className={requestCount ? 'text-success' : 'text-muted-foreground'}
+        >
           {formatNumber(requestCount)}
         </span>
         <span className='text-muted-foreground'> / </span>
-        <span className={errorCount ? 'text-destructive' : 'text-muted-foreground'}>
+        <span
+          className={errorCount ? 'text-destructive' : 'text-muted-foreground'}
+        >
           {formatNumber(errorCount)}
         </span>
       </span>
@@ -338,4 +351,3 @@ export function RequestOutcomeCell({
     </div>
   )
 }
-

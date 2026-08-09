@@ -17,13 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import type { TFunction } from 'i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { dateToUnixTimestamp, formatDate } from '@/lib/time'
-import { getChannel, updateChannel } from '@/features/channels/api'
+import { dateToUnixTimestamp, formatDateTimeObject } from '@/lib/time'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -38,6 +37,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
+import { getChannel, updateChannel } from '@/features/channels/api'
 import {
   createChannelCostVersion,
   deleteChannelCostVersion,
@@ -137,11 +137,22 @@ export function EditRatioDialog({
       }
 
       toast.success(t('Cost ratio updated'))
-      await queryClient.invalidateQueries({ queryKey: ['cost'] })
+      // Saving appends a price version server-side, so the history list below is
+      // stale too. ['cost'] does not prefix-match ['cost-versions', id], and the
+      // global staleTime would serve the cached list if the admin reopens the
+      // dialog to confirm — contradicting the copy that promises it was recorded.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['cost'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['cost-versions', channelId],
+        }),
+      ])
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to update cost ratio')
+        error instanceof Error
+          ? error.message
+          : t('Failed to update cost ratio')
       )
     } finally {
       setSubmitting(false)
@@ -277,13 +288,24 @@ export function EditRatioDialog({
   )
 }
 
-/** "0.8 × ¥7.20" for discount mode, "¥2.50" for ratio mode, '-' when unset. */
+/**
+ * "0.8 × ¥7.20" for discount mode, "¥2.50" for ratio mode, 'Not set' when the
+ * mode's own price is missing.
+ *
+ * An empty cost_mode means ratio (see model.ChannelCostVersion.CostMode). Ratio
+ * channels normally persist with no cost_mode key at all — channel-form.ts only
+ * writes it for discount mode, and both the seeder and the auto-append copy the
+ * channel setting verbatim. Testing `!== 'discount'` rather than `=== 'ratio'`
+ * keeps a channel priced at ¥2.5/$1 from reading as unpriced, which would invite
+ * the admin to record a duplicate historical version.
+ */
 function describeVersion(v: ChannelCostVersion, t: TFunction): string {
   if (v.cost_mode === 'discount') {
-    return `${v.cost_discount} × ¥${v.exchange_rate.toFixed(2)}`
+    return v.cost_discount > 0
+      ? `${v.cost_discount} × ¥${v.exchange_rate.toFixed(2)}`
+      : t('Not set')
   }
-  if (v.cost_mode === 'ratio') return `¥${v.cost_ratio.toFixed(2)}`
-  return t('Not set')
+  return v.cost_ratio > 0 ? `¥${v.cost_ratio.toFixed(2)}` : t('Not set')
 }
 
 /**
@@ -312,11 +334,19 @@ function VersionHistoryPanel({
     queryKey: ['cost-versions', channelId],
     queryFn: () => getChannelCostVersions(channelId),
     enabled: open,
+    // The global predicate only opts out of Axios 401/403, so a business refusal
+    // (HTTP 200 + success:false, thrown as a plain Error) would retry four times
+    // with backoff and hold this panel on "Loading..." for ~7s before showing the
+    // reason. Retrying cannot change a deterministic refusal, and reopening the
+    // dialog is a cheap manual retry for a genuine network blip.
+    retry: false,
   })
 
   // Cost figures are derived from the versions, so the report is stale too.
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ['cost-versions', channelId] })
+    void queryClient.invalidateQueries({
+      queryKey: ['cost-versions', channelId],
+    })
     void queryClient.invalidateQueries({ queryKey: ['cost'] })
   }
 
@@ -375,13 +405,17 @@ function VersionHistoryPanel({
           {versions.map((v) => (
             <li
               key={v.id}
-              className='flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50'
+              className='hover:bg-muted/50 flex items-center justify-between gap-2 rounded-md px-2 py-1.5'
             >
               <div className='flex min-w-0 flex-col leading-tight'>
+                {/* Date + time, not date alone: the picker captures hours and
+                    minutes, so two versions effective the same day would render
+                    as identical rows and the admin could not tell which one the
+                    delete button belongs to. */}
                 <span className='font-medium tabular-nums'>
                   {v.effective_from === 0
                     ? t('Initial')
-                    : formatDate(v.effective_from)}
+                    : formatDateTimeObject(new Date(v.effective_from * 1000))}
                 </span>
                 {v.note && (
                   <span className='text-muted-foreground truncate'>
@@ -520,7 +554,9 @@ function AddVersionForm({
         </div>
         <div className='flex flex-col gap-1'>
           <Label className='text-xs' htmlFor='cost-version-value'>
-            {mode === 'discount' ? t('Cost Discount') : t('Cost Ratio (CNY per USD)')}
+            {mode === 'discount'
+              ? t('Cost Discount')
+              : t('Cost Ratio (CNY per USD)')}
           </Label>
           <Input
             id='cost-version-value'
