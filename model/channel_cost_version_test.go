@@ -65,8 +65,12 @@ func TestSeedLoadExchangeRate_IgnoresInvalidValue(t *testing.T) {
 	}
 }
 
-// 单个渠道插入失败不能中断整批回填：其余渠道必须照常获得初始版本。
-// 用重复主键制造失败——先手工插一条 channel 1 的版本，再让 seed 跑全表。
+// 回填的三条不变量：只为有成本配置的渠道建版本、重复调用不新增行、discount
+// 渠道必须带非零冻结汇率。
+//
+// 注意：本测试不覆盖"单渠道插入失败不中断整批"那条错误隔离逻辑——在 SQLite 上
+// 无法不依赖实现细节地稳定制造一次中途插入失败（Id 由 GORM 自增，冲突不可控），
+// 该行为靠 seedChannelCostVersions 内的 SysError+continue 保证。
 func TestSeedChannelCostVersions_SkipsSeededChannelsIdempotently(t *testing.T) {
 	DB.Exec("DELETE FROM channel_cost_versions")
 	DB.Exec("DELETE FROM channels")
