@@ -47,14 +47,15 @@ type costCubeRow struct {
 	UnpricedListQuota float64
 
 	// 用户折扣信号（从日志 other 取历史值，替代 QuotaByGroup 配置查询链路）
-	DiscountWeightedSum float64 // Σ(历史折扣 × listQ)
-	DiscountListBasis   float64 // 有有效折扣信息的 listQ 之和（退款同步冲减）
-	DiscountSpecialSum  float64 // 命中专属倍率（user_group_ratio 有效）的 listQ 之和
-	DiscountFirstRatio  float64 // 第一个出现的折扣值（避免 float64 map key 精度问题）
-	DiscountMixed       bool    // 区间内出现过 >1 个不同折扣值
-	// DiscountTotalBasis 覆盖率分母：所有消费/退款行的 listQ 净额（无论有无折扣信息）。
-	// 不能直接用 ListQuota 当分母——退款会让 ListQuota 减小而 DiscountListBasis
-	// 若不同步冲减，覆盖率会 > 1。两者必须走同一套加减规则。
+	DiscountListBasis  float64 // 有有效折扣信息的 listQ 之和（退款同步冲减）
+	DiscountSpecialSum float64 // 命中专属倍率（user_group_ratio 有效）的 listQ 之和
+	DiscountFirstRatio float64 // 第一个出现的折扣值（避免 float64 map key 精度问题）
+	DiscountMixed      bool    // 区间内出现过 >1 个不同折扣值
+	// DiscountTotalBasis 覆盖率分母：消费行 listQ 之和（无论有无折扣信息），减去
+	// 携带折扣信息的退款行 listQ。不能直接用 ListQuota 当分母——两者加减规则不同。
+	// 退款只在「有折扣信息」时才冲减本字段，与 DiscountListBasis 共用同一个门槛：
+	// 退款日志的 other 往往比对应消费行贫瘠（见 addBatch 退款分支注释），若分母无条件
+	// 冲减而分子有条件冲减，比值会越过 1。
 	DiscountTotalBasis float64
 	// RatioVersionSeen 记录本格子命中过的版本 EffectiveFrom 集合；len > 1 即区间内改过价。
 	// 用 int64 作 map key 安全（EffectiveFrom 是精确整数，无浮点精度问题）。
@@ -164,7 +165,8 @@ func (c *costCube) addBatch(logs []*model.Log, versions model.VersionMap) {
 			}
 		}
 
-		// 折扣覆盖率分母与分子必须走同一套加减规则，否则退款会把比值推过 1。
+		// 折扣覆盖率的分子与分母共用「本行是否带折扣信息」这一个门槛，消费加、退款减
+		// 都不例外，否则退款会把比值推过 1（推导见退款分支注释）。
 		histDiscount := historicalDiscount(info)
 		isSpecial := info != nil && isValidGroupRatio(info.UserGroupRatio) && info.UserGroupRatio > 0
 
@@ -177,9 +179,18 @@ func (c *costCube) addBatch(logs []*model.Log, versions model.VersionMap) {
 			} else {
 				row.UnpricedListQuota -= listQ
 			}
-			row.DiscountTotalBasis -= listQ
+			// 折扣三元组要么整体冲减，要么整体不动：退款日志能知道的信息比消费行少——
+			// MJ 构图失败退款（controller/midjourney.go）与任务退款在 BillingContext
+			// 为 nil 时（service/task_billing.go）写的 other 里都没有 group_ratio，
+			// 此时 histDiscount 为 0，logListQuota 也退化成实付额而非刊例额。分母若在
+			// 这种行上照样冲减，就会用一个更小的、口径不同的数去减，把覆盖率推过 1。
+			// 门槛统一后：分母 − 分子 ≡ Σ(无折扣信息的消费行 listQ) ≥ 0，覆盖率 ≤ 1
+			// 由算式本身保证，与退款日志究竟携带多少信息无关。
+			// 代价是这类退款不参与折扣口径：折扣信号描述的是「日志真正记下过的折扣事实」，
+			// 而不是净额，所以全额退款后 discount_special 仍为 true——它与同样未被冲减的
+			// 覆盖率分子分母彼此自洽，都在描述同一笔有信息的基数。
 			if histDiscount > 0 {
-				row.DiscountWeightedSum -= histDiscount * listQ
+				row.DiscountTotalBasis -= listQ
 				row.DiscountListBasis -= listQ
 				if isSpecial {
 					row.DiscountSpecialSum -= listQ
@@ -200,9 +211,10 @@ func (c *costCube) addBatch(logs []*model.Log, versions model.VersionMap) {
 		}
 
 		// 用户折扣：从 other 取请求当时的历史值（UserGroupRatio 有效则取，否则 GroupRatio）
+		// 分母在消费行上无条件累加：正是「有信息 / 全部」这个比值让覆盖率有意义，
+		// 若这里也套上门槛，覆盖率会恒等于 1。
 		row.DiscountTotalBasis += listQ
 		if histDiscount > 0 {
-			row.DiscountWeightedSum += histDiscount * listQ
 			row.DiscountListBasis += listQ
 			if isSpecial {
 				row.DiscountSpecialSum += listQ
@@ -238,6 +250,13 @@ const (
 	costDimModel     = "model"
 	costDimChannel   = "channel"
 	costBreakdownCap = 100
+	// costUnpricedEpsilon 未定价敞口的判定阈值（quota 单位）。unpricedListQuota 是
+	// 带符号累加值，不能用 == 0 判断：消费与退款的 listQ 不完全相等时相消会留下
+	// ~1e-13 的浮点残差；退款未定价而对应消费已定价时（EffectiveRatio 对
+	// CostRatio <= 0 返回 false，建版本只校验 effective_from）还会转负。这两种假象
+	// 都会把已全部定价的区间误判成有敞口。1e-6 quota（≈2e-12 美元）远高于残差量级，
+	// 又远低于任何真实敞口，故只有真敞口能越过它。
+	costUnpricedEpsilon = 1e-6
 )
 
 // costMoney 金额与用量的汇总单元：USD 原始金额 + 按汇率/渠道倍率换算后的 CNY 金额。
@@ -297,6 +316,13 @@ type costBreakdownRow struct {
 	CostMode     string  `json:"cost_mode,omitempty"`
 	CostRatio    float64 `json:"cost_ratio,omitempty"`
 	CostDiscount float64 `json:"cost_discount,omitempty"`
+
+	// Priced 与父行 costDimensionRow.Priced 同义同标签（不带 omitempty，false 也要
+	// 下发——恰恰是 false 才需要提示）。逐条定价后父行 priced=false 已不能代表整组都
+	// 被低估：渠道可能只在中途某个版本空档未定价，其余区间都有价。少了这个字段，
+	// 落在空档里的明细行会输出 cost_cny=0、profit_rate=1 且不带 effective_ratio，
+	// 与真正免费的上游逐字节一致，在表里反而显示为最赚钱的一行。
+	Priced bool `json:"priced"`
 
 	costMoney
 }
@@ -361,10 +387,12 @@ func costMoneyFromRow(r *costCubeRow, exchangeRate float64) costMoney {
 	if m.RevenueCny != 0 {
 		m.ProfitRate = roundTo6(m.ProfitCny / m.RevenueCny)
 	}
-	// 折扣信号。分母用 DiscountTotalBasis（与分子同套加减规则，退款已同步冲减），
-	// 不能用 ListQuota——两者加减规则不同会让覆盖率越过 1。
+	// 折扣信号。分母用 DiscountTotalBasis 而非 ListQuota：后者对所有退款都冲减，
+	// 与只在有折扣信息时才冲减的分子口径不同，比值会越过 1。采集阶段已让分子分母
+	// 共用同一个门槛（见 addBatch），因此 DiscountTotalBasis ≥ DiscountListBasis
+	// 恒成立；下面的 min 只是兜底，真要触发说明采集侧的门槛又被拆开了。
 	if r.DiscountTotalBasis > 0 && r.DiscountListBasis > 0 {
-		m.DiscountCoverage = roundTo6(r.DiscountListBasis / r.DiscountTotalBasis)
+		m.DiscountCoverage = roundTo6(min(r.DiscountListBasis/r.DiscountTotalBasis, 1))
 		m.DiscountMixed = r.DiscountMixed
 		m.DiscountSpecial = r.DiscountSpecialSum > 0
 	}
@@ -487,10 +515,13 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 		ModelName string
 		ChannelId int
 	}
-	// costSubAgg 明细子桶：金额 + 版本身份并集（后者供跨版本判定）。
+	// costSubAgg 明细子桶：金额 + 未定价敞口 + 版本身份并集（后两者供 Priced/跨版本
+	// 判定）。敞口必须与版本身份一样在子桶上单独累计，不能只靠父行——父行 Priced 已
+	// 无法定位敞口落在哪条明细上。
 	type costSubAgg struct {
-		money            costMoney
-		ratioVersionSeen map[int64]struct{}
+		money             costMoney
+		unpricedListQuota float64
+		ratioVersionSeen  map[int64]struct{}
 	}
 	// mergeVersionSeen 把一条立方体行命中的版本身份并入目标集合。
 	mergeVersionSeen := func(dst *map[int64]struct{}, src map[int64]struct{}) {
@@ -575,6 +606,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 			breakdowns[gk][bk] = sub
 		}
 		sub.money.add(m)
+		sub.unpricedListQuota += r.UnpricedListQuota
 		mergeVersionSeen(&sub.ratioVersionSeen, r.RatioVersionSeen)
 	}
 
@@ -585,7 +617,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 		}
 		// 全部刊例都定到了价才算 Priced；跨版本以并集大小判定，两者都必须等折叠
 		// 完成、所有格子归并之后才能得出结论。
-		row.Priced = row.unpricedListQuota == 0
+		row.Priced = row.unpricedListQuota <= costUnpricedEpsilon
 		row.RatioMixed = len(row.ratioVersionSeen) > 1
 		// breakdown 排序取前 costBreakdownCap
 		type bd struct {
@@ -623,6 +655,7 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 				ChannelId: b.key.ChannelId, ChannelName: chName,
 				costMoney: b.sub.money,
 			}
+			br.Priced = b.sub.unpricedListQuota <= costUnpricedEpsilon
 			br.RatioMixed = len(b.sub.ratioVersionSeen) > 1
 			// 渠道身份未被折叠（ChannelId != 0）时带上该渠道区间末尾生效版本的计价
 			// 配置，供前端在明细行展示成本倍率/折扣。按模型汇总的明细行 ChannelId
