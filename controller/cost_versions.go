@@ -3,8 +3,10 @@ package controller
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -169,4 +171,86 @@ func DeleteChannelCostVersion(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, nil)
+}
+
+// costVersionFloatEpsilon 计价字段的浮点相等容差。不能用 ==：同一个价经过
+// 前端 → JSON → float64 往返后可能差出几个 ULP，逐字节比较会把「没改价」判成
+// 改价，于是每保存一次渠道就多一条内容完全相同的版本。
+const costVersionFloatEpsilon = 1e-9
+
+// costVersionChanged 比对渠道当前最新版本与新设置的计价字段是否真的不同。
+// 抽成纯函数是为了能被单测直接钉住——「只改 API key 不该产生版本」这条回归
+// 全靠它，而它是本路径上唯一有分支的逻辑。
+func costVersionChanged(latest model.ChannelCostVersion, s *dto.ChannelSettings) bool {
+	// 归一化：空 CostMode 等同 "ratio"（见 ChannelCostVersion.CostMode 注释），
+	// 否则一次 "" → "ratio" 的纯写法变更会被误判成改价。
+	normMode := func(m string) string {
+		if m == "" {
+			return "ratio"
+		}
+		return m
+	}
+	sameFloat := func(a, b float64) bool {
+		d := a - b
+		return d < costVersionFloatEpsilon && d > -costVersionFloatEpsilon
+	}
+	// 三个字段都要比：版本行原样存下这三个值，任何一个不同都是一条内容不同的版本。
+	return normMode(latest.CostMode) != normMode(s.CostMode) ||
+		!sameFloat(latest.CostRatio, s.CostRatio) ||
+		!sameFloat(latest.CostDiscount, s.CostDiscount)
+}
+
+// appendCostVersionIfChanged 在渠道保存成功后追加一条 effective_from=now 的计价版本，
+// 仅当计价字段相对当前最新版本真的变了才追加。价格未配置（对应模式的值为 0）时不追加。
+//
+// 必须先比对：否则每次保存渠道（改 key、改模型列表…）都会插一条内容重复的版本，
+// 价格历史很快会被噪声淹没，"这个价从哪天开始的"就再也读不出来了。
+//
+// 全部失败路径都只记日志、不向上传播：版本记录是成本核算的辅助事实，渠道已经存
+// 进库了，再让接口报错既救不回这条版本，又会让管理员以为渠道没保存成功而重试。
+func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSettings) {
+	hasCost := (s.CostMode == "discount" && s.CostDiscount > 0) ||
+		(s.CostMode != "discount" && s.CostRatio > 0)
+	if !hasCost {
+		return
+	}
+	versions, err := model.GetChannelCostVersions(channelId) // 降序，[0] 为最新
+	if err != nil {
+		common.SysError("load cost versions failed: " + err.Error())
+		return
+	}
+	if len(versions) > 0 && !costVersionChanged(versions[0], s) {
+		return
+	}
+	// discount 模式冻结服务端当前汇率，与 CreateChannelCostVersion 同一来源
+	// （operation_setting.USDExchangeRate，启动时由 InitOptionMap 从 options 表同步）。
+	//
+	// 汇率非正时放弃追加，而不是兜底一个默认值：把 0 冻进不可变的版本行，该版本
+	// 覆盖的日志会永久算不出成本（显示成 100% 毛利）；兜底成 7.3 更糟——数字看着
+	// 正常，实际是编的。这里又不能像 API 那样退回 400：渠道已经存好了。
+	// 放弃是可自愈的：汇率配好后再保存一次渠道，与最新版本的比对依然为「变了」，
+	// 版本会在那时补上，只是 effective_from 顺延到那一刻。
+	exRate := operation_setting.USDExchangeRate
+	if s.CostMode == "discount" && exRate <= 0 {
+		common.SysError("skip auto cost version for channel " + strconv.Itoa(channelId) +
+			": discount mode requires a positive USDExchangeRate")
+		return
+	}
+	now := time.Now().Unix()
+	if exists, _ := model.VersionExists(channelId, now); exists {
+		return // 同一秒内重复保存，跳过（版本不可变，同一时间点重复写入会造成歧义）
+	}
+	v := &model.ChannelCostVersion{
+		ChannelId:     channelId,
+		EffectiveFrom: now,
+		CostMode:      s.CostMode,
+		CostRatio:     s.CostRatio,
+		CostDiscount:  s.CostDiscount,
+		ExchangeRate:  exRate,
+		Note:          "auto from channel update",
+		CreatedBy:     c.GetInt("id"),
+	}
+	if err := model.CreateChannelCostVersion(v); err != nil {
+		common.SysError("auto append cost version failed: " + err.Error())
+	}
 }

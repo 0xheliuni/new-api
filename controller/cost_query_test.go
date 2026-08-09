@@ -40,13 +40,13 @@ func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
 	c.addBatch([]*model.Log{
 		{Type: model.LogTypeError, CreatedAt: tsOn("2026-06-01", 9), UserId: 1, Username: "alice",
 			ChannelId: 0, ModelName: "gpt-4o"},
-	})
+	}, testVersions())
 	ov := buildCostOverview(c, testChannels(), 7.0, 0, 0)
 	if ov.UnpricedChannelCount != 0 {
 		t.Fatalf("unpriced = %d, want 0 (channel_id=0 must be excluded)", ov.UnpricedChannelCount)
 	}
 
-	// 混合场景：channel 0 的错误行 + channel 7（testChannels 中 CostRatio=0，
+	// 混合场景：channel 0 的错误行 + channel 7（testVersions 中没有版本，
 	// 真实未定价渠道）的消费行 → 只有渠道 7 应计入 unpriced。
 	c2 := newCostCube()
 	c2.addBatch([]*model.Log{
@@ -54,7 +54,7 @@ func TestBuildCostOverview_ChannelZeroExcludedFromUnpriced(t *testing.T) {
 			ChannelId: 0, ModelName: "gpt-4o"},
 		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 10), UserId: 1, Username: "alice",
 			ChannelId: 7, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
-	})
+	}, testVersions())
 	ov2 := buildCostOverview(c2, testChannels(), 7.0, 0, 0)
 	if ov2.UnpricedChannelCount != 1 {
 		t.Fatalf("unpriced = %d, want 1 (only real unpriced channel 7 counted)", ov2.UnpricedChannelCount)
@@ -104,7 +104,7 @@ func TestCostCube_HourlyBucketing(t *testing.T) {
 			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
 		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 14), UserId: 1, Username: "alice",
 			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
-	})
+	}, testVersions())
 	if len(c.rows) != 2 {
 		t.Fatalf("hourly cube rows = %d, want 2 (09 and 14 are distinct buckets)", len(c.rows))
 	}
@@ -126,7 +126,7 @@ func TestBuildCostOverviewFillsGaps(t *testing.T) {
 			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
 		{Type: model.LogTypeConsume, CreatedAt: tsOn("2026-06-01", 12), UserId: 1, Username: "alice",
 			ChannelId: 3, ModelName: "gpt-4o", Quota: 100, Other: `{"group_ratio":1}`},
-	})
+	}, testVersions())
 	start, end := tsOn("2026-06-01", 9), tsOn("2026-06-01", 12)
 	ov := buildCostOverview(c, testChannels(), 7.0, start, end)
 	if len(ov.Trend) != 4 {
@@ -176,7 +176,7 @@ func TestCostBucketRangeStopsAtNow(t *testing.T) {
 }
 
 func TestPaginateCostRows(t *testing.T) {
-	rows := foldCostCube(seedCube(), costDimUser, testChannels(), 7.0)
+	rows := foldCostCube(seedCube(), costDimUser, testChannels(), testVersions(), 7.0, testFoldEnd())
 	page := paginateCostRows(rows, 1, 1)
 	if page.Total != 2 || len(page.Items) != 1 {
 		t.Fatalf("page: total=%d items=%d", page.Total, len(page.Items))
