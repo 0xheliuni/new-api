@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { dateToUnixTimestamp, formatDate } from '@/lib/time'
 import { getChannel, updateChannel } from '@/features/channels/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,7 +35,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
+import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
+import {
+  createChannelCostVersion,
+  deleteChannelCostVersion,
+  getChannelCostVersions,
+} from '../api'
+import type { ChannelCostVersion } from '../types'
 
 type CostPricingMode = 'ratio' | 'discount'
 
@@ -150,7 +160,7 @@ export function EditRatioDialog({
       }
       title={t('Edit Cost Ratio')}
       description={channelName}
-      contentClassName='sm:max-w-sm'
+      contentClassName='sm:max-w-md'
       footer={
         <>
           <Button
@@ -243,7 +253,292 @@ export function EditRatioDialog({
             </p>
           </div>
         )}
+
+        <Separator />
+
+        <VersionHistoryPanel
+          channelId={channelId}
+          open={open}
+          exchangeRate={exchangeRate}
+        />
       </div>
     </Dialog>
+  )
+}
+
+/** "0.8 × ¥7.20" for discount mode, "¥2.50" for ratio mode, '-' when unset. */
+function describeVersion(v: ChannelCostVersion, t: TFunction): string {
+  if (v.cost_mode === 'discount') {
+    return `${v.cost_discount} × ¥${v.exchange_rate.toFixed(2)}`
+  }
+  if (v.cost_mode === 'ratio') return `¥${v.cost_ratio.toFixed(2)}`
+  return t('Not set')
+}
+
+/**
+ * The channel's price versions. Saving above writes the *current* price; this
+ * panel is how a past price gets recorded, so cost for older logs stops being
+ * computed at today's rate.
+ */
+function VersionHistoryPanel({
+  channelId,
+  open,
+  exchangeRate,
+}: {
+  channelId: number
+  open: boolean
+  exchangeRate: number
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [adding, setAdding] = useState(false)
+
+  const { data: versions = [], isLoading } = useQuery({
+    queryKey: ['cost-versions', channelId],
+    queryFn: () => getChannelCostVersions(channelId),
+    enabled: open,
+  })
+
+  // Cost figures are derived from the versions, so the report is stale too.
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['cost-versions', channelId] })
+    void queryClient.invalidateQueries({ queryKey: ['cost'] })
+  }
+
+  // Business failures already toast in the response interceptor; these
+  // mutations only reject so success handlers don't run on a refused write.
+  const remove = useMutation({
+    mutationFn: (versionId: number) => deleteChannelCostVersion(versionId),
+    onSuccess: () => {
+      toast.success(t('Price version deleted'))
+      invalidate()
+    },
+  })
+
+  return (
+    <div className='flex flex-col gap-2'>
+      <div className='flex items-center justify-between'>
+        <Label>{t('Version history')}</Label>
+        {!adding && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            className='h-7 gap-1 text-xs'
+            onClick={() => setAdding(true)}
+          >
+            <Plus className='size-3.5' />
+            {t('Add historical price')}
+          </Button>
+        )}
+      </div>
+
+      {adding && (
+        <AddVersionForm
+          channelId={channelId}
+          defaultExchangeRate={exchangeRate}
+          onDone={() => {
+            setAdding(false)
+            invalidate()
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+
+      {isLoading ? (
+        <p className='text-muted-foreground text-xs'>{t('Loading...')}</p>
+      ) : (
+        <ul className='flex max-h-48 flex-col gap-1 overflow-y-auto text-xs'>
+          {versions.map((v) => (
+            <li
+              key={v.id}
+              className='flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50'
+            >
+              <div className='flex min-w-0 flex-col leading-tight'>
+                <span className='font-medium tabular-nums'>
+                  {v.effective_from === 0
+                    ? t('Initial')
+                    : formatDate(v.effective_from)}
+                </span>
+                {v.note && (
+                  <span className='text-muted-foreground truncate'>
+                    {v.note}
+                  </span>
+                )}
+              </div>
+              <div className='flex items-center gap-2'>
+                <span className='text-muted-foreground tabular-nums'>
+                  {describeVersion(v, t)}
+                </span>
+                {/* The seeded "since forever" row is what every log before the
+                    first real version prices against; the API refuses to
+                    delete it, so don't offer to. */}
+                {v.effective_from !== 0 && (
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon'
+                    className='size-6'
+                    aria-label={t('Delete')}
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate(v.id)}
+                  >
+                    <Trash2 className='size-3.5' />
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Records a price that was already in effect from some past date. The exchange
+ * rate is captured with the version rather than read at query time, so the
+ * cost of old logs stays what it actually was.
+ */
+function AddVersionForm({
+  channelId,
+  defaultExchangeRate,
+  onDone,
+  onCancel,
+}: {
+  channelId: number
+  defaultExchangeRate: number
+  onDone: () => void
+  onCancel: () => void
+}) {
+  const { t } = useTranslation()
+  const [effectiveFrom, setEffectiveFrom] = useState<Date | undefined>()
+  const [mode, setMode] = useState<CostPricingMode>('ratio')
+  const [value, setValue] = useState('')
+  const [rate, setRate] = useState(
+    Number.isFinite(defaultExchangeRate) ? String(defaultExchangeRate) : ''
+  )
+  const [note, setNote] = useState('')
+
+  const parsedValue = Number(value)
+  const parsedRate = Number(rate)
+  const isValid =
+    effectiveFrom !== undefined &&
+    value.trim() !== '' &&
+    Number.isFinite(parsedValue) &&
+    parsedValue >= 0 &&
+    Number.isFinite(parsedRate) &&
+    parsedRate > 0
+
+  const create = useMutation({
+    mutationFn: () =>
+      createChannelCostVersion(channelId, {
+        // effective_from 0 is reserved for the seeded row, and the picker
+        // requires a date, so this is always a real timestamp.
+        effective_from: dateToUnixTimestamp(effectiveFrom as Date),
+        cost_mode: mode,
+        cost_ratio: mode === 'ratio' ? parsedValue : 0,
+        cost_discount: mode === 'discount' ? parsedValue : 0,
+        exchange_rate: parsedRate,
+        note: note.trim() || undefined,
+      }),
+    onSuccess: () => {
+      toast.success(t('Price version added'))
+      onDone()
+    },
+  })
+
+  return (
+    <div className='bg-muted/40 flex flex-col gap-2 rounded-md border p-2'>
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>{t('Price effective from')}</Label>
+        <DateTimePicker
+          value={effectiveFrom}
+          onChange={setEffectiveFrom}
+          className='w-full'
+        />
+      </div>
+
+      <div className='grid grid-cols-2 gap-2'>
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>{t('Pricing Mode')}</Label>
+          <Select
+            value={mode}
+            onValueChange={(v) => setMode(v as CostPricingMode)}
+            items={[
+              { value: 'ratio', label: t('Cost Ratio (CNY per USD)') },
+              { value: 'discount', label: t('Cost Discount') },
+            ]}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectItem value='ratio'>
+                  {t('Cost Ratio (CNY per USD)')}
+                </SelectItem>
+                <SelectItem value='discount'>{t('Cost Discount')}</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>
+            {mode === 'discount' ? t('Cost Discount') : t('Cost Ratio (CNY per USD)')}
+          </Label>
+          <Input
+            type='number'
+            min={0}
+            step={0.01}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>{t('Settlement exchange rate')}</Label>
+        <Input
+          type='number'
+          min={0}
+          step={0.1}
+          value={rate}
+          onChange={(e) => setRate(e.target.value)}
+        />
+        <p className='text-muted-foreground text-xs'>
+          {t('Frozen with this version so historical cost never drifts.')}
+        </p>
+      </div>
+
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>{t('Note')}</Label>
+        <Input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={t('Optional')}
+        />
+      </div>
+
+      <div className='flex justify-end gap-2'>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          onClick={onCancel}
+          disabled={create.isPending}
+        >
+          {t('Cancel')}
+        </Button>
+        <Button
+          type='button'
+          size='sm'
+          onClick={() => create.mutate()}
+          disabled={!isValid || create.isPending}
+        >
+          {t('Add')}
+        </Button>
+      </div>
+    </div>
   )
 }

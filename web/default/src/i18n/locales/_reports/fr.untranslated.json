@@ -13,5 +13,19 @@
   "… and {{n}} more rows omitted": "… and {{n}} more rows omitted",
   "Report cost uses the channel-level pricing": "Report cost uses the channel-level pricing",
   "Cost pricing mode, aggregator status, and sub-suppliers": "Cost pricing mode, aggregator status, and sub-suppliers",
-  "This channel routes to multiple upstream sub-suppliers": "This channel routes to multiple upstream sub-suppliers"
+  "This channel routes to multiple upstream sub-suppliers": "This channel routes to multiple upstream sub-suppliers",
+  "Actual discount is revenue ÷ list price over the selected range.": "Actual discount is revenue ÷ list price over the selected range.",
+  "The user spent across several token groups in this range; the configured ratio shown is quota-weighted.": "The user spent across several token groups in this range; the configured ratio shown is quota-weighted.",
+  "Actual and configured discounts differ — the user may have changed groups, or the ratio was edited during this range.": "Actual and configured discounts differ — the user may have changed groups, or the ratio was edited during this range.",
+  "No list price in this range (free or unpriced models), so the actual discount cannot be derived.": "No list price in this range (free or unpriced models), so the actual discount cannot be derived.",
+  "revenue ÷ list price over the selected range": "revenue ÷ list price over the selected range",
+  "This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.": "This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.",
+  "Hover a value to compare it against the group's currently configured ratio.": "Hover a value to compare it against the group's currently configured ratio.",
+  "A dedicated ratio is the (user group × token group) override, which takes priority over the group ratio.": "A dedicated ratio is the (user group × token group) override, which takes priority over the group ratio.",
+  "Shows the configured value instead when the range has no list price (free or unpriced models).": "Shows the configured value instead when the range has no list price (free or unpriced models).",
+  "Frozen with this version so historical cost never drifts.": "Frozen with this version so historical cost never drifts.",
+  "Discount changed during this range — the user may have changed groups or a ratio was edited.": "Discount changed during this range — the user may have changed groups or a ratio was edited.",
+  "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.": "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.",
+  "Shows '-' when the range has no list price (free or unpriced models).": "Shows '-' when the range has no list price (free or unpriced models).",
+  "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate."
 }

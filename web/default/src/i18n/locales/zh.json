@@ -4825,6 +4825,25 @@
     "This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.": "显示的是实际生效折扣（按额度加权），专属倍率与区间内换组/改倍率都已自动反映。",
     "Hover a value to compare it against the group's currently configured ratio.": "悬浮数值可与该分组当前配置的倍率作对比。",
     "A dedicated ratio is the (user group × token group) override, which takes priority over the group ratio.": "专属倍率为「用户分组 × 令牌分组」的二维覆盖，优先于分组倍率生效。",
-    "Shows the configured value instead when the range has no list price (free or unpriced models).": "区间内没有刊例价（免费或未定价模型）时改为展示配置值。"
+    "Shows the configured value instead when the range has no list price (free or unpriced models).": "区间内没有刊例价（免费或未定价模型）时改为展示配置值。",
+    "Note": "备注",
+    "Optional": "可选",
+    "Initial": "初始",
+    "Version history": "价格版本",
+    "Add historical price": "补录历史价格",
+    "Price effective from": "价格生效日期",
+    "Settlement exchange rate": "结算汇率",
+    "Frozen with this version so historical cost never drifts.": "随该版本一起冻结，历史成本不会随汇率变动而漂移。",
+    "Price version added": "已新增价格版本",
+    "Price version deleted": "已删除价格版本",
+    "Weighted across price versions": "按价格版本加权",
+    "Cost ratio changed during this range": "区间内成本倍率发生过变更",
+    "Dedicated ratio applied: a user-group × token-group ratio was active.": "命中专属倍率：区间内存在「用户分组 × 令牌分组」倍率。",
+    "Discount changed during this range — the user may have changed groups or a ratio was edited.": "区间内折扣发生过变化，可能是用户换组或倍率被修改。",
+    "Partial discount coverage: {{pct}}% of spend has pricing info; older logs may lack it.": "折扣覆盖率仅 {{pct}}%：只有这部分消费带有定价信息，较早的日志可能缺失。",
+    "Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.": "悬浮数值可查看该区间推导出的信号：专属倍率、区间内变更与定价覆盖率。",
+    "Shows '-' when the range has no list price (free or unpriced models).": "区间内没有刊例价（免费或未定价模型）时展示「-」。",
+    "Revenue exchange rate": "收入汇率",
+    "Converts USD revenue to CNY for display. Cost uses each price version's own settlement rate.": "仅用于把美元收入折算成人民币展示；成本按各价格版本自带的结算汇率计算。"
   }
 }
