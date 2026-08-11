@@ -70,14 +70,12 @@ type ChannelOtherSettings struct {
 	BytePlusProjectName    string `json:"byteplus_project_name,omitempty"`    // 资源项目名，默认 "default"
 	BytePlusRegion         string `json:"byteplus_region,omitempty"`          // 区域，默认 "ap-southeast-1"
 	BytePlusModerationSkip *bool  `json:"byteplus_moderation_skip,omitempty"` // 是否跳过内容预过滤，默认 true（Skip）
+	AssetProvider          string `json:"asset_provider,omitempty"`            // 选择素材库协议实现；空值等价 AssetProviderBytePlus，保证存量渠道行为不变。
 
 	// 第三方 Seedance 渠道（model.service-inference.ai）素材库预上传总开关。
 	// 开启后提交视频生成前把参考媒体（公网 URL）预上传到素材库，换 asset://<id> 再提交。
 	// 鉴权复用渠道 Bearer key；素材组按渠道自动创建/复用。
 	Seedance3rdAssetEnabled bool `json:"seedance3rd_asset_enabled,omitempty"`
-
-	// AssetProvider 选择素材库协议实现；空值等价 AssetProviderBytePlus，保证存量渠道行为不变。
-	AssetProvider string `json:"asset_provider,omitempty"`
 }
 
 const (
