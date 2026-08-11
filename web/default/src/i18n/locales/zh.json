@@ -3675,7 +3675,7 @@
     "Select sync channels to compare prices": "选择同步渠道以对比价格",
     "Select sync channels to compare ratios": "选择同步渠道以比较比率",
     "Select Sync Source": "选择同步源",
-    "Select the API endpoint region": "选择 API 终端节点区域",
+    "Select an official regional endpoint or enter a custom API address": "选择官方区域端点或输入自定义 API 地址",
     "Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.": "选择要使用上游数据覆盖的字段。未选择的字段将保留其本地值。",
     "Select theme preference": "选择主题偏好",
     "Select theme preset": "选择主题预设",

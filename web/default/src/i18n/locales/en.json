@@ -3675,7 +3675,7 @@
     "Select sync channels to compare prices": "Select sync channels to compare prices",
     "Select sync channels to compare ratios": "Select sync channels to compare ratios",
     "Select Sync Source": "Select Sync Source",
-    "Select the API endpoint region": "Select the API endpoint region",
+    "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
     "Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.": "Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.",
     "Select theme preference": "Select theme preference",
     "Select theme preset": "Select theme preset",

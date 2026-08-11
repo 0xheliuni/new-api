@@ -4,6 +4,7 @@
   "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
   "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
   "Pre-create the asset group in the BytePlus console (sign the authorization letter on first use).": "Pre-create the asset group in the BytePlus console (sign the authorization letter on first use).",
+  "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
   "Third-party asset library reuses the channel API URL, please fill it in first": "Third-party asset library reuses the channel API URL, please fill it in first",
   "Confirm and create": "Confirm and create",
   "Failed to fetch suggestion": "Failed to fetch suggestion",

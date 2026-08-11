@@ -3675,7 +3675,7 @@
     "Select sync channels to compare prices": "Выберите каналы синхронизации для сравнения цен",
     "Select sync channels to compare ratios": "Выбрать каналы синхронизации для сравнения соотношений",
     "Select Sync Source": "Выбрать источник синхронизации",
-    "Select the API endpoint region": "Выбрать регион конечной точки API",
+    "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
     "Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.": "Выберите поля, которые вы хотите перезаписать данными из вышестоящего источника. Невыбранные поля сохранят свои локальные значения.",
     "Select theme preference": "Выбрать предпочтение темы",
     "Select theme preset": "Выберите пресет темы",

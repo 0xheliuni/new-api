@@ -31,6 +31,7 @@
   "Official asset library requires an Access Key": "Official asset library requires an Access Key",
   "Official asset library requires a Secret Key": "Official asset library requires a Secret Key",
   "Select groups": "Select groups",
+  "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
   "Third-party asset library reuses the channel API URL, please fill it in first": "Third-party asset library reuses the channel API URL, please fill it in first",
   "Auto Create": "Auto Create",
   "Auto Create User": "Auto Create User",

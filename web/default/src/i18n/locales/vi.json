@@ -3675,7 +3675,7 @@
     "Select sync channels to compare prices": "Chọn kênh đồng bộ để so sánh giá",
     "Select sync channels to compare ratios": "Chọn kênh đồng bộ để so sánh tỷ lệ",
     "Select Sync Source": "Chọn Nguồn Đồng Bộ",
-    "Select the API endpoint region": "Chọn khu vực điểm cuối API",
+    "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
     "Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.": "Chọn các trường bạn muốn ghi đè bằng dữ liệu thượng nguồn. Các trường không được chọn sẽ giữ nguyên giá trị cục bộ của chúng.",
     "Select theme preference": "Chọn chủ đề ưu tiên",
     "Select theme preset": "Chọn tùy chỉnh chủ đề",

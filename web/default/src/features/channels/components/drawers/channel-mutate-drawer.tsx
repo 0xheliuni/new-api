@@ -2017,7 +2017,7 @@ export function ChannelMutateDrawer({
                               />
                             </FormControl>
                             <FormDescription>
-                              {t('Select the API endpoint region')}
+                              {t('Select an official regional endpoint or enter a custom API address')}
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
