@@ -17,7 +17,6 @@ func newTestClient(endpoint string) *bytePlusAssetClient {
 		sk:             "sk",
 		region:         "ap-southeast-1",
 		projectName:    "default",
-		groupId:        "group-test",
 		skipModeration: true,
 		httpClient:     http.DefaultClient,
 		endpoint:       endpoint,
@@ -54,7 +53,7 @@ func TestCreateAndWait_ProcessingThenActive(t *testing.T) {
 	defer srv.Close()
 
 	cl := newTestClient(srv.URL)
-	id, err := cl.CreateAndWait(context.Background(), "https://example.com/i.jpg", "Image")
+	id, err := cl.CreateAndWait(context.Background(), "group-test", "https://example.com/i.jpg", "Image")
 	if err != nil {
 		t.Fatalf("CreateAndWait: %v", err)
 	}
@@ -83,7 +82,7 @@ func TestCreateAndWait_Failed(t *testing.T) {
 	defer srv.Close()
 
 	cl := newTestClient(srv.URL)
-	_, err := cl.CreateAndWait(context.Background(), "https://example.com/i.jpg", "Image")
+	_, err := cl.CreateAndWait(context.Background(), "group-test", "https://example.com/i.jpg", "Image")
 	if err == nil || !strings.Contains(err.Error(), "processing failed") {
 		t.Fatalf("expected processing failed error, got %v", err)
 	}
@@ -100,7 +99,7 @@ func TestCreateAndWait_UpstreamError(t *testing.T) {
 	defer srv.Close()
 
 	cl := newTestClient(srv.URL)
-	_, err := cl.CreateAndWait(context.Background(), "https://example.com/i.jpg", "Image")
+	_, err := cl.CreateAndWait(context.Background(), "group-test", "https://example.com/i.jpg", "Image")
 	if err == nil || !strings.Contains(err.Error(), "InvalidParameter") {
 		t.Fatalf("expected upstream error, got %v", err)
 	}
@@ -122,7 +121,7 @@ func TestCreateAndWait_Timeout(t *testing.T) {
 	// Use a context deadline rather than the package timeout to keep the test fast.
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, err := cl.CreateAndWait(ctx, "https://example.com/i.jpg", "Image")
+	_, err := cl.CreateAndWait(ctx, "group-test", "https://example.com/i.jpg", "Image")
 	if err == nil {
 		t.Fatal("expected timeout/cancel error, got nil")
 	}
