@@ -1448,11 +1448,13 @@ export function ChannelMutateDrawer({
                       />
                     )}
 
-                    {/* BytePlus overseas asset library (VolcEngine 45 / DoubaoVideo 54) */}
+                    {/* Asset library pre-upload (VolcEngine 45 / DoubaoVideo 54).
+                        Gates both the official BytePlus library and the third-party
+                        one, so the wording stays provider-neutral. */}
                     {[45, 54].includes(currentType) && (
                       <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                         <SubHeading
-                          title={t('BytePlus Asset Library (overseas)')}
+                          title={t('Asset library pre-upload')}
                           icon={<SlidersHorizontal className='h-3.5 w-3.5' />}
                         />
                         <FormField
@@ -1466,7 +1468,7 @@ export function ChannelMutateDrawer({
                                 </FormLabel>
                                 <FormDescription>
                                   {t(
-                                    'Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.'
+                                    'Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.'
                                   )}
                                 </FormDescription>
                               </div>

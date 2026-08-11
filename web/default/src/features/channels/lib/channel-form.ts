@@ -222,7 +222,7 @@ export const channelFormSchema = z
     byteplus_project_name: z.string().optional(),
     byteplus_region: z.string().optional(),
     byteplus_moderation_skip: z.boolean().optional(),
-    asset_provider: z.string().optional(),
+    asset_provider: z.enum(['byteplus', 'cloudwise']).optional(),
     // Seedance(第三方) asset pre-upload (stored in settings JSON; channel type 59)
     seedance3rd_asset_enabled: z.boolean().optional(),
   })
@@ -478,7 +478,7 @@ export function transformChannelToFormDefaults(
   let bytePlusProjectName = 'default'
   let bytePlusRegion = 'ap-southeast-1'
   let bytePlusModerationSkip = true
-  let assetProvider = 'byteplus'
+  let assetProvider: 'byteplus' | 'cloudwise' = 'byteplus'
   let seedance3rdAssetEnabled = false
 
   if (channel.settings) {

@@ -2866,12 +2866,14 @@ const EditChannelModal = (props) => {
                       </>
                     )}
 
-                    {/* BytePlus 海外素材库（火山方舟 45 / 豆包视频 54） */}
+                    {/* 素材库预上传（火山方舟 45 / 豆包视频 54）：
+                        总开关同时控制官方 BytePlus 与第三方素材库，文案保持中立。
+                        字段名 byteplus_asset_enabled 是已落库的 settings key，不可改名。 */}
                     {[45, 54].includes(inputs.type) && (
                       <>
                         <Form.Switch
                           field='byteplus_asset_enabled'
-                          label={t('启用 BytePlus 素材库预上传（海外）')}
+                          label={t('启用素材库预上传')}
                           checkedText={t('开')}
                           uncheckedText={t('关')}
                           value={inputs.byteplus_asset_enabled === true}
@@ -2882,7 +2884,7 @@ const EditChannelModal = (props) => {
                             )
                           }
                           extraText={t(
-                            '提交到海外 BytePlus 前，先把参考图片/视频上传到素材库并替换为 asset://id，避免真人人脸 / 内容预审被拦截',
+                            '提交上游前，先把参考图片/视频上传到素材库并替换为 asset://id，避免真人人脸 / 内容预审被拦截',
                           )}
                         />
                         {inputs.byteplus_asset_enabled && (

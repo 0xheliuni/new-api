@@ -1,7 +1,6 @@
 {
   "Third-party asset library reuses the channel API address and key.": "Third-party asset library reuses the channel API address and key.",
   "Assets and inference endpoint must be in the same project.": "Assets and inference endpoint must be in the same project.",
-  "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
   "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
   "Pre-create the asset group in the BytePlus console (sign the authorization letter on first use).": "Pre-create the asset group in the BytePlus console (sign the authorization letter on first use).",
   "Select an official regional endpoint or enter a custom API address": "Select an official regional endpoint or enter a custom API address",
