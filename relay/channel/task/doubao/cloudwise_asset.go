@@ -32,8 +32,10 @@ import (
 //   - ResponseMetadata.Error{Code, Message}: inferred from the sibling BytePlus
 //     provider (see byteplus_asset.go), on the assumption that cloudwise proxies
 //     the same underlying Volcengine service.
-//   - lowercase {code, message} (also nested under "error"): the shape this
-//     gateway demonstrably uses for its task endpoints.
+//   - top-level lowercase {code, message}: the shape this gateway demonstrably
+//     uses for its task endpoints. A top-level {"error":{code,message}} object is
+//     also accepted, but that nesting is a defensive guess — see
+//     parseCloudwiseLowercaseError for the provenance of each form.
 //
 // When neither parses on a non-2xx, the HTTP status becomes the error code so
 // that classification still has something to work with. Revisit once a real
@@ -288,6 +290,23 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 		}
 		return nil, maskedRaw, &assetAPIError{Code: code, Message: message, Raw: maskedRaw}
 	}
+	// A 2xx carrying a business error is this gateway's documented convention, not a
+	// hypothetical: cloudwise-api-docs.md:308-333 shows a *successful* task fetch as
+	// HTTP 200 with {"code":"10000", ..., "success":true}, so the business result
+	// rides in the body rather than the status line. A 200 whose Result has neither
+	// Id nor Status therefore may really be an error such as
+	// {"code":"1026","message":"asset group is full"}, and it has to arrive as an
+	// *assetAPIError or the caller reports "empty asset id" and never rotates the
+	// group. Only a result-less response takes this path, so a poll still sitting at
+	// Status:"Processing" is untouched.
+	if envErr == nil && env.Result.Id == "" && env.Result.Status == "" {
+		if code, message, isErr := parseCloudwiseBusinessError(respBody); isErr {
+			if message == "" {
+				message = truncate([]byte(maskedRaw), 512)
+			}
+			return nil, maskedRaw, &assetAPIError{Code: code, Message: message, Raw: maskedRaw}
+		}
+	}
 	if envErr != nil {
 		return nil, maskedRaw, errors.Wrapf(envErr,
 			"cloudwise: unmarshal response failed (status %d, body: %s)", resp.StatusCode, truncate(respBody, 512))
@@ -295,11 +314,25 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 	return &env, maskedRaw, nil
 }
 
-// parseCloudwiseLowercaseError extracts the lowercase {code,message} error shape,
-// accepting it both at the top level and nested under "error" — the two forms this
-// gateway uses for its task endpoints. code is read as a raw scalar because the
-// document shows it quoted ("10000") while a numeric code would otherwise break
-// the whole parse. Returns empty strings when the body does not carry this shape.
+// cloudwiseSuccessCode is the business code the gateway returns on success
+// (cloudwise-api-docs.md:310 and :7326). A body carrying it is not an error no
+// matter how empty its Result is.
+const cloudwiseSuccessCode = "10000"
+
+// parseCloudwiseLowercaseError extracts the lowercase {code,message} error shape.
+//
+// PROVENANCE, two forms, one documented:
+//   - top-level lowercase code/message: DOCUMENTED for this gateway's task
+//     endpoints (cloudwise-api-docs.md:310, :7326-7332).
+//   - a top-level "error" object holding {code,message}: NOT DOCUMENTED — a
+//     defensive guess. The document's only nested error sits one level deeper,
+//     under "task" (cloudwise-api-docs.md:11836-11843), so this branch is
+//     speculative shape-tolerance rather than a known response.
+//
+// Neither form is documented for the asset operations specifically; see the
+// ERROR SHAPE block at the top of this file. code is read as a raw scalar because
+// the document shows it quoted ("10000") while a numeric code would otherwise
+// break the whole parse. Returns empty strings when the body carries neither shape.
 func parseCloudwiseLowercaseError(body []byte) (code, message string) {
 	var payload struct {
 		Code    json.RawMessage `json:"code"`
@@ -312,18 +345,56 @@ func parseCloudwiseLowercaseError(body []byte) (code, message string) {
 	if err := common.Unmarshal(body, &payload); err != nil {
 		return "", ""
 	}
+	code, message = cloudwiseErrorCode(payload.Code), payload.Message
+	// The nested object wins per field, not wholesale. Returning it unconditionally
+	// discarded a usable top-level code: {"code":"GroupFull","error":{"message":"no
+	// code here"}} classified as the HTTP status instead of GroupFull and so never
+	// rotated the group. Falling through only when the nested object is entirely
+	// empty would leave that same body broken, since it does carry a nested message.
 	if payload.Error != nil {
-		return jsonScalarString(payload.Error.Code), payload.Error.Message
+		if c := cloudwiseErrorCode(payload.Error.Code); c != "" {
+			code = c
+		}
+		if payload.Error.Message != "" {
+			message = payload.Error.Message
+		}
 	}
-	return jsonScalarString(payload.Code), payload.Message
+	return code, message
 }
 
-// jsonScalarString renders a raw JSON scalar as a plain string, stripping the
-// quotes from a JSON string and leaving a number as written.
-func jsonScalarString(raw json.RawMessage) string {
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == "null" {
+// parseCloudwiseBusinessError reports whether a 2xx body is really a lowercase
+// business error. isErr is false for anything that does not positively look like
+// one, so an empty-but-successful response is never turned into a bogus error.
+func parseCloudwiseBusinessError(body []byte) (code, message string, isErr bool) {
+	var successFlag struct {
+		Success *bool `json:"success"`
+	}
+	if err := common.Unmarshal(body, &successFlag); err == nil &&
+		successFlag.Success != nil && *successFlag.Success {
+		return "", "", false
+	}
+	code, message = parseCloudwiseLowercaseError(body)
+	if code == cloudwiseSuccessCode {
+		return "", "", false
+	}
+	// Require some signal. A PascalCase envelope with an empty Result carries
+	// neither field and must stay a non-error.
+	if code == "" && message == "" {
+		return "", "", false
+	}
+	return code, message, true
+}
+
+// cloudwiseErrorCode renders a lowercase "code" field as a plain string using the
+// house helper, which decodes a JSON string properly (inner escapes included) and
+// leaves a number as written. A non-scalar code is ignored rather than passed
+// through raw, so an unexpected object cannot leak JSON into the operator-facing
+// error text; the accompanying message still drives classification.
+func cloudwiseErrorCode(raw json.RawMessage) string {
+	switch common.GetJsonType(raw) {
+	case "string", "number", "boolean":
+		return common.JsonRawMessageToString(raw)
+	default:
 		return ""
 	}
-	return strings.Trim(s, `"`)
 }

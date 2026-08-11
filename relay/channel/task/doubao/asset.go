@@ -44,6 +44,13 @@ type assetAPIError struct {
 }
 
 func (e *assetAPIError) Error() string {
+	// An empty Message is reachable: the cloudwise status-code fallback leaves it
+	// empty for an empty error body. Rendering "HTTP500: " with a dangling colon
+	// reads like a truncated log line, so drop the separator in that case. The
+	// populated form stays "Code: Message" — tests and log greps rely on it.
+	if e.Message == "" {
+		return e.Code
+	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 

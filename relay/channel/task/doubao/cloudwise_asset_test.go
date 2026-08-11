@@ -389,3 +389,225 @@ func TestCloudwise_HTTPStatusError_Classifiable(t *testing.T) {
 		})
 	}
 }
+
+// TestCloudwise_HTTP200BusinessError_Classifiable guards the case that reopened the
+// bug the non-2xx path was meant to close: this gateway puts the business result in
+// the body, not the status line (cloudwise-api-docs.md:308-333 shows a *successful*
+// fetch as HTTP 200 with code "10000"), so a group-full error can arrive at HTTP 200.
+// Gating the lowercase parse on non-2xx left that body looking like a success with an
+// empty Result, and the caller returned a plain "empty asset id" error that
+// IsGroupExhausted could not classify — no rotation, and a misleading message.
+func TestCloudwise_HTTP200BusinessError_Classifiable(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantCode      string
+		wantExhausted bool
+	}{
+		{
+			name:          "group full at 200 rotates",
+			body:          `{"code":"1026","message":"asset group is full"}`,
+			wantCode:      "1026",
+			wantExhausted: true,
+		},
+		{
+			name:          "success false with group capacity text",
+			body:          `{"code":"GroupFull","message":"asset group capacity reached","success":false}`,
+			wantCode:      "GroupFull",
+			wantExhausted: true,
+		},
+		{
+			name:          "throttling at 200 must not rotate",
+			body:          `{"code":"Throttling","message":"asset group request rate exceeded","success":false}`,
+			wantCode:      "Throttling",
+			wantExhausted: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			cl := newCloudwiseTestClient(srv.URL)
+			_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-200err.jpg", "Image")
+			if err == nil {
+				t.Fatal("expected error for HTTP 200 business error")
+			}
+			var apiErr *assetAPIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("HTTP 200 business error must produce *assetAPIError, got %T: %v", err, err)
+			}
+			if apiErr.Code != tc.wantCode {
+				t.Errorf("Code = %q, want %q", apiErr.Code, tc.wantCode)
+			}
+			if strings.Contains(err.Error(), "empty asset id") {
+				t.Errorf("business error must not be reported as an empty-id error: %v", err)
+			}
+			if got := cl.IsGroupExhausted(err); got != tc.wantExhausted {
+				t.Errorf("IsGroupExhausted = %v, want %v (code %q, message %q)",
+					got, tc.wantExhausted, apiErr.Code, apiErr.Message)
+			}
+		})
+	}
+}
+
+// TestCloudwise_HTTP200BusinessError_NoFalsePositives is the other half of that
+// guard: CreateGroup and the poll path share post(), so a result-less 2xx must not be
+// invented into an error. A poll parked at Processing carries no Id at all.
+func TestCloudwise_HTTP200BusinessError_NoFalsePositives(t *testing.T) {
+	t.Run("processing poll without id keeps polling", func(t *testing.T) {
+		var polls int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/assets/create":
+				w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r1"},"Result":{"Id":"cw-asset-proc"}}`))
+			case "/api/v1/assets/get":
+				// No Id in the poll body, only a status — the shape that must never be
+				// mistaken for a business error.
+				if atomic.AddInt32(&polls, 1) == 1 {
+					w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r2"},"Result":{"Status":"Processing"}}`))
+					return
+				}
+				w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r3"},"Result":{"Status":"Active"}}`))
+			default:
+				t.Errorf("unexpected path %q", r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		id, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-proc-ok.jpg", "Image")
+		if err != nil {
+			t.Fatalf("a Processing poll must not become an error: %v", err)
+		}
+		if id != "cw-asset-proc" {
+			t.Errorf("id = %q, want cw-asset-proc", id)
+		}
+		if n := atomic.LoadInt32(&polls); n != 2 {
+			t.Errorf("expected 2 polls (Processing then Active), got %d", n)
+		}
+	})
+
+	t.Run("documented success code with empty result is not an api error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// The gateway's documented success envelope. It yields no asset id, which is
+			// still a failure, but it must stay the plain empty-id error rather than being
+			// dressed up as code "10000" and fed to the rotation check.
+			w.Write([]byte(`{"code":"10000","data":{},"success":true}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-200ok-empty.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected the empty-asset-id error")
+		}
+		var apiErr *assetAPIError
+		if errors.As(err, &apiErr) {
+			t.Errorf("a successful envelope must not be classified as an api error, got code %q", apiErr.Code)
+		}
+		if !strings.Contains(err.Error(), "empty asset id") {
+			t.Errorf("expected the empty-id error, got %v", err)
+		}
+		if cl.IsGroupExhausted(err) {
+			t.Error("a successful envelope must never trigger group rotation")
+		}
+	})
+}
+
+// TestCloudwise_NestedErrorWithoutCode_UsesTopLevelCode covers the nested-error
+// precedence fix: the nested object used to win wholesale, so a body carrying the
+// real code at the top level and only a message under "error" was classified as
+// "HTTP400" and a genuine GroupFull never rotated the group.
+func TestCloudwise_NestedErrorWithoutCode_UsesTopLevelCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"code":"GroupFull","error":{"message":"no code here"}}`))
+	}))
+	defer srv.Close()
+
+	cl := newCloudwiseTestClient(srv.URL)
+	_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-nested-nocode.jpg", "Image")
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	var apiErr *assetAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *assetAPIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != "GroupFull" {
+		t.Errorf("Code = %q, want GroupFull (top-level code must survive a codeless nested error)", apiErr.Code)
+	}
+	if apiErr.Message != "no code here" {
+		t.Errorf("Message = %q, want the nested message", apiErr.Message)
+	}
+	if !cl.IsGroupExhausted(err) {
+		t.Error("GroupFull must still be classified as group-exhausted")
+	}
+}
+
+// TestCloudwise_ErrorCode_NonScalarAndEmptyMessage pins the two rendering fixes: a
+// non-scalar code is dropped instead of leaking raw JSON into the operator-facing
+// text (the message still drives classification), and an empty message does not
+// render a dangling colon.
+func TestCloudwise_ErrorCode_NonScalarAndEmptyMessage(t *testing.T) {
+	t.Run("object code does not leak raw json", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":{"x":1},"message":"asset group is full"}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-objcode.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected error for 400 response")
+		}
+		var apiErr *assetAPIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("expected *assetAPIError, got %T: %v", err, err)
+		}
+		if strings.Contains(apiErr.Code, "{") {
+			t.Errorf("Code must not carry raw JSON, got %q", apiErr.Code)
+		}
+		if apiErr.Code != "HTTP400" {
+			t.Errorf("Code = %q, want the status fallback HTTP400", apiErr.Code)
+		}
+		// The message survived, so the group-capacity text fallback still classifies it.
+		if !cl.IsGroupExhausted(err) {
+			t.Errorf("message %q should still classify as group-exhausted", apiErr.Message)
+		}
+	})
+
+	t.Run("quoted code with inner escape decodes", func(t *testing.T) {
+		if got := cloudwiseErrorCode([]byte(`"a\"b"`)); got != `a"b` {
+			t.Errorf("cloudwiseErrorCode = %q, want %q", got, `a"b`)
+		}
+		if got := cloudwiseErrorCode([]byte(`1026`)); got != "1026" {
+			t.Errorf("numeric code = %q, want 1026", got)
+		}
+		if got := cloudwiseErrorCode([]byte(`null`)); got != "" {
+			t.Errorf("null code = %q, want empty", got)
+		}
+	})
+
+	t.Run("empty message renders without dangling colon", func(t *testing.T) {
+		if got := (&assetAPIError{Code: "HTTP500"}).Error(); got != "HTTP500" {
+			t.Errorf("Error() = %q, want HTTP500", got)
+		}
+		// The populated form is unchanged; existing tests assert on it.
+		if got := (&assetAPIError{Code: "GroupFull", Message: "full"}).Error(); got != "GroupFull: full" {
+			t.Errorf("Error() = %q, want \"GroupFull: full\"", got)
+		}
+	})
+}
