@@ -1,4 +1,5 @@
 {
+  "Third-party asset library reuses the channel API address and key.": "Third-party asset library reuses the channel API address and key.",
   "Assets and inference endpoint must be in the same project.": "Assets and inference endpoint must be in the same project.",
   "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting to overseas BytePlus, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
   "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.": "Before submitting, upload reference media to the asset library and replace it with asset://id. Avoids real-face / content pre-filter interception.",
