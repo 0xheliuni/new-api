@@ -215,6 +215,15 @@ func (cl *cloudwiseAssetClient) IsGroupExhausted(err error) bool {
 	if cloudwiseGroupExhaustedCodes[apiErr.Code] {
 		return true
 	}
+	// Nothing parseable came back, so Message is the raw response body. Matching
+	// keywords against a whole body is how a plain HTTP 429 whose payload reads
+	// {"detail":"asset group upload capacity temporarily throttled, retry in 30s"}
+	// got classified as exhausted — one junk group and one channel-row write per
+	// concurrent throttled request. The raw body still reaches the operator through
+	// the error text; it is only barred from driving classification.
+	if apiErr.MessageFromRawBody {
+		return false
+	}
 	// Message-text fallback for undocumented codes observed in production.
 	// Requires BOTH a group-scoped word AND an unambiguous capacity word.
 	//
@@ -283,12 +292,20 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 		if code == "" {
 			code = "HTTP" + strconv.Itoa(resp.StatusCode)
 		}
+		messageFromRawBody := false
 		if message == "" {
-			// Keep the body as the message so the group-capacity text fallback can
-			// still match a non-JSON or unrecognised error payload.
+			// Keep the body as the message so the operator still sees what the
+			// upstream said. It is flagged so IsGroupExhausted will not keyword-match
+			// against it — see assetAPIError.MessageFromRawBody.
 			message = truncate([]byte(maskedRaw), 512)
+			messageFromRawBody = true
 		}
-		return nil, maskedRaw, &assetAPIError{Code: code, Message: message, Raw: maskedRaw}
+		return nil, maskedRaw, &assetAPIError{
+			Code:               code,
+			Message:            message,
+			Raw:                maskedRaw,
+			MessageFromRawBody: messageFromRawBody,
+		}
 	}
 	// A 2xx carrying a business error is this gateway's documented convention, not a
 	// hypothetical: cloudwise-api-docs.md:308-333 shows a *successful* task fetch as

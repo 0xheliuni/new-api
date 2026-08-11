@@ -845,3 +845,115 @@ func TestCloudwise_HTTP200_CodelessErrorRendersCleanly(t *testing.T) {
 		t.Error("group-full text must still be classified as group-exhausted")
 	}
 }
+
+// TestCloudwise_NonJSONErrorBody_NotClassifiedByRawText closes the non-2xx half of the
+// raw-body hazard the HTTP-200 branch already refuses to create. When nothing parses,
+// the whole response body becomes the message purely so the operator can see it — but
+// substring-matching that body classified a plain throttle as an exhausted group,
+// minting one junk group and one channel-row write per concurrent throttled request.
+func TestCloudwise_NonJSONErrorBody_NotClassifiedByRawText(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantText string
+	}{
+		{
+			// The reported failure: 429 with an unrecognised key, whose text happens to
+			// carry both halves of the group+capacity conjunction.
+			name:     "throttle detail mentioning group and capacity",
+			status:   http.StatusTooManyRequests,
+			body:     `{"detail":"asset group upload capacity temporarily throttled, retry in 30s"}`,
+			wantText: "temporarily throttled",
+		},
+		{
+			name:     "html body mentioning group and full",
+			status:   http.StatusBadGateway,
+			body:     `<html>asset group queue full</html>`,
+			wantText: "asset group queue full",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			cl := newCloudwiseTestClient(srv.URL)
+			_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-rawbody.jpg", "Image")
+			if err == nil {
+				t.Fatal("expected error for non-2xx response")
+			}
+			var apiErr *assetAPIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("non-2xx must still produce *assetAPIError, got %T: %v", err, err)
+			}
+			if cl.IsGroupExhausted(err) {
+				t.Errorf("a body with no parseable business error must not classify as group-exhausted (message %q)", apiErr.Message)
+			}
+			// The body is still operator-visible; only classification is barred from it.
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("raw body must remain in the operator-facing error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestCloudwise_ParsedGroupFullMessage_StillClassifies is the other side of that
+// guard: a genuine group-full message that really was parsed out of the body must keep
+// rotating, both when it arrives with a code and when the code had to fall back to the
+// HTTP status.
+func TestCloudwise_ParsedGroupFullMessage_StillClassifies(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantCode string
+	}{
+		{
+			name:     "lowercase code and message",
+			status:   http.StatusBadRequest,
+			body:     `{"code":"1026","message":"asset group is full"}`,
+			wantCode: "1026",
+		},
+		{
+			// No usable code, but the message itself was parsed — the status fallback
+			// must not disable the text classifier for it.
+			name:     "message only, code falls back to status",
+			status:   http.StatusBadRequest,
+			body:     `{"message":"asset group capacity reached"}`,
+			wantCode: "HTTP400",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			cl := newCloudwiseTestClient(srv.URL)
+			_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-realfull.jpg", "Image")
+			if err == nil {
+				t.Fatal("expected error for non-2xx response")
+			}
+			var apiErr *assetAPIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("expected *assetAPIError, got %T: %v", err, err)
+			}
+			if apiErr.Code != tc.wantCode {
+				t.Errorf("Code = %q, want %q", apiErr.Code, tc.wantCode)
+			}
+			if !cl.IsGroupExhausted(err) {
+				t.Errorf("a parsed group-full message must still classify as exhausted (message %q)", apiErr.Message)
+			}
+		})
+	}
+}

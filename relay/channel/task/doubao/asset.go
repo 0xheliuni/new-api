@@ -41,6 +41,21 @@ type assetAPIError struct {
 	Code    string
 	Message string
 	Raw     string // masked copy of the full response body
+	// MessageFromRawBody marks Message as the whole (masked) response body,
+	// substituted because the body carried no parseable business message.
+	//
+	// Classification must never substring-match such a message: a body like
+	// {"detail":"asset group upload capacity temporarily throttled"} contains
+	// both "group" and "capacity" without being a group-full error at all, and
+	// under a throttling burst that mints one junk group and one channel-row
+	// write per concurrent request. This is the same hazard the HTTP-200 branch
+	// of cloudwiseAssetClient.post already refuses to create.
+	//
+	// The flag lives on the message rather than on a synthesized "HTTP<status>"
+	// code on purpose: a body such as {"code":{"x":1},"message":"asset group is
+	// full"} also lands on a synthesized code, yet its message is genuine and
+	// must still classify.
+	MessageFromRawBody bool
 }
 
 func (e *assetAPIError) Error() string {
@@ -131,12 +146,41 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 	_, project, _ := s.ResolveBytePlusAsset()
 	provider := s.ResolveAssetProvider()
 
-	groupID := s.BytePlusAssetGroupId
+	// ResolveAssetGroupId, not the raw field: a group id minted by the other asset
+	// library is meaningless here and must be treated as absent (see FIX 4 in
+	// dto.ChannelOtherSettings.ResolveAssetGroupId).
+	groupID := s.ResolveAssetGroupId()
 
 	ctx := c.Request.Context()
 	// newGroupCreated tracks whether we already created a new group during this
 	// request.  We cap at one new group per request to avoid runaway creation.
 	newGroupCreated := false
+
+	// ensureGroup bootstraps a group id when the channel has none usable (blank
+	// field, or one minted by the other provider).  A blank group id is the normal
+	// first-run state for a new channel, so bootstrap must be explicit rather than
+	// riding on the upstream rejecting groupId:"" with a code that happens to be in
+	// the (admittedly guessed) exhaustion tables.
+	//
+	// Bootstrap is deliberately NOT a rotation: it does not set newGroupCreated, so
+	// a first request that bootstraps a group still keeps its one rotation in hand
+	// if that fresh group turns out to be unusable.
+	//
+	// It runs lazily, right before the first real upload, so a request whose media
+	// are all cached (or that carries no media at all) never creates a group.
+	ensureGroup := func() error {
+		if groupID != "" {
+			return nil
+		}
+		newGroupID, createErr := cl.CreateGroup(ctx, assetGroupName(a.channelId))
+		if createErr != nil {
+			return errors.Wrap(createErr, "create asset group failed (no group id configured)")
+		}
+		groupID = newGroupID
+		// Persistence failure is non-fatal, exactly as on the rotation path below.
+		a.persistGroupID(newGroupID)
+		return nil
+	}
 
 	for i := range payload.Content {
 		item := &payload.Content[i]
@@ -154,7 +198,7 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 		}
 		// CreateAsset only accepts public HTTP(S) URLs; base64/data URIs are unsupported.
 		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			return errors.Errorf("byteplus asset upload requires a public http(s) URL, got unsupported input for %s (base64/data URIs are not supported)", item.Type)
+			return errors.Errorf("asset upload requires a public http(s) URL, got unsupported input for %s (base64/data URIs are not supported)", item.Type)
 		}
 
 		cacheKey := assetCacheKey(a.channelId, provider, project, url)
@@ -163,12 +207,15 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 			continue
 		}
 
+		if err := ensureGroup(); err != nil {
+			return errors.Wrapf(err, "preupload %s", item.Type)
+		}
+
 		assetID, uploadErr := cl.CreateAndWait(ctx, groupID, url, assetType)
 		if uploadErr != nil {
 			// Attempt group rotation on first exhaustion within this request.
 			if cl.IsGroupExhausted(uploadErr) && !newGroupCreated {
-				newGroupName := fmt.Sprintf("newapi-ch%d", a.channelId)
-				newGroupID, createErr := cl.CreateGroup(ctx, newGroupName)
+				newGroupID, createErr := cl.CreateGroup(ctx, assetGroupName(a.channelId))
 				if createErr != nil {
 					return errors.Wrapf(createErr, "preupload %s: group exhausted and group creation failed", item.Type)
 				}
@@ -187,10 +234,10 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 				// Retry the upload into the fresh group.
 				assetID, uploadErr = cl.CreateAndWait(ctx, groupID, url, assetType)
 				if uploadErr != nil {
-					return errors.Wrapf(uploadErr, "preupload %s to byteplus asset library failed (after group rotation)", item.Type)
+					return errors.Wrapf(uploadErr, "preupload %s to asset library failed (after group rotation)", item.Type)
 				}
 			} else {
-				return errors.Wrapf(uploadErr, "preupload %s to byteplus asset library failed", item.Type)
+				return errors.Wrapf(uploadErr, "preupload %s to asset library failed", item.Type)
 			}
 		}
 
@@ -200,34 +247,45 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 	return nil
 }
 
+// assetGroupName is the name given to groups this gateway creates for a channel.
+func assetGroupName(channelId int) string {
+	return fmt.Sprintf("newapi-ch%d", channelId)
+}
+
 // persistGroupID saves newGroupID to the channel's OtherSettings in the DB and
-// updates the in-memory channel cache.  Errors are logged as warnings and do
+// updates the in-memory channel cache.  The provider that minted the id is
+// recorded alongside it so a later provider switch does not hand the id to an
+// asset library that cannot resolve it.  Errors are logged as warnings and do
 // not fail the caller.
 func (a *TaskAdaptor) persistGroupID(newGroupID string) {
+	provider := a.otherSettings.ResolveAssetProvider()
+
 	// Always update the adaptor's in-memory copy so this request and any
 	// subsequent in-process use sees the new group id regardless of DB state.
 	a.otherSettings.BytePlusAssetGroupId = newGroupID
+	a.otherSettings.AssetGroupProvider = provider
 
 	if model.DB == nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf(
-			"byteplus asset: DB not initialised, skipping group_id persistence for channel %d", a.channelId))
+			"asset library: DB not initialised, skipping group_id persistence for channel %d", a.channelId))
 		return
 	}
 
 	ch, err := model.GetChannelById(a.channelId, true)
 	if err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf(
-			"byteplus asset: cannot load channel %d for group_id persistence: %v", a.channelId, err))
+			"asset library: cannot load channel %d for group_id persistence: %v", a.channelId, err))
 		return
 	}
 
 	settings := ch.GetOtherSettings()
 	settings.BytePlusAssetGroupId = newGroupID
+	settings.AssetGroupProvider = provider
 	ch.SetOtherSettings(settings)
 
 	if err := ch.Save(); err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf(
-			"byteplus asset: failed to persist new group_id for channel %d: %v", a.channelId, err))
+			"asset library: failed to persist new group_id for channel %d: %v", a.channelId, err))
 		return
 	}
 

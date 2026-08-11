@@ -1,12 +1,15 @@
 package doubao
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 
 	"github.com/gin-gonic/gin"
@@ -265,5 +268,211 @@ func TestPreuploadAssets_NonGroupErrors_NoGroupCreated(t *testing.T) {
 				t.Errorf("expected 0 CreateAssetGroup calls for non-group error %q, got %d", tc.code, n)
 			}
 		})
+	}
+}
+
+// assetGroupRecorder is a BytePlus asset-library stub that records the GroupId of
+// every CreateAsset call and counts CreateAssetGroup calls. createAssetBody returns
+// the CreateAsset response for the n-th attempt (1-based), so a test can make the
+// first attempt fail without touching the recording logic.
+type assetGroupRecorder struct {
+	mu             sync.Mutex
+	uploadGroupIds []string
+
+	groupCalls   int32
+	assetCalls   int32
+	newGroupIds  []string
+	createAssetF func(attempt int) string
+}
+
+func (r *assetGroupRecorder) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Query().Get("Action") {
+		case "CreateAssetGroup":
+			n := int(atomic.AddInt32(&r.groupCalls, 1))
+			if n > len(r.newGroupIds) {
+				t.Errorf("unexpected CreateAssetGroup call #%d", n)
+				w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"TooManyGroups","Message":"unexpected"}}}`))
+				return
+			}
+			w.Write([]byte(`{"Result":{"Id":"` + r.newGroupIds[n-1] + `"}}`))
+		case "CreateAsset":
+			body, _ := io.ReadAll(req.Body)
+			var parsed struct {
+				GroupId string `json:"GroupId"`
+			}
+			_ = common.Unmarshal(body, &parsed)
+			r.mu.Lock()
+			r.uploadGroupIds = append(r.uploadGroupIds, parsed.GroupId)
+			r.mu.Unlock()
+			n := int(atomic.AddInt32(&r.assetCalls, 1))
+			w.Write([]byte(r.createAssetF(n)))
+		case "GetAsset":
+			w.Write([]byte(`{"Result":{"Status":"Active"}}`))
+		}
+	}))
+}
+
+func (r *assetGroupRecorder) groups() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.uploadGroupIds...)
+}
+
+func alwaysCreated(id string) func(int) string {
+	return func(int) string { return `{"Result":{"Id":"` + id + `"}}` }
+}
+
+// TestPreuploadAssets_BlankGroupId_Bootstraps is the regression guard for the
+// bootstrap path. A channel with no group id is the normal first-run state, and it
+// used to get a group only by accident: the request carried groupId:"" and the code
+// waited for the upstream to reject it with a code that happened to be listed in the
+// (openly guessed) exhaustion table. Bootstrap is now explicit — exactly one
+// CreateAssetGroup, then a successful upload into it, with no error involved at all.
+func TestPreuploadAssets_BlankGroupId_Bootstraps(t *testing.T) {
+	rec := &assetGroupRecorder{
+		newGroupIds:  []string{"group-bootstrap-1"},
+		createAssetF: alwaysCreated("asset-bootstrap"),
+	}
+	srv := rec.server(t)
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = "" // new channel: the frontend no longer requires one
+	a := &TaskAdaptor{otherSettings: settings, endpointOverride: srv.URL, channelId: 8201}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/bootstrap-ch8201.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if got := payload.Content[0].ImageURL.URL; got != "asset://asset-bootstrap" {
+		t.Errorf("expected asset://asset-bootstrap, got %q", got)
+	}
+	if n := atomic.LoadInt32(&rec.groupCalls); n != 1 {
+		t.Errorf("expected exactly 1 CreateAssetGroup call, got %d", n)
+	}
+	if n := atomic.LoadInt32(&rec.assetCalls); n != 1 {
+		t.Errorf("expected exactly 1 CreateAsset call (no error-driven retry), got %d", n)
+	}
+	if got := rec.groups(); len(got) != 1 || got[0] != "group-bootstrap-1" {
+		t.Errorf("upload group ids = %v, want [group-bootstrap-1] (never an empty groupId)", got)
+	}
+	if a.otherSettings.BytePlusAssetGroupId != "group-bootstrap-1" {
+		t.Errorf("bootstrapped group id not kept in adaptor state, got %q", a.otherSettings.BytePlusAssetGroupId)
+	}
+	if a.otherSettings.AssetGroupProvider != dto.AssetProviderBytePlus {
+		t.Errorf("group provider marker = %q, want %q",
+			a.otherSettings.AssetGroupProvider, dto.AssetProviderBytePlus)
+	}
+}
+
+// TestPreuploadAssets_Bootstrap_DoesNotConsumeRotation pins the interaction between
+// the two group-creating paths: bootstrapping a missing group is not a rotation, so a
+// first request that bootstraps must still have its single rotation available when the
+// fresh group turns out to be unusable.
+func TestPreuploadAssets_Bootstrap_DoesNotConsumeRotation(t *testing.T) {
+	rec := &assetGroupRecorder{
+		newGroupIds: []string{"group-bootstrap-2", "group-rotated-2"},
+		createAssetF: func(attempt int) string {
+			if attempt == 1 {
+				return `{"ResponseMetadata":{"Error":{"Code":"GroupFull","Message":"group is full"}}}`
+			}
+			return `{"Result":{"Id":"asset-after-rotation"}}`
+		},
+	}
+	srv := rec.server(t)
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = ""
+	a := &TaskAdaptor{otherSettings: settings, endpointOverride: srv.URL, channelId: 8202}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/bootstrap-rotate-ch8202.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if got := payload.Content[0].ImageURL.URL; got != "asset://asset-after-rotation" {
+		t.Errorf("expected asset://asset-after-rotation, got %q", got)
+	}
+	if n := atomic.LoadInt32(&rec.groupCalls); n != 2 {
+		t.Errorf("expected 2 CreateAssetGroup calls (bootstrap + one rotation), got %d", n)
+	}
+	if got := rec.groups(); len(got) != 2 || got[0] != "group-bootstrap-2" || got[1] != "group-rotated-2" {
+		t.Errorf("upload group ids = %v, want [group-bootstrap-2 group-rotated-2]", got)
+	}
+}
+
+// TestPreuploadAssets_GroupIdFromOtherProvider_Ignored covers the provider scoping of
+// the stored group id. Flipping asset_provider used to hand the other library's group
+// id upstream, which at best rotated it away (destroying the operator's original id)
+// and at worst failed every request. The marker makes the foreign id read as absent,
+// so the request bootstraps a fresh group instead.
+func TestPreuploadAssets_GroupIdFromOtherProvider_Ignored(t *testing.T) {
+	rec := &assetGroupRecorder{
+		newGroupIds:  []string{"group-fresh-3"},
+		createAssetF: alwaysCreated("asset-fresh-3"),
+	}
+	srv := rec.server(t)
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = "cw-group-from-cloudwise"
+	settings.AssetGroupProvider = dto.AssetProviderCloudwise
+	settings.AssetProvider = "" // empty == byteplus, i.e. the operator switched back
+	a := &TaskAdaptor{otherSettings: settings, endpointOverride: srv.URL, channelId: 8203}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/foreign-group-ch8203.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if n := atomic.LoadInt32(&rec.groupCalls); n != 1 {
+		t.Errorf("expected 1 CreateAssetGroup call for the foreign group id, got %d", n)
+	}
+	for _, g := range rec.groups() {
+		if g != "group-fresh-3" {
+			t.Errorf("upload used group %q, want group-fresh-3 (the cloudwise id must never be sent)", g)
+		}
+	}
+	if a.otherSettings.AssetGroupProvider != dto.AssetProviderBytePlus {
+		t.Errorf("group provider marker = %q, want %q after re-minting",
+			a.otherSettings.AssetGroupProvider, dto.AssetProviderBytePlus)
+	}
+}
+
+// TestPreuploadAssets_AbsentGroupProviderMarker_KeepsGroupId is the compatibility half
+// of the same fix: rows written before the marker existed carry no marker, and they
+// must keep using their stored group id rather than being re-bootstrapped.
+func TestPreuploadAssets_AbsentGroupProviderMarker_KeepsGroupId(t *testing.T) {
+	rec := &assetGroupRecorder{
+		newGroupIds:  nil, // any CreateAssetGroup call is a failure
+		createAssetF: alwaysCreated("asset-legacy-4"),
+	}
+	srv := rec.server(t)
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = "group-legacy-4"
+	settings.AssetGroupProvider = "" // legacy row: marker absent
+	a := &TaskAdaptor{otherSettings: settings, endpointOverride: srv.URL, channelId: 8204}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/legacy-group-ch8204.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if n := atomic.LoadInt32(&rec.groupCalls); n != 0 {
+		t.Errorf("an absent marker must not be treated as a mismatch, got %d CreateAssetGroup calls", n)
+	}
+	if got := rec.groups(); len(got) != 1 || got[0] != "group-legacy-4" {
+		t.Errorf("upload group ids = %v, want [group-legacy-4]", got)
 	}
 }
