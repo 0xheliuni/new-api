@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
@@ -46,28 +47,46 @@ func (e *assetAPIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// newAssetClient constructs a BytePlus asset client from the adaptor's channel
-// settings.  Returns an error if the access key or secret key is missing.
-// Do not add a provider switch here — that belongs to a later task.
+// newAssetClient constructs an asset client from the adaptor's channel settings.
+// Provider is selected by s.ResolveAssetProvider():
+//   - dto.AssetProviderCloudwise: cloudwiseAssetClient (Bearer auth via channel API key/base URL)
+//   - anything else (including empty): bytePlusAssetClient (Volcengine AK/SK signing)
 func (a *TaskAdaptor) newAssetClient() (assetClient, error) {
 	s := a.otherSettings
-	if s.BytePlusAccessKey == "" || s.BytePlusSecretKey == "" {
-		return nil, errors.New("byteplus asset upload enabled but access_key/secret_key is missing in channel settings")
-	}
-	region, project, skipMod := s.ResolveBytePlusAsset()
 	httpClient, err := service.GetHttpClientWithProxy(a.proxy)
 	if err != nil {
-		return nil, errors.Wrap(err, "create http client for byteplus asset upload failed")
+		return nil, errors.Wrap(err, "create http client for asset upload failed")
 	}
-	return &bytePlusAssetClient{
-		ak:             s.BytePlusAccessKey,
-		sk:             s.BytePlusSecretKey,
-		region:         region,
-		projectName:    project,
-		skipModeration: skipMod,
-		httpClient:     httpClient,
-		endpoint:       a.endpointOverride,
-	}, nil
+
+	switch s.ResolveAssetProvider() {
+	case dto.AssetProviderCloudwise:
+		baseURL := a.baseURL
+		if a.endpointOverride != "" {
+			baseURL = a.endpointOverride
+		}
+		if a.apiKey == "" {
+			return nil, errors.New("cloudwise asset upload enabled but channel API key is missing")
+		}
+		return &cloudwiseAssetClient{
+			baseURL:    baseURL,
+			apiKey:     a.apiKey,
+			httpClient: httpClient,
+		}, nil
+	default:
+		if s.BytePlusAccessKey == "" || s.BytePlusSecretKey == "" {
+			return nil, errors.New("byteplus asset upload enabled but access_key/secret_key is missing in channel settings")
+		}
+		region, project, skipMod := s.ResolveBytePlusAsset()
+		return &bytePlusAssetClient{
+			ak:             s.BytePlusAccessKey,
+			sk:             s.BytePlusSecretKey,
+			region:         region,
+			projectName:    project,
+			skipModeration: skipMod,
+			httpClient:     httpClient,
+			endpoint:       a.endpointOverride,
+		}, nil
+	}
 }
 
 // assetCacheTTL is the URL→assetId mapping TTL.  Short enough to cover a
