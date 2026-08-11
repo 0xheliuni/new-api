@@ -75,9 +75,17 @@ type ChannelOtherSettings struct {
 	// 开启后提交视频生成前把参考媒体（公网 URL）预上传到素材库，换 asset://<id> 再提交。
 	// 鉴权复用渠道 Bearer key；素材组按渠道自动创建/复用。
 	Seedance3rdAssetEnabled bool `json:"seedance3rd_asset_enabled,omitempty"`
+
+	// AssetProvider 选择素材库协议实现；空值等价 AssetProviderBytePlus，保证存量渠道行为不变。
+	AssetProvider string `json:"asset_provider,omitempty"`
 }
 
 const (
+	// AssetProviderBytePlus 火山官方素材库（AK/SK 签名 + byteplusapi.com）。
+	AssetProviderBytePlus = "byteplus"
+	// AssetProviderCloudwise 第三方素材库（复用渠道 base_url 与 API Key）。
+	AssetProviderCloudwise = "cloudwise"
+
 	defaultBytePlusRegion      = "ap-southeast-1"
 	defaultBytePlusProjectName = "default"
 )
@@ -102,6 +110,17 @@ func (s *ChannelOtherSettings) ResolveBytePlusAsset() (region, project string, s
 		skipModeration = *s.BytePlusModerationSkip
 	}
 	return
+}
+
+// ResolveAssetProvider 返回素材库协议实现名。空值与未知值都回落到官方实现，
+// 保证存量渠道（无此字段）与配置写错时行为不变。
+func (s *ChannelOtherSettings) ResolveAssetProvider() string {
+	switch s.AssetProvider {
+	case AssetProviderCloudwise:
+		return AssetProviderCloudwise
+	default:
+		return AssetProviderBytePlus
+	}
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
