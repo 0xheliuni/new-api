@@ -67,10 +67,15 @@ func (a *TaskAdaptor) newAssetClient() (assetClient, error) {
 		if a.apiKey == "" {
 			return nil, errors.New("cloudwise asset upload enabled but channel API key is missing")
 		}
+		// skipModeration is shared config (default true); cloudwise honours it via
+		// Moderation.Strategy=Skip exactly like the byteplus path. region/project
+		// are byteplus-only and unused here.
+		_, _, skipMod := s.ResolveBytePlusAsset()
 		return &cloudwiseAssetClient{
-			baseURL:    baseURL,
-			apiKey:     a.apiKey,
-			httpClient: httpClient,
+			baseURL:        baseURL,
+			apiKey:         a.apiKey,
+			skipModeration: skipMod,
+			httpClient:     httpClient,
 		}, nil
 	default:
 		if s.BytePlusAccessKey == "" || s.BytePlusSecretKey == "" {
@@ -109,6 +114,7 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 	}
 
 	_, project, _ := s.ResolveBytePlusAsset()
+	provider := s.ResolveAssetProvider()
 
 	groupID := s.BytePlusAssetGroupId
 
@@ -136,7 +142,7 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 			return errors.Errorf("byteplus asset upload requires a public http(s) URL, got unsupported input for %s (base64/data URIs are not supported)", item.Type)
 		}
 
-		cacheKey := assetCacheKey(a.channelId, project, url)
+		cacheKey := assetCacheKey(a.channelId, provider, project, url)
 		if assetID, ok := getCachedAssetID(cacheKey); ok {
 			media.URL = "asset://" + assetID
 			continue
@@ -239,6 +245,11 @@ func truncate(b []byte, n int) string {
 
 // assetCacheKey builds a cache key for a URL→assetId mapping.
 //
+// provider is part of the key because asset ids are only resolvable by the asset
+// library that minted them: flipping a channel's asset_provider would otherwise
+// keep serving BytePlus ids to cloudwise (or the reverse) for the rest of the TTL.
+// Changing this key format costs one cold-cache window, which is expected.
+//
 // groupId is intentionally excluded: BytePlus asset ids are globally unique
 // and remain valid after their group rotates.  If groupId were in the key, a
 // group rotation would cause every previously-cached URL to miss and get
@@ -247,8 +258,8 @@ func truncate(b []byte, n int) string {
 // time to burn quota.  project is retained because the same URL uploaded to
 // different projects yields a different asset id (different namespace/access
 // scope).
-func assetCacheKey(channelId int, project, url string) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s", channelId, project, url)))
+func assetCacheKey(channelId int, provider, project, url string) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s|%s", channelId, provider, project, url)))
 	return hex.EncodeToString(h[:])
 }
 

@@ -3,8 +3,10 @@ package doubao
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,9 +19,25 @@ import (
 //
 // Protocol (verified from cloudwise-api-docs.md, 2026-08-10 export):
 //   - Auth: Authorization: Bearer {channel api key} — no AK/SK required.
-//   - All three operations share the same PascalCase envelope:
-//     {ResponseMetadata:{RequestId, Error?:{Code, Message}}, Result:{...}}
-//   - Error signals: ResponseMetadata.Error is non-nil with a non-empty Code.
+//   - Success envelope for all three operations is PascalCase:
+//     {ResponseMetadata:{RequestId, ...}, Result:{...}}
+//   - Create-asset body mixes cases: assetType/groupId/url and lowercase
+//     name/description, with a nested PascalCase Moderation.Strategy.
+//   - An asset is usable at Status=="Active"; "Processing" keeps polling and
+//     "Failed" is terminal.
+//
+// ERROR SHAPE — NOT VERIFIED. The document has no error-response example for any
+// asset operation. Two shapes are therefore both accepted, and neither is
+// confirmed for asset endpoints:
+//   - ResponseMetadata.Error{Code, Message}: inferred from the sibling BytePlus
+//     provider (see byteplus_asset.go), on the assumption that cloudwise proxies
+//     the same underlying Volcengine service.
+//   - lowercase {code, message} (also nested under "error"): the shape this
+//     gateway demonstrably uses for its task endpoints.
+//
+// When neither parses on a non-2xx, the HTTP status becomes the error code so
+// that classification still has something to work with. Revisit once a real
+// asset-operation error is observed in production logs.
 //
 // DISCREPANCY vs task-4-brief.md (document wins per task instructions):
 //   - Brief claimed "upload uses {code,message,data} (snake_case)" — WRONG.
@@ -31,9 +49,10 @@ import (
 //   - Brief claimed ready status is "completed" — WRONG.
 //     Document shows Status:"Active" (same as BytePlus).
 type cloudwiseAssetClient struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	baseURL        string
+	apiKey         string
+	skipModeration bool
+	httpClient     *http.Client
 	// pollInterval/pollTimeout zero values fall back to package-level defaults.
 	pollInterval time.Duration
 	pollTimeout  time.Duration
@@ -119,6 +138,9 @@ func (cl *cloudwiseAssetClient) CreateAndWait(ctx context.Context, groupID, medi
 		GroupId:   groupID,
 		URL:       mediaURL,
 	}
+	if cl.skipModeration {
+		req.Moderation = &cloudwiseAssetModeration{Strategy: "Skip"}
+	}
 	env, _, err := cl.post(ctx, "/api/v1/assets/create", req)
 	if err != nil {
 		return "", errors.Wrap(err, "cloudwise CreateAsset failed")
@@ -138,7 +160,9 @@ func (cl *cloudwiseAssetClient) CreateAndWait(ctx context.Context, groupID, medi
 		case "Active":
 			return id, nil
 		case "Failed":
-			return "", errors.Errorf("cloudwise asset %s processing failed: %s", id, common.MaskSensitiveInfo(raw))
+			// raw is already masked by post; only truncate so a large rejection
+			// body cannot be embedded whole into the relay response and logs.
+			return "", errors.Errorf("cloudwise asset %s processing failed: %s", id, truncate([]byte(raw), 512))
 		}
 		if time.Now().After(deadline) {
 			return "", errors.Errorf("cloudwise asset %s not ready within %s (last status: %s)",
@@ -190,12 +214,19 @@ func (cl *cloudwiseAssetClient) IsGroupExhausted(err error) bool {
 		return true
 	}
 	// Message-text fallback for undocumented codes observed in production.
-	// Requires BOTH a group-scoped word AND a capacity/existence word to avoid
-	// misclassifying auth failures or moderation rejections.
+	// Requires BOTH a group-scoped word AND an unambiguous capacity word.
+	//
+	// Deliberately NOT matched here:
+	//   - "exceed": it also matches "exceeded", which nearly every quota and
+	//     throttle message contains ("asset group request rate exceeded, retry
+	//     later"). Under throttling that would mint one junk group per concurrent
+	//     request, the exact runaway that keeping QuotaExceeded out of the code map
+	//     prevents.
+	//   - "not found": a missing group id is an operator misconfiguration far more
+	//     often than an exhausted group, and rotating hides it.
 	msg := strings.ToLower(apiErr.Message)
 	return strings.Contains(msg, "group") &&
-		(strings.Contains(msg, "full") || strings.Contains(msg, "not found") ||
-			strings.Contains(msg, "capacity") || strings.Contains(msg, "exceed"))
+		(strings.Contains(msg, "full") || strings.Contains(msg, "capacity"))
 }
 
 // post sends a POST to {baseURL}{path} with Bearer auth and returns the parsed envelope.
@@ -232,20 +263,67 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 	maskedRaw := common.MaskSensitiveInfo(string(respBody))
 
 	var env cloudwiseEnvelope
-	if err := common.Unmarshal(respBody, &env); err != nil {
-		return nil, maskedRaw, errors.Wrapf(err,
-			"cloudwise: unmarshal response failed (status %d, body: %s)", resp.StatusCode, truncate(respBody, 512))
-	}
-	if env.ResponseMetadata.Error != nil && env.ResponseMetadata.Error.Code != "" {
+	envErr := common.Unmarshal(respBody, &env)
+
+	if envErr == nil && env.ResponseMetadata.Error != nil && env.ResponseMetadata.Error.Code != "" {
 		return nil, maskedRaw, &assetAPIError{
 			Code:    env.ResponseMetadata.Error.Code,
 			Message: env.ResponseMetadata.Error.Message,
 			Raw:     maskedRaw,
 		}
 	}
+	// Every error response must surface as *assetAPIError: IsGroupExhausted starts
+	// with an errors.As check, so a plain error here would make group rotation
+	// unreachable on this provider. The lowercase {code,message} shape and a
+	// status-code fallback cover the undocumented asset-error format.
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, maskedRaw, errors.Errorf("cloudwise upstream returned status %d: %s",
-			resp.StatusCode, truncate(respBody, 512))
+		code, message := parseCloudwiseLowercaseError(respBody)
+		if code == "" {
+			code = "HTTP" + strconv.Itoa(resp.StatusCode)
+		}
+		if message == "" {
+			// Keep the body as the message so the group-capacity text fallback can
+			// still match a non-JSON or unrecognised error payload.
+			message = truncate([]byte(maskedRaw), 512)
+		}
+		return nil, maskedRaw, &assetAPIError{Code: code, Message: message, Raw: maskedRaw}
+	}
+	if envErr != nil {
+		return nil, maskedRaw, errors.Wrapf(envErr,
+			"cloudwise: unmarshal response failed (status %d, body: %s)", resp.StatusCode, truncate(respBody, 512))
 	}
 	return &env, maskedRaw, nil
+}
+
+// parseCloudwiseLowercaseError extracts the lowercase {code,message} error shape,
+// accepting it both at the top level and nested under "error" — the two forms this
+// gateway uses for its task endpoints. code is read as a raw scalar because the
+// document shows it quoted ("10000") while a numeric code would otherwise break
+// the whole parse. Returns empty strings when the body does not carry this shape.
+func parseCloudwiseLowercaseError(body []byte) (code, message string) {
+	var payload struct {
+		Code    json.RawMessage `json:"code"`
+		Message string          `json:"message"`
+		Error   *struct {
+			Code    json.RawMessage `json:"code"`
+			Message string          `json:"message"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return "", ""
+	}
+	if payload.Error != nil {
+		return jsonScalarString(payload.Error.Code), payload.Error.Message
+	}
+	return jsonScalarString(payload.Code), payload.Message
+}
+
+// jsonScalarString renders a raw JSON scalar as a plain string, stripping the
+// quotes from a JSON string and leaving a number as written.
+func jsonScalarString(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return ""
+	}
+	return strings.Trim(s, `"`)
 }
