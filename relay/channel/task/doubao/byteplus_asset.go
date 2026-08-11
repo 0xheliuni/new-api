@@ -123,21 +123,32 @@ func (cl *bytePlusAssetClient) CreateGroup(ctx context.Context, name string) (st
 	if err != nil {
 		return "", errors.Wrap(err, "byteplus CreateAssetGroup failed")
 	}
+	if env.Result.Id == "" {
+		return "", errors.New("byteplus CreateAssetGroup returned empty group id")
+	}
 	return env.Result.Id, nil
 }
 
 // groupExhaustedCodes are BytePlus error codes that indicate the asset group is
-// full, invalid, or otherwise unusable for new uploads. We are deliberately
-// conservative: unknown codes are NOT treated as exhaustion to avoid creating
-// junk groups on every unrelated error.
+// full, invalid, or otherwise unusable for new uploads. The upstream API
+// documentation contains no error-code table, so these are conservative guesses
+// based on code names — not confirmed documented values.
 //
-// Codes sourced from BytePlus Ark API documentation for CreateAsset errors:
-//   - GroupFull / QuotaExceeded: group has hit its asset capacity
-//   - InvalidGroupId / GroupNotFound: group id is stale or was deleted
-//   - AssetGroupCapacityExceeded: explicit capacity limit hit
+// Design intent:
+//   - Unknown codes return false (permissive-false): unrecognised errors surface
+//     directly to the operator, which is far safer than creating junk groups on
+//     every unrelated error. When a genuine group-full code is observed in
+//     production logs, add it here.
+//   - Do NOT add a bare/generic quota or rate-limit code (e.g. "QuotaExceeded",
+//     "ThrottlingException", "RateLimitExceeded"). Such codes cannot be
+//     distinguished from API-level call-rate throttling. Under sustained load
+//     that would trigger a new CreateAssetGroup call on every throttled request —
+//     a runaway group-creation loop against the upstream account.
+//
+// Every entry below is unambiguously group-scoped (the code name contains
+// "Group", "GroupId", or "GroupCapacity").
 var groupExhaustedCodes = map[string]bool{
 	"GroupFull":                   true,
-	"QuotaExceeded":               true,
 	"InvalidGroupId":              true,
 	"GroupNotFound":               true,
 	"AssetGroupCapacityExceeded":  true,

@@ -126,3 +126,25 @@ func TestCreateAndWait_Timeout(t *testing.T) {
 		t.Fatal("expected timeout/cancel error, got nil")
 	}
 }
+
+// TestCreateGroup_EmptyId verifies that CreateGroup returns an explicit error
+// when the upstream replies with a success envelope carrying no id (e.g. {"Result":{}}).
+// Without this guard the caller would upload into group "", producing a confusing
+// downstream parameter error instead of a clear one.
+func TestCreateGroup_EmptyId(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Success envelope with no id in Result.
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r1"},"Result":{}}`))
+	}))
+	defer srv.Close()
+
+	cl := newTestClient(srv.URL)
+	id, err := cl.CreateGroup(context.Background(), "test-group")
+	if err == nil {
+		t.Fatalf("expected error for empty group id, got id=%q", id)
+	}
+	if !strings.Contains(err.Error(), "empty group id") {
+		t.Errorf("error should mention empty group id, got: %v", err)
+	}
+}

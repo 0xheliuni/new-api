@@ -224,6 +224,10 @@ func TestPreuploadAssets_NonGroupErrors_NoGroupCreated(t *testing.T) {
 		{"moderation rejection", "ContentRiskFailed", 8102, "https://example.com/moderation-ch8102.jpg"},
 		{"invalid media URL", "InvalidParameter.URL", 8103, "https://example.com/bad-url-ch8103.jpg"},
 		{"unknown error code", "InternalError", 8104, "https://example.com/unknown-err-ch8104.jpg"},
+		// QuotaExceeded must NOT trigger group creation: it is indistinguishable
+		// from API-level call-rate throttling, so treating it as group-exhausted
+		// would cause a runaway CreateAssetGroup loop under sustained load.
+		{"generic quota exceeded", "QuotaExceeded", 8105, "https://example.com/quota-exceeded-ch8105.jpg"},
 	}
 
 	for _, tc := range cases {
