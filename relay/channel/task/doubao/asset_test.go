@@ -112,3 +112,154 @@ func TestPreuploadAssets_MissingCreds(t *testing.T) {
 		t.Fatal("expected error for missing credentials")
 	}
 }
+
+// TestPreuploadAssets_GroupExhausted_RetrySucceeds verifies that when a group
+// is full, exactly one new group is created and the upload retries successfully.
+func TestPreuploadAssets_GroupExhausted_RetrySucceeds(t *testing.T) {
+	const chanID = 8001
+	var createGroupCalls int32
+	var createAssetAttempts int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("Action") {
+		case "CreateAsset":
+			n := atomic.AddInt32(&createAssetAttempts, 1)
+			if n == 1 {
+				// First attempt: group full.
+				w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"GroupFull","Message":"group is full"}}}`))
+				return
+			}
+			// Retry into new group: succeed.
+			w.Write([]byte(`{"Result":{"Id":"asset-new-group"}}`))
+		case "GetAsset":
+			w.Write([]byte(`{"Result":{"Status":"Active"}}`))
+		case "CreateAssetGroup":
+			atomic.AddInt32(&createGroupCalls, 1)
+			w.Write([]byte(`{"Result":{"Id":"group-new-1"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = "group-exhausted"
+	a := &TaskAdaptor{
+		otherSettings:    settings,
+		endpointOverride: srv.URL,
+		channelId:        chanID,
+	}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/rotate-test-ch8001.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if got := payload.Content[0].ImageURL.URL; got != "asset://asset-new-group" {
+		t.Errorf("expected asset://asset-new-group, got %q", got)
+	}
+	if n := atomic.LoadInt32(&createGroupCalls); n != 1 {
+		t.Errorf("expected exactly 1 CreateAssetGroup call, got %d", n)
+	}
+	if n := atomic.LoadInt32(&createAssetAttempts); n != 2 {
+		t.Errorf("expected 2 CreateAsset attempts (initial + retry), got %d", n)
+	}
+	// New group id must be reflected in adaptor state.
+	if a.otherSettings.BytePlusAssetGroupId != "group-new-1" {
+		t.Errorf("expected group id updated to group-new-1, got %q", a.otherSettings.BytePlusAssetGroupId)
+	}
+}
+
+// TestPreuploadAssets_GroupExhausted_DoubleExhaustion verifies that when the
+// retry into the fresh group also fails with exhaustion, the error surfaces and
+// still exactly one group was created (no second creation attempt).
+func TestPreuploadAssets_GroupExhausted_DoubleExhaustion(t *testing.T) {
+	const chanID = 8002
+	var createGroupCalls int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("Action") {
+		case "CreateAsset":
+			// Always fail with GroupFull — both initial and retry attempts.
+			w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"GroupFull","Message":"group is full"}}}`))
+		case "CreateAssetGroup":
+			atomic.AddInt32(&createGroupCalls, 1)
+			w.Write([]byte(`{"Result":{"Id":"group-double-1"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.BytePlusAssetGroupId = "group-will-exhaust"
+	a := &TaskAdaptor{
+		otherSettings:    settings,
+		endpointOverride: srv.URL,
+		channelId:        chanID,
+	}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/double-exhaust-ch8002.jpg"}},
+	}}
+
+	err := a.preuploadAssets(ginCtx(), payload)
+	if err == nil {
+		t.Fatal("expected error for double exhaustion, got nil")
+	}
+	if n := atomic.LoadInt32(&createGroupCalls); n != 1 {
+		t.Errorf("expected exactly 1 CreateAssetGroup call (no runaway), got %d", n)
+	}
+}
+
+// TestPreuploadAssets_NonGroupErrors_NoGroupCreated verifies that errors
+// unrelated to group exhaustion (auth, moderation, bad URL) propagate and zero
+// groups are created.
+func TestPreuploadAssets_NonGroupErrors_NoGroupCreated(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     string
+		chanID   int
+		mediaURL string
+	}{
+		{"auth failure", "AuthFailure", 8101, "https://example.com/auth-fail-ch8101.jpg"},
+		{"moderation rejection", "ContentRiskFailed", 8102, "https://example.com/moderation-ch8102.jpg"},
+		{"invalid media URL", "InvalidParameter.URL", 8103, "https://example.com/bad-url-ch8103.jpg"},
+		{"unknown error code", "InternalError", 8104, "https://example.com/unknown-err-ch8104.jpg"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var createGroupCalls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Query().Get("Action") {
+				case "CreateAsset":
+					w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"` + tc.code + `","Message":"test error"}}}`))
+				case "CreateAssetGroup":
+					atomic.AddInt32(&createGroupCalls, 1)
+					w.Write([]byte(`{"Result":{"Id":"should-never-be-created"}}`))
+				}
+			}))
+			defer srv.Close()
+
+			settings := enabledSettings()
+			settings.BytePlusAssetGroupId = "group-non-exhausted"
+			a := &TaskAdaptor{
+				otherSettings:    settings,
+				endpointOverride: srv.URL,
+				channelId:        tc.chanID,
+			}
+			payload := &requestPayload{Content: []ContentItem{
+				{Type: "image_url", ImageURL: &MediaURL{URL: tc.mediaURL}},
+			}}
+
+			err := a.preuploadAssets(ginCtx(), payload)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if n := atomic.LoadInt32(&createGroupCalls); n != 0 {
+				t.Errorf("expected 0 CreateAssetGroup calls for non-group error %q, got %d", tc.code, n)
+			}
+		})
+	}
+}

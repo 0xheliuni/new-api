@@ -107,6 +107,56 @@ type bytePlusEnvelope struct {
 	rawResult json.RawMessage
 }
 
+// createAssetGroupRequest is the request body for CreateAssetGroup.
+type createAssetGroupRequest struct {
+	Name        string `json:"Name"`
+	ProjectName string `json:"ProjectName,omitempty"`
+}
+
+// CreateGroup creates a new BytePlus asset group and returns its id.
+func (cl *bytePlusAssetClient) CreateGroup(ctx context.Context, name string) (string, error) {
+	reqBody := createAssetGroupRequest{
+		Name:        name,
+		ProjectName: cl.projectName,
+	}
+	env, err := cl.doAction(ctx, "CreateAssetGroup", reqBody)
+	if err != nil {
+		return "", errors.Wrap(err, "byteplus CreateAssetGroup failed")
+	}
+	return env.Result.Id, nil
+}
+
+// groupExhaustedCodes are BytePlus error codes that indicate the asset group is
+// full, invalid, or otherwise unusable for new uploads. We are deliberately
+// conservative: unknown codes are NOT treated as exhaustion to avoid creating
+// junk groups on every unrelated error.
+//
+// Codes sourced from BytePlus Ark API documentation for CreateAsset errors:
+//   - GroupFull / QuotaExceeded: group has hit its asset capacity
+//   - InvalidGroupId / GroupNotFound: group id is stale or was deleted
+//   - AssetGroupCapacityExceeded: explicit capacity limit hit
+var groupExhaustedCodes = map[string]bool{
+	"GroupFull":                   true,
+	"QuotaExceeded":               true,
+	"InvalidGroupId":              true,
+	"GroupNotFound":               true,
+	"AssetGroupCapacityExceeded":  true,
+	"InvalidParameter.GroupId":    true,
+	"ResourceNotFound.GroupId":    true,
+	"LimitExceeded.GroupCapacity": true,
+}
+
+// IsGroupExhausted returns true only when err is an *assetAPIError whose Code
+// positively matches a known group-unusable error. Returns false for auth
+// failures, moderation rejections, network errors, and anything unrecognised.
+func (cl *bytePlusAssetClient) IsGroupExhausted(err error) bool {
+	var apiErr *assetAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return groupExhaustedCodes[apiErr.Code]
+}
+
 // CreateAndWait uploads a single asset and polls until Active, returning assetId.
 // groupID is the BytePlus asset-library group to upload into.
 func (cl *bytePlusAssetClient) CreateAndWait(ctx context.Context, groupID, mediaURL, assetType string) (string, error) {

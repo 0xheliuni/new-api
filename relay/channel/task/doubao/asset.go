@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/service"
 
@@ -24,6 +25,12 @@ import (
 // which group to use at construction time.
 type assetClient interface {
 	CreateAndWait(ctx context.Context, groupID, mediaURL, assetType string) (string, error)
+	// CreateGroup creates a new asset group with the given name and returns its id.
+	CreateGroup(ctx context.Context, name string) (string, error)
+	// IsGroupExhausted returns true only for errors that indicate the group is
+	// full, invalid, or otherwise unusable. Returns false for auth failures,
+	// moderation rejections, and anything not positively recognised.
+	IsGroupExhausted(err error) bool
 }
 
 // assetAPIError is returned by doAction when the upstream API responds with a
@@ -76,9 +83,6 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 	if !s.BytePlusAssetEnabled {
 		return nil
 	}
-	if s.BytePlusAssetGroupId == "" {
-		return errors.New("byteplus asset upload enabled but group_id is missing in channel settings")
-	}
 
 	cl, err := a.newAssetClient()
 	if err != nil {
@@ -87,7 +91,13 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 
 	_, project, _ := s.ResolveBytePlusAsset()
 
+	groupID := s.BytePlusAssetGroupId
+
 	ctx := c.Request.Context()
+	// newGroupCreated tracks whether we already created a new group during this
+	// request.  We cap at one new group per request to avoid runaway creation.
+	newGroupCreated := false
+
 	for i := range payload.Content {
 		item := &payload.Content[i]
 		media, assetType := pickMedia(item)
@@ -107,20 +117,84 @@ func (a *TaskAdaptor) preuploadAssets(c *gin.Context, payload *requestPayload) e
 			return errors.Errorf("byteplus asset upload requires a public http(s) URL, got unsupported input for %s (base64/data URIs are not supported)", item.Type)
 		}
 
-		cacheKey := assetCacheKey(a.channelId, s.BytePlusAssetGroupId, project, url)
+		cacheKey := assetCacheKey(a.channelId, project, url)
 		if assetID, ok := getCachedAssetID(cacheKey); ok {
 			media.URL = "asset://" + assetID
 			continue
 		}
 
-		assetID, err := cl.CreateAndWait(ctx, s.BytePlusAssetGroupId, url, assetType)
-		if err != nil {
-			return errors.Wrapf(err, "preupload %s to byteplus asset library failed", item.Type)
+		assetID, uploadErr := cl.CreateAndWait(ctx, groupID, url, assetType)
+		if uploadErr != nil {
+			// Attempt group rotation on first exhaustion within this request.
+			if cl.IsGroupExhausted(uploadErr) && !newGroupCreated {
+				newGroupName := fmt.Sprintf("newapi-ch%d", a.channelId)
+				newGroupID, createErr := cl.CreateGroup(ctx, newGroupName)
+				if createErr != nil {
+					return errors.Wrapf(createErr, "preupload %s: group exhausted and group creation failed", item.Type)
+				}
+				newGroupCreated = true
+				groupID = newGroupID
+
+				// Persist the new group id so subsequent requests reuse it.
+				// Two concurrent requests can both find the group exhausted and
+				// both create new groups — the last write wins in the DB and
+				// cache, which is safe: both new groups are valid, the next
+				// request will simply use whichever id was persisted last.
+				// Persistence failure is non-fatal: we carry on with the
+				// in-memory groupID for this request.
+				a.persistGroupID(newGroupID)
+
+				// Retry the upload into the fresh group.
+				assetID, uploadErr = cl.CreateAndWait(ctx, groupID, url, assetType)
+				if uploadErr != nil {
+					return errors.Wrapf(uploadErr, "preupload %s to byteplus asset library failed (after group rotation)", item.Type)
+				}
+			} else {
+				return errors.Wrapf(uploadErr, "preupload %s to byteplus asset library failed", item.Type)
+			}
 		}
+
 		setCachedAssetID(cacheKey, assetID)
 		media.URL = "asset://" + assetID
 	}
 	return nil
+}
+
+// persistGroupID saves newGroupID to the channel's OtherSettings in the DB and
+// updates the in-memory channel cache.  Errors are logged as warnings and do
+// not fail the caller.
+func (a *TaskAdaptor) persistGroupID(newGroupID string) {
+	// Always update the adaptor's in-memory copy so this request and any
+	// subsequent in-process use sees the new group id regardless of DB state.
+	a.otherSettings.BytePlusAssetGroupId = newGroupID
+
+	if model.DB == nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf(
+			"byteplus asset: DB not initialised, skipping group_id persistence for channel %d", a.channelId))
+		return
+	}
+
+	ch, err := model.GetChannelById(a.channelId, true)
+	if err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf(
+			"byteplus asset: cannot load channel %d for group_id persistence: %v", a.channelId, err))
+		return
+	}
+
+	settings := ch.GetOtherSettings()
+	settings.BytePlusAssetGroupId = newGroupID
+	ch.SetOtherSettings(settings)
+
+	if err := ch.Save(); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf(
+			"byteplus asset: failed to persist new group_id for channel %d: %v", a.channelId, err))
+		return
+	}
+
+	// Also update the in-memory cache so the next in-process request picks up
+	// the new group id without a DB round-trip.  CacheUpdateChannel replaces
+	// the whole *Channel pointer, so we pass the full struct we just saved.
+	model.CacheUpdateChannel(ch)
 }
 
 // pickMedia returns the media reference and its AssetType string for a content item.
@@ -144,8 +218,18 @@ func truncate(b []byte, n int) string {
 	return string(b[:n]) + "..."
 }
 
-func assetCacheKey(channelId int, groupId, project, url string) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s|%s", channelId, groupId, project, url)))
+// assetCacheKey builds a cache key for a URL→assetId mapping.
+//
+// groupId is intentionally excluded: BytePlus asset ids are globally unique
+// and remain valid after their group rotates.  If groupId were in the key, a
+// group rotation would cause every previously-cached URL to miss and get
+// re-uploaded into the fresh group, immediately consuming the new group's
+// quota with duplicates of assets that already exist — the worst possible
+// time to burn quota.  project is retained because the same URL uploaded to
+// different projects yields a different asset id (different namespace/access
+// scope).
+func assetCacheKey(channelId int, project, url string) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s", channelId, project, url)))
 	return hex.EncodeToString(h[:])
 }
 
