@@ -44,14 +44,22 @@ type assetAPIError struct {
 }
 
 func (e *assetAPIError) Error() string {
-	// An empty Message is reachable: the cloudwise status-code fallback leaves it
-	// empty for an empty error body. Rendering "HTTP500: " with a dangling colon
-	// reads like a truncated log line, so drop the separator in that case. The
-	// populated form stays "Code: Message" — tests and log greps rely on it.
-	if e.Message == "" {
+	// Either half can be empty, and each degenerate form used to render a dangling
+	// colon that reads like a truncated log line:
+	//   - empty Message: the cloudwise status-code fallback leaves it empty for an
+	//     empty error body, which rendered as "HTTP500: ".
+	//   - empty Code: a business error arriving at HTTP 200 has no status-code
+	//     fallback to borrow, so {"message":"asset group is full"} rendered as
+	//     ": asset group is full".
+	// The fully populated form stays "Code: Message" — tests and log greps rely on it.
+	switch {
+	case e.Message == "":
 		return e.Code
+	case e.Code == "":
+		return e.Message
+	default:
+		return fmt.Sprintf("%s: %s", e.Code, e.Message)
 	}
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
 // newAssetClient constructs an asset client from the adaptor's channel settings.

@@ -33,8 +33,8 @@ import (
 //     provider (see byteplus_asset.go), on the assumption that cloudwise proxies
 //     the same underlying Volcengine service.
 //   - top-level lowercase {code, message}: the shape this gateway demonstrably
-//     uses for its task endpoints. A top-level {"error":{code,message}} object is
-//     also accepted, but that nesting is a defensive guess — see
+//     uses for its task endpoints. A top-level "error" object is also accepted and
+//     is likewise documented, carrying a message with or without a code — see
 //     parseCloudwiseLowercaseError for the provenance of each form.
 //
 // When neither parses on a non-2xx, the HTTP status becomes the error code so
@@ -300,10 +300,16 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 	// group. Only a result-less response takes this path, so a poll still sitting at
 	// Status:"Processing" is untouched.
 	if envErr == nil && env.Result.Id == "" && env.Result.Status == "" {
+		// Deliberately NO raw-body fallback for the message here, unlike the non-2xx
+		// branch above. There the response IS an error, so any body text helps. Here
+		// the body may be a *success* payload, and assetAPIError.Message is what
+		// IsGroupExhausted substring-matches: feeding it
+		// {"code":0,"message":"","data":{"groupId":"g-1","capacity":1000}} matched
+		// "group" via "groupId" and "capacity" via "capacity", reporting exhaustion
+		// for a healthy response and minting a junk group plus a channel-row write.
+		// parseCloudwiseBusinessError only reports isErr with a real code or message,
+		// so an unrecognised body stays the plain empty-id error.
 		if code, message, isErr := parseCloudwiseBusinessError(respBody); isErr {
-			if message == "" {
-				message = truncate([]byte(maskedRaw), 512)
-			}
 			return nil, maskedRaw, &assetAPIError{Code: code, Message: message, Raw: maskedRaw}
 		}
 	}
@@ -314,20 +320,43 @@ func (cl *cloudwiseAssetClient) post(ctx context.Context, path string, payload a
 	return &env, maskedRaw, nil
 }
 
-// cloudwiseSuccessCode is the business code the gateway returns on success
-// (cloudwise-api-docs.md:310 and :7326). A body carrying it is not an error no
-// matter how empty its Result is.
-const cloudwiseSuccessCode = "10000"
+// cloudwiseSuccessCodes are the business codes the gateway documents for a
+// successful response. A body carrying one is not an error no matter how empty its
+// Result is.
+//
+// The document uses two spellings, both real:
+//   - "10000": the quoted form on the video/task endpoints
+//     (cloudwise-api-docs.md:310, :7326 — 14 occurrences).
+//   - 0: the numeric form on the image endpoints, always paired with
+//     "message":"success" (cloudwise-api-docs.md:10674-10675, :10709-10710 —
+//     8 occurrences).
+//
+// Codes arrive here already normalised by cloudwiseErrorCode, which renders a JSON
+// number as written and decodes a quoted string, so a bare 0 and a quoted "0" both
+// land on "0" and only that one key is needed for the pair.
+var cloudwiseSuccessCodes = map[string]bool{
+	"10000": true,
+	"0":     true,
+}
+
+// isCloudwiseSuccessCode reports whether a normalised business code means success.
+func isCloudwiseSuccessCode(code string) bool {
+	return cloudwiseSuccessCodes[code]
+}
 
 // parseCloudwiseLowercaseError extracts the lowercase {code,message} error shape.
 //
-// PROVENANCE, two forms, one documented:
+// PROVENANCE, two forms, both documented:
 //   - top-level lowercase code/message: DOCUMENTED for this gateway's task
 //     endpoints (cloudwise-api-docs.md:310, :7326-7332).
-//   - a top-level "error" object holding {code,message}: NOT DOCUMENTED — a
-//     defensive guess. The document's only nested error sits one level deeper,
-//     under "task" (cloudwise-api-docs.md:11836-11843), so this branch is
-//     speculative shape-tolerance rather than a known response.
+//   - a top-level "error" object: DOCUMENTED, in two shapes. It carries only a
+//     message at cloudwise-api-docs.md:3739-3741 ({"status":"failed", ...,
+//     "error":{"message":"The request failed because ..."}}) and both code and
+//     message at :12601-12609 ({"status":"failed","error":{"code":
+//     "generation_failed","message":"..."}}). A third, deeper nesting under "task"
+//     also exists (:11836-11843) and is not read here.
+//     The message-only shape at :3739 is why the nested object is resolved per
+//     field below rather than wholesale — do not collapse that.
 //
 // Neither form is documented for the asset operations specifically; see the
 // ERROR SHAPE block at the top of this file. code is read as a raw scalar because
@@ -366,23 +395,45 @@ func parseCloudwiseLowercaseError(body []byte) (code, message string) {
 // business error. isErr is false for anything that does not positively look like
 // one, so an empty-but-successful response is never turned into a bogus error.
 func parseCloudwiseBusinessError(body []byte) (code, message string, isErr bool) {
-	var successFlag struct {
-		Success *bool `json:"success"`
-	}
-	if err := common.Unmarshal(body, &successFlag); err == nil &&
-		successFlag.Success != nil && *successFlag.Success {
-		return "", "", false
-	}
 	code, message = parseCloudwiseLowercaseError(body)
-	if code == cloudwiseSuccessCode {
+
+	// A documented success code is decisive and outranks everything else, including a
+	// contradictory success:false, because it is the field the document actually
+	// specifies per endpoint.
+	if isCloudwiseSuccessCode(code) {
 		return "", "", false
 	}
+
+	// PRECEDENCE for "success": weaker than an explicit error code, stronger than a
+	// message alone. success is only defined as "Whether the request was successful"
+	// (cloudwise-api-docs.md:7320) — real evidence, but not endpoint-specific, and
+	// letting it short-circuit first meant
+	// {"success":true,"code":"1026","message":"asset group is full"} returned the
+	// plain empty-id error and rotation never ran. A non-success code names a
+	// specific failure, so it wins; a message with no code is too weak to overrule
+	// an explicit success:true, since "message" carries the human text on success
+	// responses too (":10675" shows "message":"success").
+	if code == "" && cloudwiseSuccessFlag(body) {
+		return "", "", false
+	}
+
 	// Require some signal. A PascalCase envelope with an empty Result carries
 	// neither field and must stay a non-error.
 	if code == "" && message == "" {
 		return "", "", false
 	}
 	return code, message, true
+}
+
+// cloudwiseSuccessFlag reports whether the body carries an explicit success:true.
+func cloudwiseSuccessFlag(body []byte) bool {
+	var flag struct {
+		Success *bool `json:"success"`
+	}
+	if err := common.Unmarshal(body, &flag); err != nil {
+		return false
+	}
+	return flag.Success != nil && *flag.Success
 }
 
 // cloudwiseErrorCode renders a lowercase "code" field as a plain string using the

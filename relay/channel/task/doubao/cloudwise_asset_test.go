@@ -610,4 +610,238 @@ func TestCloudwise_ErrorCode_NonScalarAndEmptyMessage(t *testing.T) {
 			t.Errorf("Error() = %q, want \"GroupFull: full\"", got)
 		}
 	})
+
+	// The mirror case: a business error at HTTP 200 has no status code to borrow, so
+	// Code is empty and the separator has to drop from the other side.
+	t.Run("empty code renders without leading colon", func(t *testing.T) {
+		if got := (&assetAPIError{Message: "asset group is full"}).Error(); got != "asset group is full" {
+			t.Errorf("Error() = %q, want the bare message with no leading colon", got)
+		}
+	})
+}
+
+// TestCloudwise_HTTP200_SuccessPayloadNotAnError guards the rotation classifier
+// against its own success responses. The 200 path must not substitute the raw body
+// for a missing message: assetAPIError.Message is what IsGroupExhausted
+// substring-matches, and a healthy body carries "groupId" (matching "group") next to
+// "capacity", so the fallback read a successful upload as an exhausted group and
+// minted a junk group plus a channel-row write.
+func TestCloudwise_HTTP200_SuccessPayloadNotAnError(t *testing.T) {
+	t.Run("error code without message does not borrow the body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// A real business error code, but no message. The body text around it is
+			// exactly what used to trip the group+capacity conjunction.
+			w.Write([]byte(`{"code":"1026","data":{"groupId":"g-1","capacity":1000}}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-200-rawmsg.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected an error for a business error code")
+		}
+		var apiErr *assetAPIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("expected *assetAPIError, got %T: %v", err, err)
+		}
+		if apiErr.Message != "" {
+			t.Errorf("Message = %q, want empty: the raw body must not be substituted on the 200 path", apiErr.Message)
+		}
+		if strings.Contains(apiErr.Message, "groupId") || strings.Contains(apiErr.Message, "capacity") {
+			t.Errorf("Message leaked body text into the rotation classifier: %q", apiErr.Message)
+		}
+		if cl.IsGroupExhausted(err) {
+			t.Error("a codeless-message business error must not mint a new asset group")
+		}
+	})
+
+	t.Run("plain success payload stays the empty-id error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// The verified failure body: a success with an empty message whose data
+			// happens to name a group and a capacity.
+			w.Write([]byte(`{"code":0,"message":"","data":{"groupId":"g-1","capacity":1000}}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-200-success.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected the empty-asset-id error")
+		}
+		var apiErr *assetAPIError
+		if errors.As(err, &apiErr) {
+			t.Errorf("a success payload must not become an api error, got code %q message %q", apiErr.Code, apiErr.Message)
+		}
+		if !strings.Contains(err.Error(), "empty asset id") {
+			t.Errorf("expected the plain empty-id error, got %v", err)
+		}
+		if cl.IsGroupExhausted(err) {
+			t.Error("a success payload must never trigger group rotation")
+		}
+	})
+}
+
+// TestCloudwise_DocumentedSuccessCodes covers both spellings the document uses for a
+// successful response: the quoted "10000" on the task endpoints and the numeric 0 on
+// the image endpoints (cloudwise-api-docs.md:10674-10675). Only "10000" was in the
+// guard, so a body reading {"code":0,"message":"success"} surfaced to the operator as
+// `cloudwise CreateAsset failed: 0: success`.
+func TestCloudwise_DocumentedSuccessCodes(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		mediaURL string
+	}{
+		{
+			name:     "numeric zero with success message",
+			body:     `{"code":0,"message":"success","request_id":"r","data":{"task_id":"t"}}`,
+			mediaURL: "https://example.com/cw-code0.jpg",
+		},
+		{
+			// The same code as a quoted string must be treated identically; only the
+			// JSON spelling differs.
+			name:     "quoted zero",
+			body:     `{"code":"0","message":"success","request_id":"r"}`,
+			mediaURL: "https://example.com/cw-code0str.jpg",
+		},
+		{
+			name:     "quoted ten-thousand",
+			body:     `{"code":"10000","message":"Task created successfully","data":{}}`,
+			mediaURL: "https://example.com/cw-code10000.jpg",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			cl := newCloudwiseTestClient(srv.URL)
+			_, err := cl.CreateAndWait(context.Background(), "group-1", tc.mediaURL, "Image")
+			// No asset id in the body, so this is still a failure — but it must stay the
+			// plain empty-id error, never a success reported as an api error.
+			if err == nil {
+				t.Fatal("expected the empty-asset-id error")
+			}
+			var apiErr *assetAPIError
+			if errors.As(err, &apiErr) {
+				t.Errorf("documented success code must not become an api error, got %q", apiErr.Error())
+			}
+			if !strings.Contains(err.Error(), "empty asset id") {
+				t.Errorf("expected the plain empty-id error, got %v", err)
+			}
+			if cl.IsGroupExhausted(err) {
+				t.Error("a documented success code must never trigger group rotation")
+			}
+		})
+	}
+}
+
+// TestCloudwise_SuccessFlagPrecedence pins the chosen precedence for the "success"
+// field, which is only defined as "Whether the request was successful"
+// (cloudwise-api-docs.md:7320):
+//
+//	documented success code  >  explicit error code  >  success:true  >  message alone
+//
+// An explicit non-success code names a specific failure, so it outranks a
+// contradictory success:true, which previously short-circuited before any code was
+// read and silently disabled rotation on a group-full response.
+func TestCloudwise_SuccessFlagPrecedence(t *testing.T) {
+	t.Run("explicit error code beats success true", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"success":true,"code":"1026","message":"asset group is full"}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-succ-contra.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected an error for an explicit group-full code")
+		}
+		var apiErr *assetAPIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("a contradictory success:true must not suppress the error code, got %T: %v", err, err)
+		}
+		if apiErr.Code != "1026" {
+			t.Errorf("Code = %q, want 1026", apiErr.Code)
+		}
+		if !cl.IsGroupExhausted(err) {
+			t.Error("group-full at 200 must still rotate even with success:true present")
+		}
+	})
+
+	t.Run("success true still wins over a message alone", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// "message" carries the human text on success responses too, so with no
+			// code to contradict it success:true remains decisive.
+			w.Write([]byte(`{"success":true,"message":"Task created successfully","data":{}}`))
+		}))
+		defer srv.Close()
+
+		cl := newCloudwiseTestClient(srv.URL)
+		_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-succ-msgonly.jpg", "Image")
+		if err == nil {
+			t.Fatal("expected the empty-asset-id error")
+		}
+		var apiErr *assetAPIError
+		if errors.As(err, &apiErr) {
+			t.Errorf("success:true with only a message must stay a non-error, got %q", apiErr.Error())
+		}
+		if !strings.Contains(err.Error(), "empty asset id") {
+			t.Errorf("expected the plain empty-id error, got %v", err)
+		}
+	})
+
+	t.Run("documented success code beats success false", func(t *testing.T) {
+		// The endpoint-specific code is the stronger signal, so it outranks a
+		// contradictory success:false rather than inventing an error from code "0".
+		if code, message, isErr := parseCloudwiseBusinessError(
+			[]byte(`{"code":0,"message":"success","success":false}`)); isErr {
+			t.Errorf("documented success code must win, got code %q message %q", code, message)
+		}
+	})
+}
+
+// TestCloudwise_HTTP200_CodelessErrorRendersCleanly is the end-to-end half of the
+// empty-Code rendering fix. The 200 path has no HTTP status to fall back on, so a
+// message-only business error leaves Code empty, and the operator saw
+// `cloudwise CreateAsset failed: : asset group is full`. The message-only shape is
+// documented (cloudwise-api-docs.md:3739-3741).
+func TestCloudwise_HTTP200_CodelessErrorRendersCleanly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"message":"asset group is full"}`))
+	}))
+	defer srv.Close()
+
+	cl := newCloudwiseTestClient(srv.URL)
+	_, err := cl.CreateAndWait(context.Background(), "group-1", "https://example.com/cw-200-nocode.jpg", "Image")
+	if err == nil {
+		t.Fatal("expected an error for a message-only business error")
+	}
+	var apiErr *assetAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *assetAPIError so it stays classifiable, got %T: %v", err, err)
+	}
+	if apiErr.Code != "" {
+		t.Errorf("Code = %q, want empty on the 200 path (no status to borrow)", apiErr.Code)
+	}
+	if got := apiErr.Error(); got != "asset group is full" {
+		t.Errorf("Error() = %q, want the bare message with no leading colon", got)
+	}
+	if strings.Contains(err.Error(), ": : ") {
+		t.Errorf("operator text carries a dangling colon: %v", err)
+	}
+	// The message still classifies, so rotation works despite the missing code.
+	if !cl.IsGroupExhausted(err) {
+		t.Error("group-full text must still be classified as group-exhausted")
+	}
 }
