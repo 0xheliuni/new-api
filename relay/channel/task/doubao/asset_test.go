@@ -325,7 +325,64 @@ func alwaysCreated(id string) func(int) string {
 	return func(int) string { return `{"Result":{"Id":"` + id + `"}}` }
 }
 
-// TestPreuploadAssets_BlankGroupId_Bootstraps is the regression guard for the
+func TestPreuploadAssets_CloudwiseGroupNotFound_RotatesAndRetries(t *testing.T) {
+	const chanID = 8003
+	var createGroupCalls int32
+	var createAssetAttempts int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/assets/create":
+			n := atomic.AddInt32(&createAssetAttempts, 1)
+			if n == 1 {
+				// 生产观察到的真实形状:HTTP 400, error 是裸字符串。
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"asset group not found"}`))
+				return
+			}
+			w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r1"},"Result":{"Id":"cw-asset-rotated"}}`))
+		case "/api/v1/assets/get":
+			w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r2"},"Result":{"Id":"cw-asset-rotated","Status":"Active"}}`))
+		case "/api/v1/assets/groups/create":
+			atomic.AddInt32(&createGroupCalls, 1)
+			w.Write([]byte(`{"ResponseMetadata":{"RequestId":"r3"},"Result":{"Id":"cw-group-rotated"}}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	settings := enabledSettings()
+	settings.AssetProvider = dto.AssetProviderCloudwise
+	settings.BytePlusAssetGroupId = "cw-group-stale"
+	a := &TaskAdaptor{
+		otherSettings:    settings,
+		endpointOverride: srv.URL,
+		apiKey:           "sk-test",
+		channelId:        chanID,
+	}
+	payload := &requestPayload{Content: []ContentItem{
+		{Type: "image_url", ImageURL: &MediaURL{URL: "https://example.com/cw-rotate-ch8003.jpg"}},
+	}}
+
+	if err := a.preuploadAssets(ginCtx(), payload); err != nil {
+		t.Fatalf("preuploadAssets: %v", err)
+	}
+	if got := payload.Content[0].ImageURL.URL; got != "asset://cw-asset-rotated" {
+		t.Errorf("expected asset://cw-asset-rotated, got %q", got)
+	}
+	if n := atomic.LoadInt32(&createGroupCalls); n != 1 {
+		t.Errorf("expected exactly 1 CreateAssetGroup call, got %d", n)
+	}
+	if n := atomic.LoadInt32(&createAssetAttempts); n != 2 {
+		t.Errorf("expected 2 CreateAsset attempts (initial + retry), got %d", n)
+	}
+	if got := a.otherSettings.BytePlusAssetGroupId; got != "cw-group-rotated" {
+		t.Errorf("expected group id updated to cw-group-rotated, got %q", got)
+	}
+}
+
 // bootstrap path. A channel with no group id is the normal first-run state, and it
 // used to get a group only by accident: the request carried groupId:"" and the code
 // waited for the upstream to reject it with a code that happened to be listed in the

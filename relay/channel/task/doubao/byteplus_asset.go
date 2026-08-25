@@ -155,6 +155,7 @@ var groupExhaustedCodes = map[string]bool{
 	"InvalidParameter.GroupId":    true,
 	"ResourceNotFound.GroupId":    true,
 	"LimitExceeded.GroupCapacity": true,
+	"NotFound.group_id":           true,
 }
 
 // IsGroupExhausted returns true only when err is an *assetAPIError whose Code
