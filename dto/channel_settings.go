@@ -81,6 +81,15 @@ type ChannelOtherSettings struct {
 	// 开启后提交视频生成前把参考媒体（公网 URL）预上传到素材库，换 asset://<id> 再提交。
 	// 鉴权复用渠道 Bearer key；素材组按渠道自动创建/复用。
 	Seedance3rdAssetEnabled bool `json:"seedance3rd_asset_enabled,omitempty"`
+
+	// ExposeUpstreamTaskId 控制是否把上游真实任务 ID（火山方舟 cgt-*）透传给客户端。
+	// 关闭时（默认）客户端只看到 new-api 的公开 task id，与历史行为一致。
+	// 开启后在 /v1/videos 响应中额外输出 upstream_task_id 字段，id/task_id 保持不变，
+	// 客户端仍用公开 id 回查与取流。
+	//
+	// 注意：上游 ID 会泄露渠道供应商信息，且在日志接口中默认仅超级管理员可见
+	// （见 controller.GetAllLogs），因此这里按渠道显式开启，不设全局默认。
+	ExposeUpstreamTaskId bool `json:"expose_upstream_task_id,omitempty"`
 }
 
 const (
