@@ -89,12 +89,12 @@ const (
 	// AssetProviderCloudwise 第三方素材库（复用渠道 base_url 与 API Key）。
 	AssetProviderCloudwise = "cloudwise"
 
-	defaultBytePlusRegion      = "ap-southeast-1"
+	defaultBytePlusRegion      = "cn-beijing"
 	defaultBytePlusProjectName = "default"
 )
 
 // ResolveBytePlusAsset 返回带默认值的 BytePlus 素材库有效配置，
-// 避免默认值散落在调用方。region 默认 ap-southeast-1，project 默认 default，
+// 避免默认值散落在调用方。region 默认 cn-beijing（国内火山方舟），project 默认 default，
 // skipModeration 默认 true（即传 Moderation.Strategy=Skip）。
 func (s *ChannelOtherSettings) ResolveBytePlusAsset() (region, project string, skipModeration bool) {
 	region = defaultBytePlusRegion

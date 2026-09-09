@@ -533,3 +533,39 @@ func TestPreuploadAssets_AbsentGroupProviderMarker_KeepsGroupId(t *testing.T) {
 		t.Errorf("upload group ids = %v, want [group-legacy-4]", got)
 	}
 }
+
+// TestAssetCacheKey_RegionScoped pins that the URL→assetId cache is scoped by
+// region. Regression: a channel repointed from ap-southeast-1 to cn-beijing kept
+// replaying the stale overseas asset id for the rest of the 6h TTL, because the
+// cache hit short-circuits the upload. Every generation then failed upstream with
+// "The specified asset asset-... is not found".
+func TestAssetCacheKey_RegionScoped(t *testing.T) {
+	const (
+		ch       = 4242
+		provider = dto.AssetProviderBytePlus
+		project  = "default"
+		url      = "https://example.com/ref.jpg"
+	)
+
+	overseas := assetCacheKey(ch, provider, "ap-southeast-1", project, url)
+	domestic := assetCacheKey(ch, provider, "cn-beijing", project, url)
+	if overseas == domestic {
+		t.Errorf("cache key must differ across regions, both = %s", overseas)
+	}
+
+	// Same inputs must still be stable, or every request would miss.
+	if again := assetCacheKey(ch, provider, "cn-beijing", project, url); again != domestic {
+		t.Errorf("cache key not deterministic: %s != %s", again, domestic)
+	}
+
+	// The other scoping dimensions must keep working.
+	if k := assetCacheKey(ch, dto.AssetProviderCloudwise, "cn-beijing", project, url); k == domestic {
+		t.Error("cache key must differ across providers")
+	}
+	if k := assetCacheKey(ch, provider, "cn-beijing", "other-project", url); k == domestic {
+		t.Error("cache key must differ across projects")
+	}
+	if k := assetCacheKey(ch+1, provider, "cn-beijing", project, url); k == domestic {
+		t.Error("cache key must differ across channels")
+	}
+}
