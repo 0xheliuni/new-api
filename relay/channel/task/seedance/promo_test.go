@@ -151,6 +151,52 @@ func TestPromoMatchesTierHitNotRequestedTier(t *testing.T) {
 	}
 }
 
+// TestInFlightTaskUsesSubmitTimeSnapshot 提交后修改折扣配置,结算仍按提交时快照计费。
+// 这条守的是对账:用户按下单时看到的价格付费,中途调价不影响在途任务。
+func TestInFlightTaskUsesSubmitTimeSnapshot(t *testing.T) {
+	const model = "doubao-seedance-2-5-260628"
+
+	// 提交时:1080p 打 0.72
+	setPromo(t, map[string]billing_setting.VideoPromo{
+		model: {Factors: map[string]float64{"1080p": 0.72}, StartAt: 100, EndAt: 200},
+	}, 150)
+	c, info := newCtx(model, resMeta("1080p"))
+	submitted := EstimateBilling(c, info)
+	if !approx(submitted["video_promo"], 0.72) {
+		t.Fatalf("submit-time promo=%v want 0.72", submitted["video_promo"])
+	}
+
+	// 快照是值拷贝,后续改配置不得回改它
+	snapshot := make(map[string]float64, len(submitted))
+	for k, v := range submitted {
+		snapshot[k] = v
+	}
+	displayed := info.PriceData.VideoBilling.PromoFactor
+
+	// 运营中途改成 0.5,并让窗口结束
+	setPromo(t, map[string]billing_setting.VideoPromo{
+		model: {Factors: map[string]float64{"1080p": 0.5}, StartAt: 100, EndAt: 200},
+	}, 999)
+
+	if !approx(snapshot["video_promo"], 0.72) {
+		t.Fatalf("snapshot mutated to %v after config change", snapshot["video_promo"])
+	}
+	if !approx(submitted["video_promo"], 0.72) {
+		t.Fatalf("returned map mutated to %v after config change", submitted["video_promo"])
+	}
+	if !approx(displayed, 0.72) {
+		t.Fatalf("display snapshot mutated to %v", displayed)
+	}
+	if !approx(info.PriceData.VideoBilling.PromoFactor, 0.72) {
+		t.Fatalf("live PriceData mutated to %v", info.PriceData.VideoBilling.PromoFactor)
+	}
+
+	// 结算只连乘快照:即便此刻窗口已结束、折扣已改,快照连乘结果必须不变。
+	// 若此断言失败,说明结算路径重新读了配置 —— 那是必须修的对账 bug。
+	if got := snapshot["video_promo"] * snapshot["video_res"]; !approx(got, 0.72*snapshot["video_res"]) {
+		t.Fatalf("snapshot product drifted to %v", got)
+	}
+}
 // TestFourModelsDoNotCrossTalk 四个模型各配不同档位与系数,互不串扰。
 func TestFourModelsDoNotCrossTalk(t *testing.T) {
 	setPromo(t, map[string]billing_setting.VideoPromo{
