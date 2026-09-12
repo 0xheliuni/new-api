@@ -1,4 +1,5 @@
 {
+  "Video URL": "视频 URL",
   "Prompt Tokens": "输入tokens",
   "Completion Tokens": "输出tokens",
   "cache read ÷ total input tokens": "缓存读取 ÷ 总输入 tokens",
