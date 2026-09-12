@@ -166,6 +166,7 @@ export type ModelSettings = {
   ExposeRatioEnabled: boolean
   'billing_setting.billing_mode': string
   'billing_setting.billing_expr': string
+  'billing_setting.video_promo': string
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string
@@ -210,6 +211,7 @@ export type BillingSettings = {
   ExposeRatioEnabled: boolean
   'billing_setting.billing_mode': string
   'billing_setting.billing_expr': string
+  'billing_setting.video_promo': string
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string
@@ -378,6 +380,19 @@ export type UpstreamChannelsResponse = {
   success: boolean
   message: string
   data: UpstreamChannel[]
+}
+
+/** 每个视频模型在原价矩阵中真实存在的档位,用于约束折扣编辑器的可选行。 */
+export type VideoPromoTiersResponse = {
+  success: boolean
+  message: string
+  data: Record<string, string[]>
+}
+
+export type VideoPromoConfig = {
+  factors: Record<string, number>
+  start_at: number
+  end_at: number
 }
 
 export type UpstreamConfig = {
