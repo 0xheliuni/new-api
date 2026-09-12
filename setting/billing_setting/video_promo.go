@@ -96,3 +96,20 @@ func ValidateVideoPromo(jsonStr string) error {
 	}
 	return nil
 }
+
+// SetVideoPromoForTest 供**跨包测试**注入折扣配置与固定时钟,返回还原函数;
+// 调用方 `defer SetVideoPromoForTest(cfg, now)()` 即可。now 传 0 表示不改时钟。
+//
+// 刻意返回闭包而非收 testing.TB 参数:后者会把 testing 包链进生产二进制。
+// 本包内的测试请用私有 withPromo,不必经过这里。
+func SetVideoPromoForTest(cfg map[string]VideoPromo, now int64) (restore func()) {
+	oldCfg, oldNow := billingSetting.VideoPromo, nowFn
+	billingSetting.VideoPromo = cfg
+	if now != 0 {
+		nowFn = func() int64 { return now }
+	}
+	return func() {
+		billingSetting.VideoPromo = oldCfg
+		nowFn = oldNow
+	}
+}
