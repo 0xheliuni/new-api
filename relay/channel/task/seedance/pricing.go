@@ -82,26 +82,58 @@ func ClassifyResTier(s string) string {
 	}
 }
 
-// CellUnit 返回某格(model,tier,hasVideo)的单价与该模型基准单价(base 档不含视频)。
-// 不支持的档位回退到 base 档(例如 fast/mini 传 1080p/4k)。
-func CellUnit(model, tier string, hasVideo bool) (unit, base float64, ok bool) {
-	tiers, ok := unitPrice[model]
-	if !ok {
-		return 0, 0, false
+// CellUnit 返回某格(model,tier,hasVideo)的原单价、该模型基准单价(base 档不含视频),
+// 以及 tierHit —— 实际用于计价的档位。模型不支持请求档位时回退 base,tierHit 如实为 "base",
+// 使日志能记录真实计价档位而非请求档位。
+func CellUnit(model, tier string, hasVideo bool) (unit, base float64, tierHit string, ok bool) {
+	tiers, exists := unitPrice[model]
+	if !exists {
+		return 0, 0, "", false
 	}
 	cell, has := tiers[tier]
-	if !has {
+	if has {
+		tierHit = tier
+	} else {
 		cell = tiers["base"]
+		tierHit = "base"
 	}
-	return cell[hasVideo], tiers["base"][false], true
+	return cell[hasVideo], tiers["base"][false], tierHit, true
 }
 
-// PricingRatio 返回相对基准的单一合并倍率 video_pricing = 单元格单价 ÷ 基准单价,
-// 以及基准单价(供展示回退)。
-func PricingRatio(model, tier string, hasVideo bool) (ratio, base float64, ok bool) {
-	unit, base, ok := CellUnit(model, tier, hasVideo)
+// PricingRatio 返回相对基准的单一合并倍率 video_pricing = 单元格原单价 ÷ 基准原单价,
+// 基准单价(供展示回退),以及实际计价档位。该倍率**不含任何折扣**。
+func PricingRatio(model, tier string, hasVideo bool) (ratio, base float64, tierHit string, ok bool) {
+	unit, base, tierHit, ok := CellUnit(model, tier, hasVideo)
 	if !ok || base <= 0 {
-		return 0, 0, false
+		return 0, 0, "", false
 	}
-	return unit / base, base, true
+	return unit / base, base, tierHit, true
+}
+
+// tierOrder 是档位的稳定展示顺序,后台配置界面按此渲染。
+var tierOrder = []string{"base", "1080p", "4k"}
+
+// TiersForModel 返回该模型原价矩阵中真实存在的档位(稳定顺序),供后台按模型渲染折扣行。
+// 这从源头消掉「给只有 base 档的 fast 配 1080p 折扣」这类无效配置。
+func TiersForModel(model string) []string {
+	tiers, ok := unitPrice[model]
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(tiers))
+	for _, t := range tierOrder {
+		if _, has := tiers[t]; has {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// AllModelTiers 返回所有 Seedance 模型的可用档位,供后台一次性拉取。
+func AllModelTiers() map[string][]string {
+	out := make(map[string][]string, len(unitPrice))
+	for m := range unitPrice {
+		out[m] = TiersForModel(m)
+	}
+	return out
 }

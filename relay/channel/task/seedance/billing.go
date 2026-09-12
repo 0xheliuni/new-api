@@ -34,12 +34,12 @@ func ResolveVideoBilling(c *gin.Context, model string) (float64, types.VideoBill
 	}
 	hasVideo := HasVideoInput(c, &req)
 	tier := ClassifyResTier(DetectResolution(c, &req))
-	ratio, base, ok := PricingRatio(model, tier, hasVideo)
+	ratio, base, tierHit, ok := PricingRatio(model, tier, hasVideo)
 	if !ok {
 		return 0, types.VideoBillingDisplay{}, false
 	}
 	return ratio, types.VideoBillingDisplay{
-		ResolutionTier:  tier,
+		ResolutionTier:  tierHit,
 		HasVideoInput:   hasVideo,
 		BaseUnitUSDPerM: base,
 		PricingRatio:    ratio,
