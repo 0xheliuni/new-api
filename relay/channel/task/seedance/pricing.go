@@ -32,9 +32,11 @@ var unitPrice = map[string]map[string]map[bool]float64{
 	"dreamina-seedance-2-0-mini-260615": {
 		"base": {false: 3.5, true: 2.1},
 	},
-	// 2.5 仅支持输出 480p/720p(无 1080p/4k 档),只按含/不含视频区分定价。
+	// 2.5 支持 480p/720p(base)与 1080p 两档,按含/不含视频分别定价。
+	// 1080p 存的是原价;限时折扣走后台配置 billing_setting.video_promo,永不写入本矩阵。
 	"dreamina-seedance-2-5-260628": {
-		"base": {false: 10.7, true: 6.4},
+		"base":  {false: 10.7, true: 6.4},
+		"1080p": {false: 11.7, true: 7.0},
 	},
 	// 国内火山方舟 doubao 命名(元/百万 token)。官方价:2.0 有 1080p 档,fast 无 1080p/4k,
 	// 数值来源:接口文档/seedance_docs/01_计费说明.md。
@@ -50,10 +52,13 @@ var unitPrice = map[string]map[string]map[bool]float64{
 	"doubao-seedance-2-0-mini-260615": {
 		"base": {false: 23.0, true: 14.0},
 	},
-	// 2.5 仅支持输出 480p/720p(无 1080p/4k 档),只按含/不含视频区分定价:
-	// 输入不含视频 70.00 元/M,输入包含视频 42.00 元/M。
+	// 2.5 支持 480p/720p(base)与 1080p 两档:
+	// base 输入不含视频 70.00 元/M、包含视频 42.00 元/M;
+	// 1080p 原价 输入不含视频 77.00 元/M、包含视频 46.00 元/M。
+	// 1080p 存的是原价;限时折扣走后台配置 billing_setting.video_promo,永不写入本矩阵。
 	"doubao-seedance-2-5-260628": {
-		"base": {false: 70.0, true: 42.0},
+		"base":  {false: 70.0, true: 42.0},
+		"1080p": {false: 77.0, true: 46.0},
 	},
 }
 
