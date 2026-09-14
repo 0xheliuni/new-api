@@ -70,6 +70,7 @@ import {
   Key,
   BarChart3,
   Image as ImageIcon,
+  Images,
   CheckSquare,
   CreditCard,
   Layers,
@@ -136,6 +137,8 @@ export function getLucideIcon(key, selected = false) {
       return <ImageIcon {...commonProps} color={iconColor} />;
     case 'task':
       return <CheckSquare {...commonProps} color={iconColor} />;
+    case 'volcAssets':
+      return <Images {...commonProps} color={iconColor} />;
     case 'topup':
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'channel':

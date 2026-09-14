@@ -324,6 +324,9 @@ export type OperationsSettings = {
    */
   'auto_create_user_setting.copy_templates': string
   'perf_metrics_setting.retention_days': number
+  'volc_asset_setting.enabled': boolean
+  'volc_asset_setting.default_asset_limit': number
+  'volc_asset_setting.count_asset_groups': boolean
 }
 
 export type SecuritySettings = {

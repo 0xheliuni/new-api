@@ -30,13 +30,13 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
+	taskAigc "github.com/QuantumNous/new-api/relay/channel/task/aigc"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
-	taskAigc "github.com/QuantumNous/new-api/relay/channel/task/aigc"
 	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
@@ -45,6 +45,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
+	"github.com/QuantumNous/new-api/relay/channel/volcpassthrough"
 	"github.com/QuantumNous/new-api/relay/channel/xai"
 	"github.com/QuantumNous/new-api/relay/channel/xunfei"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu"
@@ -165,6 +166,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskAigc.TaskAdaptor{}
 		case constant.ChannelTypeSeedance3rd:
 			return &taskSeedance3rd.TaskAdaptor{}
+		case constant.ChannelTypeVolcPassthrough:
+			return &volcpassthrough.TaskAdaptor{}
 		}
 	}
 	return nil
