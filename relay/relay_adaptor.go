@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/cloudflare"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
+	"github.com/QuantumNous/new-api/relay/channel/minimaximage"
 	"github.com/QuantumNous/new-api/relay/channel/cohere"
 	"github.com/QuantumNous/new-api/relay/channel/coze"
 	"github.com/QuantumNous/new-api/relay/channel/deepseek"
@@ -38,6 +39,7 @@ import (
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
+	taskminimaximage "github.com/QuantumNous/new-api/relay/channel/task/minimaximage"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
@@ -123,6 +125,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &replicate.Adaptor{}
 	case constant.APITypeCodex:
 		return &codex.Adaptor{}
+	case constant.APITypeMinimaxImage:
+		return &minimaximage.Adaptor{}
 	}
 	return nil
 }
@@ -168,6 +172,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskSeedance3rd.TaskAdaptor{}
 		case constant.ChannelTypeVolcPassthrough:
 			return &volcpassthrough.TaskAdaptor{}
+		case constant.ChannelTypeMinimaxImage:
+			return &taskminimaximage.TaskAdaptor{}
 		}
 	}
 	return nil

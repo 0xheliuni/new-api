@@ -79,6 +79,7 @@ export const CHANNEL_TYPES = {
   58: 'OpenAI Video',
   59: 'seedance(第三方)',
   60: '字节火山透传',
+  61: 'MiniMax Image',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
