@@ -1766,14 +1766,19 @@ export function renderModelPrice(opts) {
 
     let inputDesc = '';
     if (image && imageOutputTokens > 0) {
-      inputDesc = buildBillingPriceText(
-          '(输入 {{nonImageInput}} tokens + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{price}}',
+      // Image tokens are billed at their own price (input price * imageRatio),
+      // matching service/text_quota.go:260-263, which removes them from the
+      // base input tokens and re-adds them multiplied by imageRatio. Showing
+      // them under the plain input price made the formula evaluate to less
+      // than the amount actually charged.
+      inputDesc = buildBillingText(
+          '(输入 {{nonImageInput}} tokens / 1M tokens * {{symbol}}{{price}} + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{imagePrice}}',
           {
             nonImageInput: inputTokens - imageOutputTokens,
             imageInput: imageOutputTokens,
             symbol,
-            usdAmount: inputRatioPrice,
-            rate,
+            price: formatBillingDisplayPrice(inputRatioPrice, rate),
+            imagePrice: formatBillingDisplayPrice(imageRatioPrice, rate),
           },
       );
     } else if (cacheTokens > 0) {

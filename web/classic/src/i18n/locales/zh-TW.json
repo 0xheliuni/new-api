@@ -19,7 +19,7 @@
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{price}}": "(輸入 {{input}} tokens / 1M tokens * {{symbol}}{{price}}",
     "(输入 {{nonAudioInput}} tokens / 1M tokens * {{symbol}}{{price}} + 音频输入 {{audioInput}} tokens / 1M tokens * {{symbol}}{{audioPrice}}": "(輸入 {{nonAudioInput}} tokens / 1M tokens * {{symbol}}{{price}} + 音訊輸入 {{audioInput}} tokens / 1M tokens * {{symbol}}{{audioPrice}}",
     "(输入 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 缓存 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}": "(輸入 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 快取 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}",
-    "(输入 {{nonImageInput}} tokens + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{price}}": "(輸入 {{nonImageInput}} tokens + 圖片輸入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{price}}",
+    "(输入 {{nonImageInput}} tokens / 1M tokens * {{symbol}}{{price}} + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{imagePrice}}": "(輸入 {{nonImageInput}} tokens / 1M tokens * {{symbol}}{{price}} + 圖片輸入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{imagePrice}}",
     "[最多请求次数]和[最多请求完成次数]的最大值为2147483647。": "[最多請求次數]和[最多請求完成次數]的最大值為2147483647。",
     "[最多请求次数]必须大于等于0，[最多请求完成次数]必须大于等于1。": "[最多請求次數]必須大於等於0，[最多請求完成次數]必須大於等於1。",
     "{\n  \"default\": [200, 100],\n  \"vip\": [0, 1000]\n}": "{\n  \"default\": [200, 100],\n  \"vip\": [0, 1000]\n}",

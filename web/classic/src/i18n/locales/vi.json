@@ -21,7 +21,7 @@
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{price}}": "(Đầu vào {{input}} tokens / 1M tokens * {{symbol}}{{price}}",
     "(输入 {{nonAudioInput}} tokens / 1M tokens * {{symbol}}{{price}} + 音频输入 {{audioInput}} tokens / 1M tokens * {{symbol}}{{audioPrice}}": "(Đầu vào {{nonAudioInput}} tokens / 1M tokens * {{symbol}}{{price}} + Đầu vào âm thanh {{audioInput}} tokens / 1M tokens * {{symbol}}{{audioPrice}}",
     "(输入 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 缓存 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}": "(Đầu vào {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + Bộ nhớ đệm {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}",
-    "(输入 {{nonImageInput}} tokens + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{price}}": "(Đầu vào {{nonImageInput}} tokens + Đầu vào hình ảnh {{imageInput}} tokens / 1M tokens * {{symbol}}{{price}}",
+    "(输入 {{nonImageInput}} tokens / 1M tokens * {{symbol}}{{price}} + 图片输入 {{imageInput}} tokens / 1M tokens * {{symbol}}{{imagePrice}}": "(Đầu vào {{nonImageInput}} tokens / 1M tokens * {{symbol}}{{price}} + Đầu vào hình ảnh {{imageInput}} tokens / 1M tokens * {{symbol}}{{imagePrice}}",
     "[最多请求次数]和[最多请求完成次数]的最大值为2147483647。": "Giá trị tối đa của [Số lần yêu cầu tối đa] và [Số lần hoàn thành yêu cầu tối đa] là 2147483647.",
     "[最多请求次数]必须大于等于0，[最多请求完成次数]必须大于等于1。": "[Số lần yêu cầu tối đa] phải lớn hơn hoặc bằng 0, [Số lần hoàn thành yêu cầu tối đa] phải lớn hơn hoặc bằng 1.",
     "{\n  \"default\": [200, 100],\n  \"vip\": [0, 1000]\n}": "{\n  \"default\": [200, 100],\n  \"vip\": [0, 1000]\n}",
