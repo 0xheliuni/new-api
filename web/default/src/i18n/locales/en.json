@@ -500,7 +500,6 @@
     "Upstream Task ID Passthrough": "Upstream Task ID Passthrough",
     "Expose upstream task id to clients": "Expose upstream task id to clients",
     "Adds an upstream_task_id field (e.g. cgt-...) to video responses. The id / task_id fields stay unchanged, so clients keep polling with the public id. Note: this reveals the upstream provider.": "Adds an upstream_task_id field (e.g. cgt-...) to video responses. The id / task_id fields stay unchanged, so clients keep polling with the public id. Note: this reveals the upstream provider.",
-    "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.": "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.",
     "Skip content pre-filter": "Skip content pre-filter",
     "e.g., group-20260318033332-xxxxx": "e.g., group-20260318033332-xxxxx",
     "Azure": "Azure",
@@ -4939,6 +4938,7 @@
     "Use site default": "Use site default",
     "Custom limit": "Custom limit",
     "Site default: {{limit}} assets": "Site default: {{limit}} assets",
-    "Site default: {{limit}} assets (not enforced — shown as a reference only)": "Site default: {{limit}} assets (not enforced — shown as a reference only)"
+    "Site default: {{limit}} assets (not enforced — shown as a reference only)": "Site default: {{limit}} assets (not enforced — shown as a reference only)",
+    "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted. Ignored for cn-* regions, which reject this parameter.": "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted. Ignored for cn-* regions, which reject this parameter."
   }
 }

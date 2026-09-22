@@ -500,7 +500,6 @@
     "Upstream Task ID Passthrough": "上游任务 ID 透传",
     "Expose upstream task id to clients": "向客户端透传上游任务 ID",
     "Adds an upstream_task_id field (e.g. cgt-...) to video responses. The id / task_id fields stay unchanged, so clients keep polling with the public id. Note: this reveals the upstream provider.": "在视频响应中额外输出 upstream_task_id 字段（如 cgt-...）。id / task_id 保持不变，客户端仍用公开 ID 回查。注意：会暴露上游供应商信息。",
-    "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.": "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.",
     "Skip content pre-filter": "Skip content pre-filter",
     "e.g., group-20260318033332-xxxxx": "e.g., group-20260318033332-xxxxx",
     "Azure": "Azure",
@@ -4939,6 +4938,7 @@
     "Use site default": "Use site default",
     "Custom limit": "Custom limit",
     "Site default: {{limit}} assets": "Site default: {{limit}} assets",
-    "Site default: {{limit}} assets (not enforced — shown as a reference only)": "Site default: {{limit}} assets (not enforced — shown as a reference only)"
+    "Site default: {{limit}} assets (not enforced — shown as a reference only)": "Site default: {{limit}} assets (not enforced — shown as a reference only)",
+    "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted. Ignored for cn-* regions, which reject this parameter.": "Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted. Ignored for cn-* regions, which reject this parameter."
   }
 }

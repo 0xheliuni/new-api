@@ -1668,7 +1668,7 @@ export function ChannelMutateDrawer({
                                     </FormLabel>
                                     <FormDescription>
                                       {t(
-                                        'Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted.'
+                                        'Send Moderation.Strategy=Skip on upload. Celebrity / copyright IP is still intercepted. Ignored for cn-* regions, which reject this parameter.'
                                       )}
                                     </FormDescription>
                                   </div>
