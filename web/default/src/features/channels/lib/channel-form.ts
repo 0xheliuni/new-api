@@ -487,7 +487,7 @@ export function transformChannelToFormDefaults(
   let bytePlusSecretKey = ''
   let bytePlusAssetGroupId = ''
   let bytePlusProjectName = 'default'
-  let bytePlusRegion = 'ap-southeast-1'
+  let bytePlusRegion = 'cn-beijing'
   let bytePlusModerationSkip = true
   let assetProvider: 'byteplus' | 'cloudwise' = 'byteplus'
   let seedance3rdAssetEnabled = false

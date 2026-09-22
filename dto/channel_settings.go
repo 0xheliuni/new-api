@@ -70,7 +70,7 @@ type ChannelOtherSettings struct {
 	BytePlusSecretKey      string `json:"byteplus_secret_key,omitempty"`      // SK
 	BytePlusAssetGroupId   string `json:"byteplus_asset_group_id,omitempty"`  // 管理员预建的 GroupId
 	BytePlusProjectName    string `json:"byteplus_project_name,omitempty"`    // 资源项目名，默认 "default"
-	BytePlusRegion         string `json:"byteplus_region,omitempty"`          // 区域，默认 "ap-southeast-1"
+	BytePlusRegion         string `json:"byteplus_region,omitempty"`          // 区域，默认 "cn-beijing"
 	BytePlusModerationSkip *bool  `json:"byteplus_moderation_skip,omitempty"` // 是否跳过内容预过滤，默认 true（Skip）
 	AssetProvider          string `json:"asset_provider,omitempty"`           // 选择素材库协议实现；空值等价 AssetProviderBytePlus，保证存量渠道行为不变。
 	// AssetGroupProvider 记录 BytePlusAssetGroupId 是由哪个素材库实现创建/填写的。
