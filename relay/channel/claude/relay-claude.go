@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,37 +12,28 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/relay/reasonmap"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/reasoning"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
-)
-
-const (
-	WebSearchMaxUsesLow    = 1
-	WebSearchMaxUsesMedium = 5
-	WebSearchMaxUsesHigh   = 10
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
-	return reasonmap.ClaudeStopReasonToOpenAIFinishReason(reason)
+	return relayconvert.StopReasonClaudeToOpenAI(reason)
 }
 
-func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
+func maybeMarkClaudeRefusal(c *gin.Context, info *relaycommon.RelayInfo, stopReason string) {
 	if c == nil {
 		return
 	}
 	if strings.EqualFold(stopReason, "refusal") {
+		info.PerformanceBusinessRejection = true
 		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "claude_stop_reason=refusal")
 	}
 }
@@ -528,233 +520,36 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 }
 
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
-	var response dto.ChatCompletionsStreamResponse
-	response.Object = "chat.completion.chunk"
-	response.Model = claudeResponse.Model
-	response.Choices = make([]dto.ChatCompletionsStreamResponseChoice, 0)
-	tools := make([]dto.ToolCallResponse, 0)
-	fcIdx := 0
-	if claudeResponse.Index != nil {
-		fcIdx = *claudeResponse.Index
-	}
-	var choice dto.ChatCompletionsStreamResponseChoice
-	if claudeResponse.Type == "message_start" {
-		if claudeResponse.Message != nil {
-			response.Id = claudeResponse.Message.Id
-			response.Model = claudeResponse.Message.Model
-		}
-		//claudeUsage = &claudeResponse.Message.Usage
-		choice.Delta.SetContentString("")
-		choice.Delta.Role = "assistant"
-	} else if claudeResponse.Type == "content_block_start" {
-		if claudeResponse.ContentBlock != nil {
-			// 如果是文本块，尽可能发送首段文本（若存在）
-			if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
-				choice.Delta.SetContentString(*claudeResponse.ContentBlock.Text)
-			}
-			if claudeResponse.ContentBlock.Type == "tool_use" {
-				tools = append(tools, dto.ToolCallResponse{
-					Index: common.GetPointer(fcIdx),
-					ID:    claudeResponse.ContentBlock.Id,
-					Type:  "function",
-					Function: dto.FunctionResponse{
-						Name:      claudeResponse.ContentBlock.Name,
-						Arguments: "",
-					},
-				})
-			}
-		} else {
-			return nil
-		}
-	} else if claudeResponse.Type == "content_block_delta" {
-		if claudeResponse.Delta != nil {
-			choice.Delta.Content = claudeResponse.Delta.Text
-			switch claudeResponse.Delta.Type {
-			case "input_json_delta":
-				tools = append(tools, dto.ToolCallResponse{
-					Type:  "function",
-					Index: common.GetPointer(fcIdx),
-					Function: dto.FunctionResponse{
-						Arguments: *claudeResponse.Delta.PartialJson,
-					},
-				})
-			case "signature_delta":
-				// 加密的不处理
-				signatureContent := "\n"
-				choice.Delta.ReasoningContent = &signatureContent
-			case "thinking_delta":
-				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
-			}
-		}
-	} else if claudeResponse.Type == "message_delta" {
-		if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
-			finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
-			if finishReason != "null" {
-				choice.FinishReason = &finishReason
-			}
-		}
-		//claudeUsage = &claudeResponse.Usage
-	} else if claudeResponse.Type == "message_stop" {
-		return nil
-	} else {
-		return nil
-	}
-	if len(tools) > 0 {
-		choice.Delta.Content = nil // compatible with other OpenAI derivative applications, like LobeOpenAICompatibleFactory ...
-		choice.Delta.ToolCalls = tools
-	}
-	response.Choices = append(response.Choices, choice)
-
-	return &response
+	return relayconvert.StreamResponseClaude2OpenAI(claudeResponse)
 }
 
 func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextResponse {
-	choices := make([]dto.OpenAITextResponseChoice, 0)
-	fullTextResponse := dto.OpenAITextResponse{
-		Id:      fmt.Sprintf("chatcmpl-%s", common.GetUUID()),
-		Object:  "chat.completion",
-		Created: common.GetTimestamp(),
-	}
-	var responseText string
-	var responseThinking string
-	if len(claudeResponse.Content) > 0 {
-		responseText = claudeResponse.Content[0].GetText()
-		if claudeResponse.Content[0].Thinking != nil {
-			responseThinking = *claudeResponse.Content[0].Thinking
-		}
-	}
-	tools := make([]dto.ToolCallResponse, 0)
-	thinkingContent := ""
-
-	fullTextResponse.Id = claudeResponse.Id
-	for _, message := range claudeResponse.Content {
-		switch message.Type {
-		case "tool_use":
-			args, _ := json.Marshal(message.Input)
-			tools = append(tools, dto.ToolCallResponse{
-				ID:   message.Id,
-				Type: "function", // compatible with other OpenAI derivative applications
-				Function: dto.FunctionResponse{
-					Name:      message.Name,
-					Arguments: string(args),
-				},
-			})
-		case "thinking":
-			// 加密的不管， 只输出明文的推理过程
-			if message.Thinking != nil {
-				thinkingContent = *message.Thinking
-			}
-		case "text":
-			responseText = message.GetText()
-		}
-	}
-	choice := dto.OpenAITextResponseChoice{
-		Index: 0,
-		Message: dto.Message{
-			Role: "assistant",
-		},
-		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
-	}
-	choice.SetStringContent(responseText)
-	if len(responseThinking) > 0 {
-		choice.ReasoningContent = &responseThinking
-	}
-	if len(tools) > 0 {
-		choice.Message.SetToolCalls(tools)
-	}
-	if thinkingContent != "" {
-		choice.Message.ReasoningContent = &thinkingContent
-	}
-	fullTextResponse.Model = claudeResponse.Model
-	choices = append(choices, choice)
-	fullTextResponse.Choices = choices
-	return &fullTextResponse
+	return relayconvert.ResponseClaude2OpenAI(claudeResponse)
 }
 
-type ClaudeResponseInfo struct {
-	ResponseId   string
-	Created      int64
-	Model        string
-	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
-}
+type ClaudeResponseInfo = relayconvert.ClaudeResponseInfo
 
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
 	if usage == nil {
 		return 0
 	}
-	splitCacheCreationTokens := usage.ClaudeCacheCreation5mTokens + usage.ClaudeCacheCreation1hTokens
-	if splitCacheCreationTokens == 0 {
-		return usage.PromptTokensDetails.CachedCreationTokens
+	openAIUsage := relayconvert.UsageFromClaudeUsage(usage)
+	if openAIUsage == nil {
+		return 0
 	}
-	if usage.PromptTokensDetails.CachedCreationTokens > splitCacheCreationTokens {
-		return usage.PromptTokensDetails.CachedCreationTokens
-	}
-	return splitCacheCreationTokens
+	return openAIUsage.PromptTokens - usage.PromptTokens - usage.PromptTokensDetails.CachedTokens
 }
 
 func buildOpenAIStyleUsageFromClaudeUsage(usage *dto.Usage) dto.Usage {
-	if usage == nil {
+	mapped := relayconvert.UsageFromClaudeUsage(usage)
+	if mapped == nil {
 		return dto.Usage{}
 	}
-	clone := *usage
-	clone.ClaudeCacheCreation5mTokens, clone.ClaudeCacheCreation1hTokens = service.NormalizeCacheCreationSplit(
-		usage.PromptTokensDetails.CachedCreationTokens,
-		usage.ClaudeCacheCreation5mTokens,
-		usage.ClaudeCacheCreation1hTokens,
-	)
-	cacheCreationTokens := cacheCreationTokensForOpenAIUsage(usage)
-	totalInputTokens := usage.PromptTokens + usage.PromptTokensDetails.CachedTokens + cacheCreationTokens
-	clone.PromptTokens = totalInputTokens
-	clone.InputTokens = totalInputTokens
-	clone.TotalTokens = totalInputTokens + usage.CompletionTokens
-	clone.UsageSemantic = "openai"
-	clone.UsageSource = "anthropic"
-	return clone
+	return *mapped
 }
 
 func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ClaudeUsage {
-	usage := &dto.ClaudeUsage{}
-	if claudeResponse != nil && claudeResponse.Usage != nil {
-		*usage = *claudeResponse.Usage
-	}
-
-	if claudeInfo == nil || claudeInfo.Usage == nil {
-		return usage
-	}
-
-	if usage.InputTokens == 0 && claudeInfo.Usage.PromptTokens > 0 {
-		usage.InputTokens = claudeInfo.Usage.PromptTokens
-	}
-	if usage.CacheReadInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 {
-		usage.CacheReadInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedTokens
-	}
-	if usage.CacheCreationInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 {
-		usage.CacheCreationInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens
-	}
-	cacheCreation5m := 0
-	cacheCreation1h := 0
-	if usage.CacheCreation != nil {
-		cacheCreation5m = usage.CacheCreation.Ephemeral5mInputTokens
-		cacheCreation1h = usage.CacheCreation.Ephemeral1hInputTokens
-	} else {
-		cacheCreation5m = claudeInfo.Usage.ClaudeCacheCreation5mTokens
-		cacheCreation1h = claudeInfo.Usage.ClaudeCacheCreation1hTokens
-	}
-	cacheCreation5m, cacheCreation1h = service.NormalizeCacheCreationSplit(
-		usage.CacheCreationInputTokens,
-		cacheCreation5m,
-		cacheCreation1h,
-	)
-	if usage.CacheCreation == nil && (cacheCreation5m > 0 || cacheCreation1h > 0) {
-		usage.CacheCreation = &dto.ClaudeCacheCreationUsage{}
-	}
-	if usage.CacheCreation != nil {
-		usage.CacheCreation.Ephemeral5mInputTokens = cacheCreation5m
-		usage.CacheCreation.Ephemeral1hInputTokens = cacheCreation1h
-	}
-	return usage
+	return relayconvert.BuildMessageDeltaPatchUsage(claudeResponse, claudeInfo)
 }
 
 func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
@@ -768,126 +563,34 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 }
 
 func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
-	if data == "" || usage == nil {
-		return data
-	}
-
-	data = setMessageDeltaUsageInt(data, "usage.input_tokens", usage.InputTokens)
-	data = setMessageDeltaUsageInt(data, "usage.cache_read_input_tokens", usage.CacheReadInputTokens)
-	data = setMessageDeltaUsageInt(data, "usage.cache_creation_input_tokens", usage.CacheCreationInputTokens)
-
-	if usage.CacheCreation != nil {
-		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_5m_input_tokens", usage.CacheCreation.Ephemeral5mInputTokens)
-		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_1h_input_tokens", usage.CacheCreation.Ephemeral1hInputTokens)
-	}
-
-	return data
-}
-
-func setMessageDeltaUsageInt(data string, path string, localValue int) string {
-	if localValue <= 0 {
-		return data
-	}
-
-	upstreamValue := gjson.Get(data, path)
-	if upstreamValue.Exists() && upstreamValue.Int() > 0 {
-		return data
-	}
-
-	patchedData, err := sjson.Set(data, path, localValue)
-	if err != nil {
-		return data
-	}
-	return patchedData
+	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
 }
 
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
-	if claudeInfo == nil {
-		return false
-	}
-	if claudeInfo.Usage == nil {
-		claudeInfo.Usage = &dto.Usage{}
-	}
-	if claudeResponse.Type == "message_start" {
-		if claudeResponse.Message != nil {
-			claudeInfo.ResponseId = claudeResponse.Message.Id
-			claudeInfo.Model = claudeResponse.Message.Model
-		}
-
-		// message_start, 获取usage
-		if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
-			claudeInfo.Usage.PromptTokens = claudeResponse.Message.Usage.InputTokens
-			claudeInfo.Usage.UsageSemantic = "anthropic"
-			claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Message.Usage.CacheReadInputTokens
-			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Message.Usage.CacheCreationInputTokens
-			claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Message.Usage.GetCacheCreation5mTokens()
-			claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Message.Usage.GetCacheCreation1hTokens()
-			claudeInfo.Usage.CompletionTokens = claudeResponse.Message.Usage.OutputTokens
-		}
-	} else if claudeResponse.Type == "content_block_delta" {
-		if claudeResponse.Delta != nil {
-			if claudeResponse.Delta.Text != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
-			}
-			if claudeResponse.Delta.Thinking != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
-			}
-		}
-	} else if claudeResponse.Type == "message_delta" {
-		// 最终的usage获取
-		if claudeResponse.Usage != nil {
-			claudeInfo.Usage.UsageSemantic = "anthropic"
-			if claudeResponse.Usage.InputTokens > 0 {
-				// 不叠加，只取最新的
-				claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
-			}
-			if claudeResponse.Usage.CacheReadInputTokens > 0 {
-				claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
-			}
-			if claudeResponse.Usage.CacheCreationInputTokens > 0 {
-				claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
-			}
-			if cacheCreation5m := claudeResponse.Usage.GetCacheCreation5mTokens(); cacheCreation5m > 0 {
-				claudeInfo.Usage.ClaudeCacheCreation5mTokens = cacheCreation5m
-			}
-			if cacheCreation1h := claudeResponse.Usage.GetCacheCreation1hTokens(); cacheCreation1h > 0 {
-				claudeInfo.Usage.ClaudeCacheCreation1hTokens = cacheCreation1h
-			}
-			if claudeResponse.Usage.OutputTokens > 0 {
-				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
-			}
-			claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
-		}
-
-		// 判断是否完整
-		claudeInfo.Done = true
-	} else if claudeResponse.Type == "content_block_start" {
-	} else {
-		return false
-	}
-	if oaiResponse != nil {
-		oaiResponse.Id = claudeInfo.ResponseId
-		oaiResponse.Created = claudeInfo.Created
-		oaiResponse.Model = claudeInfo.Model
-	}
-	return true
+	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
 	if err != nil {
-		common.SysLog("error unmarshalling stream response: " + err.Error())
+		common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
+	if claudeResponse.Type == "message_start" && claudeResponse.Message != nil {
+		info.ObserveResponseModel(claudeResponse.Message.Model)
+	}
 	if claudeResponse.StopReason != "" {
-		maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
+		maybeMarkClaudeRefusal(c, info, claudeResponse.StopReason)
 	}
 	if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
-		maybeMarkClaudeRefusal(c, *claudeResponse.Delta.StopReason)
+		maybeMarkClaudeRefusal(c, info, *claudeResponse.Delta.StopReason)
+	}
+	if claudeResponse.Type == "message_stop" {
+		info.StreamStatus.MarkCompleted()
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
@@ -904,20 +607,137 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
+		countClaudeStreamBillableTools(info, &claudeResponse)
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
-		response := StreamResponseClaude2OpenAI(&claudeResponse)
+		state, err := claudeToChatStreamState(info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		response, err := state.ConvertChunk(&claudeResponse)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 
 		if !FormatClaudeResponseInfo(&claudeResponse, response, claudeInfo) {
 			return nil
 		}
 
+		countClaudeStreamBillableTools(info, &claudeResponse)
+
+		if response == nil {
+			return nil
+		}
 		err = helper.ObjectData(c, response)
 		if err != nil {
-			logger.LogError(c, "send_stream_response_failed: "+err.Error())
+			logger.LogError(c, common.LogText("send_stream_response_failed: %s", err.Error()))
+		}
+	} else if info.RelayFormat == types.RelayFormatGemini {
+		state, err := claudeToGeminiStreamState(info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		results, err := service.ConvertStreamResponseChunk(c, info, state, &claudeResponse)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		if !FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo) {
+			return nil
+		}
+		countClaudeStreamBillableTools(info, &claudeResponse)
+		if sendErr := sendGeminiStreamResults(c, results); sendErr != nil {
+			return sendErr
 		}
 	}
 	return nil
+}
+
+func claudeToChatStreamState(info *relaycommon.RelayInfo) (*relayconvert.ClaudeToChatStreamState, error) {
+	if info != nil && info.ClaudeToChatStreamState != nil {
+		state, ok := info.ClaudeToChatStreamState.(*relayconvert.ClaudeToChatStreamState)
+		if !ok || state == nil {
+			return nil, fmt.Errorf("invalid Claude-to-Chat stream state %T", info.ClaudeToChatStreamState)
+		}
+		return state, nil
+	}
+
+	state := relayconvert.NewClaudeToChatStreamState()
+	if info != nil {
+		info.ClaudeToChatStreamState = state
+	}
+	return state, nil
+}
+
+func claudeToGeminiStreamState(info *relaycommon.RelayInfo) (*relayconvert.ResponseStreamState, error) {
+	if info != nil && info.ChatToGeminiStreamState != nil {
+		state, ok := info.ChatToGeminiStreamState.(*relayconvert.ResponseStreamState)
+		if !ok || state == nil {
+			return nil, fmt.Errorf("invalid Claude-to-Gemini stream state %T", info.ChatToGeminiStreamState)
+		}
+		return state, nil
+	}
+
+	state, err := relayconvert.NewResponseStreamState(types.RelayFormatClaude, types.RelayFormatGemini, relayconvert.ResponseStreamOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if info != nil {
+		info.ChatToGeminiStreamState = state
+	}
+	return state, nil
+}
+
+func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResult) *types.NewAPIError {
+	for _, result := range results {
+		geminiResponse, ok := result.Value.(*dto.GeminiChatResponse)
+		if !ok {
+			return types.NewError(fmt.Errorf("expected Gemini stream response, got %T", result.Value), types.ErrorCodeBadResponseBody)
+		}
+		if geminiResponse == nil {
+			continue
+		}
+		data, err := common.Marshal(geminiResponse)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
+		_ = helper.FlushWriter(c)
+	}
+	return nil
+}
+
+func countClaudeStreamBillableTools(info *relaycommon.RelayInfo, claudeResponse *dto.ClaudeResponse) {
+	if claudeResponse == nil {
+		return
+	}
+	if claudeResponse.Type == "content_block_start" &&
+		claudeResponse.ContentBlock != nil &&
+		claudeResponse.ContentBlock.Type == "tool_use" {
+		info.CountBillableToolCall(dto.BuildInCallToolUse, claudeResponse.ContentBlock.Name)
+	}
+	if claudeResponse.Type == "message_delta" && claudeResponse.Usage != nil {
+		// message_delta usage is cumulative, so the last report wins.
+		recordClaudeServerToolUse(info, claudeResponse.Usage.ServerToolUse)
+	}
+}
+
+// recordClaudeServerToolUse bills the server tool requests Anthropic reports
+// in usage.server_tool_use. web_fetch, code_execution, and tool_search have no
+// built-in price and bill only once an operator prices them.
+func recordClaudeServerToolUse(info *relaycommon.RelayInfo, serverToolUse *dto.ClaudeServerToolUse) {
+	if info == nil || serverToolUse == nil {
+		return
+	}
+	for name, count := range map[string]int{
+		cmp.Or(info.WebSearchBillingKey, dto.BuildInToolWebSearch): serverToolUse.WebSearchRequests,
+		"web_fetch":      serverToolUse.WebFetchRequests,
+		"code_execution": serverToolUse.CodeExecutionRequests,
+		"tool_search":    serverToolUse.ToolSearchRequests,
+	} {
+		if count > 0 {
+			info.SetBillableToolCount(name, count)
+		}
+	}
 }
 
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
@@ -926,10 +746,13 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	}
 	if claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done {
 		if common.DebugEnabled {
-			common.SysLog("claude response usage is not complete, maybe upstream error")
+			common.SysLog(common.LogText("claude response usage is not complete, maybe upstream error"))
 		}
 		// 只补缺失字段，不整份覆盖——保留 message_start 已拿到的 cache 字段
 		fallback := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		// Each tool_use block costs about 40 output tokens beyond its name and JSON
+		// input (measured on Claude Haiku 4.5 and Sonnet 5 agent turns).
+		fallback.CompletionTokens += claudeInfo.ToolUseCount * 40
 		if claudeInfo.Usage.CompletionTokens == 0 ||
 			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
 			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
@@ -942,6 +765,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	if claudeInfo.Usage != nil {
 		claudeInfo.Usage.UsageSemantic = "anthropic"
 	}
+	relayconvert.FinalizeClaudeStreamBillingUsage(claudeInfo)
 
 	if info.RelayFormat == types.RelayFormatClaude {
 		//
@@ -951,10 +775,24 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
-				common.SysLog("send final response failed: " + err.Error())
+				common.SysLog(common.LogText("send final response failed: %s", err.Error()))
 			}
 		}
 		helper.Done(c)
+	} else if info.RelayFormat == types.RelayFormatGemini {
+		state, err := claudeToGeminiStreamState(info)
+		if err != nil {
+			common.SysLog(common.LogText("error creating Gemini stream state: %s", err.Error()))
+			return
+		}
+		results, err := service.FinalizeStreamResponse(c, info, state)
+		if err != nil {
+			common.SysLog(common.LogText("error finalizing Gemini stream response: %s", err.Error()))
+			return
+		}
+		if sendErr := sendGeminiStreamResults(c, results); sendErr != nil {
+			common.SysLog(common.LogText("send final Gemini stream response failed: %s", sendErr.Error()))
+		}
 	}
 }
 
@@ -973,6 +811,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			sr.Stop(err)
 		}
 	})
+	info.StreamStatus.RequireTerminal()
 	if err != nil {
 		return nil, err
 	}
@@ -990,7 +829,8 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
-	maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
+	info.ObserveResponseModel(claudeResponse.Model)
+	maybeMarkClaudeRefusal(c, info, claudeResponse.StopReason)
 	if claudeInfo.Usage == nil {
 		claudeInfo.Usage = &dto.Usage{}
 	}
@@ -999,6 +839,10 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
 		claudeInfo.Usage.TotalTokens = claudeResponse.Usage.InputTokens + claudeResponse.Usage.OutputTokens
 		claudeInfo.Usage.UsageSemantic = "anthropic"
+		claudeInfo.Usage.BillingUsage = dto.CloneBillingUsage(claudeResponse.Usage.BillingUsage)
+		if claudeInfo.Usage.BillingUsage == nil {
+			claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(claudeResponse.Usage)
+		}
 		claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
 		claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
 		claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Usage.GetCacheCreation5mTokens()
@@ -1009,16 +853,53 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
 		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
-		responseData, err = json.Marshal(openaiResponse)
+		responseData, err = common.Marshal(openaiResponse)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+	case types.RelayFormatOpenAIResponses:
+		convertResult, err := service.ConvertResponse(c, info, types.RelayFormatOpenAIResponses, &claudeResponse)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		responsesResponse, ok := convertResult.Value.(*dto.OpenAIResponsesResponse)
+		if !ok {
+			return types.NewError(fmt.Errorf("expected OpenAI Responses response, got %T", convertResult.Value), types.ErrorCodeBadResponseBody)
+		}
+		if responseID := helper.GetResponseID(c); responseID != "" {
+			responsesResponse.ID = responseID
+		}
+		responseData, err = common.Marshal(responsesResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
 		responseData = data
+	case types.RelayFormatGemini:
+		{
+			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)
+			if convertErr != nil {
+				return types.NewError(convertErr, types.ErrorCodeBadResponseBody)
+			}
+			geminiResponse, ok := convertResult.Value.(*dto.GeminiChatResponse)
+			if !ok {
+				return types.NewError(fmt.Errorf("expected Gemini generateContent response, got %T", convertResult.Value), types.ErrorCodeBadResponseBody)
+			}
+			responseData, err = common.Marshal(geminiResponse)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeBadResponseBody)
+			}
+		}
 	}
 
-	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
-		c.Set("claude_web_search_requests", claudeResponse.Usage.ServerToolUse.WebSearchRequests)
+	if claudeResponse.Usage != nil {
+		recordClaudeServerToolUse(info, claudeResponse.Usage.ServerToolUse)
+	}
+
+	for _, block := range claudeResponse.Content {
+		if block.Type == "tool_use" {
+			info.CountBillableToolCall(dto.BuildInCallToolUse, block.Name)
+		}
 	}
 
 	service.IOCopyBytesGracefully(c, httpResp, responseData)
@@ -1045,55 +926,4 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 		return nil, handleErr
 	}
 	return claudeInfo.Usage, nil
-}
-
-func mapToolChoice(toolChoice any, parallelToolCalls *bool) *dto.ClaudeToolChoice {
-	var claudeToolChoice *dto.ClaudeToolChoice
-
-	// 处理 tool_choice 字符串值
-	if toolChoiceStr, ok := toolChoice.(string); ok {
-		switch toolChoiceStr {
-		case "auto":
-			claudeToolChoice = &dto.ClaudeToolChoice{
-				Type: "auto",
-			}
-		case "required":
-			claudeToolChoice = &dto.ClaudeToolChoice{
-				Type: "any",
-			}
-		case "none":
-			claudeToolChoice = &dto.ClaudeToolChoice{
-				Type: "none",
-			}
-		}
-	} else if toolChoiceMap, ok := toolChoice.(map[string]interface{}); ok {
-		// 处理 tool_choice 对象值
-		if function, ok := toolChoiceMap["function"].(map[string]interface{}); ok {
-			if toolName, ok := function["name"].(string); ok {
-				claudeToolChoice = &dto.ClaudeToolChoice{
-					Type: "tool",
-					Name: toolName,
-				}
-			}
-		}
-	}
-
-	// 处理 parallel_tool_calls
-	if parallelToolCalls != nil {
-		if claudeToolChoice == nil {
-			// 如果没有 tool_choice，但有 parallel_tool_calls，创建默认的 auto 类型
-			claudeToolChoice = &dto.ClaudeToolChoice{
-				Type: "auto",
-			}
-		}
-
-		// Anthropic schema: tool_choice.type=none does not accept extra fields.
-		// When tools are disabled, parallel_tool_calls is irrelevant, so we drop it.
-		if claudeToolChoice.Type != "none" {
-			// 如果 parallel_tool_calls 为 true，则 disable_parallel_tool_use 为 false
-			claudeToolChoice.DisableParallelToolUse = !*parallelToolCalls
-		}
-	}
-
-	return claudeToolChoice
 }

@@ -19,7 +19,7 @@ func newTestCtx() *gin.Context {
 func TestResolveSelectGroups(t *testing.T) {
 	t.Run("multi-group from context", func(t *testing.T) {
 		c := newTestCtx()
-		c.Set(string(constant.ContextKeyTokenGroups), []string{"claude", "gpt"})
+		c.Set(string(constant.ContextKeyTokenAutoGroups), []string{"claude", "gpt"})
 		groups, isMulti := resolveSelectGroups(c, "claude")
 		assert.True(t, isMulti)
 		assert.True(t, reflect.DeepEqual(groups, []string{"claude", "gpt"}))

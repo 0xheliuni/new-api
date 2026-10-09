@@ -49,7 +49,7 @@ func TestCandidateGroupsLiteralGroup(t *testing.T) {
 func TestCandidateGroupsMultiGroupToken(t *testing.T) {
 	c := newGroupContext(t)
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, "vip")
-	common.SetContextKey(c, constant.ContextKeyTokenGroups, []string{"vip", "default"})
+	common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
 	got := candidateGroups(c)
 	if len(got) != 2 || got[0] != "vip" || got[1] != "default" {
 		t.Fatalf("got %v, want [vip default]", got)

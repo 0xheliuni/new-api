@@ -129,7 +129,7 @@ func candidateGroups(c *gin.Context) []string {
 		}
 		return nil
 	}
-	if groups, ok := common.GetContextKeyType[[]string](c, constant.ContextKeyTokenGroups); ok && len(groups) > 0 {
+	if groups, ok := common.GetContextKeyType[[]string](c, constant.ContextKeyTokenAutoGroups); ok && len(groups) > 0 {
 		return groups
 	}
 	if using != "" {

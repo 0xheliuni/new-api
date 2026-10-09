@@ -196,7 +196,13 @@ export const CHANNEL_OPTIONS = [
   },
   { value: 59, color: 'purple', label: 'seedance(第三方)' },
   { value: 60, color: 'orange', label: '字节火山透传' },
-  { value: 61, color: 'teal', label: 'MiniMax Image' },
+  { value: 61, color: 'pink', label: 'Advanced Custom' },
+  { value: 62, color: 'blue', label: 'Sub2API' },
+  { value: 63, color: 'blue', label: 'New API' },
+  { value: 64, color: 'purple', label: 'Task Plugin' },
+  { value: 65, color: 'green', label: 'vLLM' },
+  { value: 66, color: 'blue', label: 'SGLang' },
+  { value: 67, color: 'teal', label: 'MiniMax Image' },
 ];
 
 // Channel types that support upstream model list fetching in UI.
