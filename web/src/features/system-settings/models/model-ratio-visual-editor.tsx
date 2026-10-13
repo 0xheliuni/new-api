@@ -141,7 +141,6 @@ const ModelRatioVisualEditorComponent = forwardRef<
     audioCompletionRatio,
     billingMode,
     billingExpr,
-    savedVideoPromo,
     videoPromo,
     pluginBillingExpr = '{}',
     candidateModelNames,
