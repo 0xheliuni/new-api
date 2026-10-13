@@ -365,7 +365,8 @@ export function ApiKeysMutateDrawer({
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
   const autoGroupsMode = form.watch('auto_groups_mode')
-  const isAutoGroup = autoGroupsMode === 'auto'
+  const isAutoGroup = selectedGroup === 'auto'
+  const isMultiGroup = isAutoGroup && autoGroupsMode === 'custom'
   const unlimitedQuota = form.watch('unlimited_quota')
 
   return (
