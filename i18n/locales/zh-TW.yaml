@@ -8,7 +8,6 @@ token.get_info_failed: "獲取令牌資訊失敗，請稍後重試"
 token.invalid: "無效的令牌"
 token.not_provided: "未提供令牌"
 token.status_unavailable: "該令牌狀態不可用"
-<<<<<<< HEAD
 token.db_error: "無效的令牌，資料庫查詢出錯，請聯繫管理員"
 
 # Redemption messages
