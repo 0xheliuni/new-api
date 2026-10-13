@@ -57,7 +57,8 @@ func normalizeRetiredThemeOption() error {
 		if err != nil {
 			return err
 		}
-		if option.Value == "default" {
+		// Allow both "default" and "classic" — do not force-migrate classic to default.
+		if option.Value == "default" || option.Value == "classic" {
 			return nil
 		}
 		return tx.Model(&option).Update("value", "default").Error

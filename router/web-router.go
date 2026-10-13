@@ -21,8 +21,15 @@ type WebAssets struct {
 	ClassicIndexPage []byte
 }
 
-// useClassicTheme returns true when the THEME environment variable is "classic".
+// useClassicTheme returns true when the theme.frontend option is set to "classic".
+// Falls back to the THEME environment variable if the option is not set.
 func useClassicTheme() bool {
+	common.OptionMapRWMutex.RLock()
+	theme := common.OptionMap["theme.frontend"]
+	common.OptionMapRWMutex.RUnlock()
+	if theme != "" {
+		return strings.EqualFold(theme, "classic")
+	}
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("THEME")), "classic")
 }
 
