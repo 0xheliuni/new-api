@@ -34,8 +34,10 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedAvailabilityIndexRouteImport } from './routes/_authenticated/availability/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
+import { Route as AuthenticatedCostIndexRouteImport } from './routes/_authenticated/cost/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
@@ -54,6 +56,7 @@ import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedUsageLogsAuditRouteImport } from './routes/_authenticated/usage-logs/audit'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
+import { Route as AuthenticatedVolcAssetsIndexRouteImport } from './routes/_authenticated/volc-assets/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
@@ -197,6 +200,12 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AuthenticatedAvailabilityIndexRoute =
+  AuthenticatedAvailabilityIndexRouteImport.update({
+    id: '/availability/',
+    path: '/availability/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -206,6 +215,11 @@ const AuthenticatedChannelsIndexRoute =
 const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
   id: '/chat/$chatId',
   path: '/chat/$chatId',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCostIndexRoute = AuthenticatedCostIndexRouteImport.update({
+  id: '/cost/',
+  path: '/cost/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedDashboardIndexRoute =
@@ -314,6 +328,12 @@ const AuthenticatedUsersIndexRoute = AuthenticatedUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedVolcAssetsIndexRoute =
+  AuthenticatedVolcAssetsIndexRouteImport.update({
+    id: '/volc-assets/',
+    path: '/volc-assets/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedWalletIndexRoute =
   AuthenticatedWalletIndexRouteImport.update({
     id: '/wallet/',
@@ -452,7 +472,9 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/availability/': typeof AuthenticatedAvailabilityIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/cost/': typeof AuthenticatedCostIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
@@ -466,6 +488,7 @@ export interface FileRoutesByFullPath {
   '/task-plugins/': typeof AuthenticatedTaskPluginsIndexRoute
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
+  '/volc-assets/': typeof AuthenticatedVolcAssetsIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -514,7 +537,9 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/availability': typeof AuthenticatedAvailabilityIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
+  '/cost': typeof AuthenticatedCostIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
@@ -528,6 +553,7 @@ export interface FileRoutesByTo {
   '/task-plugins': typeof AuthenticatedTaskPluginsIndexRoute
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
+  '/volc-assets': typeof AuthenticatedVolcAssetsIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -580,7 +606,9 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/_authenticated/availability/': typeof AuthenticatedAvailabilityIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/_authenticated/cost/': typeof AuthenticatedCostIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
@@ -594,6 +622,7 @@ export interface FileRoutesById {
   '/_authenticated/task-plugins/': typeof AuthenticatedTaskPluginsIndexRoute
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
+  '/_authenticated/volc-assets/': typeof AuthenticatedVolcAssetsIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -645,7 +674,9 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/availability/'
     | '/channels/'
+    | '/cost/'
     | '/dashboard/'
     | '/keys/'
     | '/models/'
@@ -659,6 +690,7 @@ export interface FileRouteTypes {
     | '/task-plugins/'
     | '/usage-logs/'
     | '/users/'
+    | '/volc-assets/'
     | '/wallet/'
     | '/pricing/$modelId/'
     | '/system-settings/auth/$section'
@@ -707,7 +739,9 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/availability'
     | '/channels'
+    | '/cost'
     | '/dashboard'
     | '/keys'
     | '/models'
@@ -721,6 +755,7 @@ export interface FileRouteTypes {
     | '/task-plugins'
     | '/usage-logs'
     | '/users'
+    | '/volc-assets'
     | '/wallet'
     | '/pricing/$modelId'
     | '/system-settings/auth/$section'
@@ -772,7 +807,9 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
+    | '/_authenticated/availability/'
     | '/_authenticated/channels/'
+    | '/_authenticated/cost/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
     | '/_authenticated/models/'
@@ -786,6 +823,7 @@ export interface FileRouteTypes {
     | '/_authenticated/task-plugins/'
     | '/_authenticated/usage-logs/'
     | '/_authenticated/users/'
+    | '/_authenticated/volc-assets/'
     | '/_authenticated/wallet/'
     | '/pricing/$modelId/'
     | '/_authenticated/system-settings/auth/$section'
@@ -1002,6 +1040,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
     }
+    '/_authenticated/availability/': {
+      id: '/_authenticated/availability/'
+      path: '/availability'
+      fullPath: '/availability/'
+      preLoaderRoute: typeof AuthenticatedAvailabilityIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
       path: '/channels'
@@ -1014,6 +1059,13 @@ declare module '@tanstack/react-router' {
       path: '/chat/$chatId'
       fullPath: '/chat/$chatId'
       preLoaderRoute: typeof AuthenticatedChatChatIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/cost/': {
+      id: '/_authenticated/cost/'
+      path: '/cost'
+      fullPath: '/cost/'
+      preLoaderRoute: typeof AuthenticatedCostIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard/': {
@@ -1140,6 +1192,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users/'
       preLoaderRoute: typeof AuthenticatedUsersIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/volc-assets/': {
+      id: '/_authenticated/volc-assets/'
+      path: '/volc-assets'
+      fullPath: '/volc-assets/'
+      preLoaderRoute: typeof AuthenticatedVolcAssetsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/wallet/': {
@@ -1369,7 +1428,9 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedAvailabilityIndexRoute: typeof AuthenticatedAvailabilityIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
+  AuthenticatedCostIndexRoute: typeof AuthenticatedCostIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
@@ -1382,6 +1443,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedTaskPluginsIndexRoute: typeof AuthenticatedTaskPluginsIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
+  AuthenticatedVolcAssetsIndexRoute: typeof AuthenticatedVolcAssetsIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
 }
 
@@ -1395,7 +1457,9 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedAvailabilityIndexRoute: AuthenticatedAvailabilityIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
+  AuthenticatedCostIndexRoute: AuthenticatedCostIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
@@ -1409,6 +1473,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedTaskPluginsIndexRoute: AuthenticatedTaskPluginsIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
+  AuthenticatedVolcAssetsIndexRoute: AuthenticatedVolcAssetsIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
 }
 
