@@ -235,16 +235,12 @@ func InitDB() (err error) {
 func InitLogDB() (err error) {
 	if os.Getenv("LOG_SQL_DSN") == "" {
 		LOG_DB = DB
-<<<<<<< HEAD
-		if common.IsMasterNode {
-			// 日志与主库同库：主库迁移已完成，可直接触发一次性回填（异步、幂等）。
-			BackfillSeedanceTaskLogs()
-=======
 		common.SetLogDatabaseType(common.MainDatabaseType())
 		initCol()
 		if common.IsMasterNode {
+			// 日志与主库同库：主库迁移已完成，可直接触发一次性回填（异步、幂等）。
+			BackfillSeedanceTaskLogs()
 			return MigrateAuditLogs()
->>>>>>> origin/main
 		}
 		return
 	}
@@ -380,27 +376,21 @@ func migrateDB() error {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
-<<<<<<< HEAD
 		&ChannelCostVersion{},
 		&VolcAsset{},
-=======
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
->>>>>>> origin/main
 	)
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	if err := seedChannelCostVersions(); err != nil {
 		common.SysError("seedChannelCostVersions: " + err.Error())
 	}
-	if common.UsingSQLite {
-=======
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -411,7 +401,6 @@ func migrateDB() error {
 		return err
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
->>>>>>> origin/main
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
 		}

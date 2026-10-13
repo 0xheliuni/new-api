@@ -3,8 +3,8 @@ package minimaximage
 import (
 	"encoding/json"
 
-	"github.com/QuantumNous/new-api/dto"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // minimaxImageRequest mirrors the MiniMax /v1/content/models/{model}/generations

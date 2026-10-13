@@ -55,16 +55,16 @@ const (
 	ChannelTypeSora           = 55
 	ChannelTypeReplicate      = 56
 	ChannelTypeCodex          = 57
-	ChannelTypeAIGCVideo      = 58
-	ChannelTypeSeedance3rd    = 59
-	ChannelTypeVolcPassthrough = 60
-	ChannelTypeAdvancedCustom = 61
-	ChannelTypeSub2API        = 62
-	ChannelTypeNewAPI         = 63
-	ChannelTypeTaskPlugin     = 64
-	ChannelTypeVLLM           = 65
-	ChannelTypeSGLang         = 66
-	ChannelTypeMinimaxImage   = 67
+	ChannelTypeAdvancedCustom  = 58
+	ChannelTypeSub2API         = 59
+	ChannelTypeNewAPI          = 60
+	ChannelTypeTaskPlugin      = 61
+	ChannelTypeVLLM            = 62
+	ChannelTypeSGLang          = 63
+	ChannelTypeAIGCVideo       = 64
+	ChannelTypeSeedance3rd     = 65
+	ChannelTypeVolcPassthrough = 66
+	ChannelTypeMinimaxImage    = 67
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -130,15 +130,15 @@ var ChannelBaseURLs = []string{
 	"https://api.openai.com",                    //55
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
-	"",                                          //58 - OpenAI Video
-	"https://model.service-inference.ai",        //59 - Seedance (3rd party)
-	"https://ark.cn-beijing.volces.com",         //60 - 字节火山透传
-	"",                                          //61
-	"",                                          //62
-	"",                                          //63
-	"",                                          //64
-	"",                                          //65
-	"",                                          //66
+	"",                                          //58 - AdvancedCustom
+	"",                                          //59 - Sub2API
+	"",                                          //60 - NewAPI
+	"",                                          //61 - TaskPlugin
+	"",                                          //62 - VLLM
+	"",                                          //63 - SGLang
+	"",                                          //64 - AIGCVideo (OpenAI Video)
+	"https://model.service-inference.ai",        //65 - Seedance (3rd party)
+	"https://ark.cn-beijing.volces.com",         //66 - 字节火山透传
 	"https://api.minimax.io",                    //67 - MiniMax Image
 }
 

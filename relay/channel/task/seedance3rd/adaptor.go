@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/seedance"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -42,14 +43,14 @@ type MediaURL struct {
 
 // requestPayload 对齐第三方 POST /v1/video/generate 顶层参数。
 type requestPayload struct {
-	Model           string         `json:"model"`
-	Content         []ContentItem  `json:"content,omitempty"`
-	Duration        *dto.IntValue  `json:"duration,omitempty"`
-	Resolution      string         `json:"resolution,omitempty"`
-	Ratio           string         `json:"ratio,omitempty"`
-	GenerateAudio   *dto.BoolValue `json:"generate_audio,omitempty"`
-	Watermark       *dto.BoolValue `json:"watermark,omitempty"`
-	ReturnLastFrame *dto.BoolValue `json:"return_last_frame,omitempty"`
+	Model           string             `json:"model"`
+	Content         []ContentItem      `json:"content,omitempty"`
+	Duration        *kitdto.IntValue   `json:"duration,omitempty"`
+	Resolution      string             `json:"resolution,omitempty"`
+	Ratio           string             `json:"ratio,omitempty"`
+	GenerateAudio   *kitdto.BoolValue  `json:"generate_audio,omitempty"`
+	Watermark       *kitdto.BoolValue  `json:"watermark,omitempty"`
+	ReturnLastFrame *kitdto.BoolValue  `json:"return_last_frame,omitempty"`
 }
 
 // submitResponse: { "task": { "id": ... } }
@@ -101,11 +102,14 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 	a.channelId = info.ChannelId
 	a.proxy = info.ChannelSetting.Proxy
-	a.otherSettings = info.ChannelOtherSettings
+	// info.ChannelOtherSettings is relaykit/dto type; convert to dto type via JSON.
+	if data, err := common.Marshal(info.ChannelOtherSettings); err == nil {
+		_ = common.Unmarshal(data, &a.otherSettings)
+	}
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionImageToVideo)
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -153,9 +157,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 // FetchTask 查询第三方任务状态:GET /v1/video/tasks/{task_id}。
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	taskID := task.GetUpstreamTaskID()
+	if taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 	uri := fmt.Sprintf("%s/v1/video/tasks/%s", baseUrl, taskID)
@@ -191,7 +195,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 	tk := resp.Task
 
-	ov := dto.NewOpenAIVideo()
+	ov := kitdto.NewOpenAIVideo()
 	ov.ID = originTask.TaskID
 	ov.TaskID = originTask.TaskID
 	ov.Status = originTask.Status.ToVideoStatus()
@@ -218,7 +222,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 	if (tk.Status == "failed" || tk.Status == "expired") && tk.Error != nil {
 		// 上游错误脱敏后透传（URL/IP/域名 mask）。
-		ov.Error = &dto.OpenAIVideoError{Message: common.MaskSensitiveInfo(tk.Error.Message), Code: tk.Error.Code}
+		ov.Error = &kitdto.OpenAIVideoError{Message: common.MaskSensitiveInfo(tk.Error.Message), Code: tk.Error.Code}
 	}
 	return common.Marshal(ov)
 }
@@ -260,9 +264,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 
 	// duration 优先级:req.Seconds > metadata.duration(已入 r.Duration) > req.Duration
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(sec))
+		r.Duration = lo.ToPtr(kitdto.IntValue(sec))
 	} else if r.Duration == nil && req.Duration > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+		r.Duration = lo.ToPtr(kitdto.IntValue(req.Duration))
 	}
 
 	// 第三方只用顶层 prompt 作文本输入:剔除 content 中 text 项,用 req.Prompt 重建末尾 text。
@@ -273,12 +277,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 }
 
 // ParseTaskResult 把第三方查询响应 { "task": {...} } 映射为内部 TaskInfo(状态/进度/URL/tokens)。
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	var resp fetchResponse
-	if err := common.Unmarshal(respBody, &resp); err != nil {
+func (a *TaskAdaptor) ParseTaskResult(task *model.Task, httpResp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
+	var fetchResp fetchResponse
+	if err := common.Unmarshal(respBody, &fetchResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
-	tk := resp.Task
+	tk := fetchResp.Task
 	info := relaycommon.TaskInfo{Code: 0}
 	switch tk.Status {
 	case "pending", "queued":
@@ -312,25 +316,22 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
 
 	var sResp submitResponse
 	if err := common.Unmarshal(responseBody, &sResp); err != nil {
-		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if sResp.Task.ID == "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
 
-	ov := dto.NewOpenAIVideo()
+	ov := kitdto.NewOpenAIVideo()
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
 	if a.otherSettings.ExposeUpstreamTaskId {
@@ -338,6 +339,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
-	c.JSON(http.StatusOK, ov)
-	return sResp.Task.ID, responseBody, nil
+	return &channel.TaskSubmitResponse{
+		UpstreamTaskID: sResp.Task.ID,
+		TaskData:       responseBody,
+		ClientResponse: ov,
+	}, nil
 }

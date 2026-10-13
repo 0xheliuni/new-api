@@ -278,10 +278,20 @@ func (a *TaskAdaptor) persistGroupID(newGroupID string) {
 		return
 	}
 
-	settings := ch.GetOtherSettings()
-	settings.BytePlusAssetGroupId = newGroupID
-	settings.AssetGroupProvider = provider
-	ch.SetOtherSettings(settings)
+	// GetHostOtherSettings returns the host-specific dto type with BytePlus fields.
+	// Since SetOtherSettings takes relaykit/dto type, we update the JSON directly
+	// by re-reading the full relaykit-typed settings, marshalling the host portion
+	// back via JSON round-trip to avoid field loss.
+	hostSettings := ch.GetHostOtherSettings()
+	hostSettings.BytePlusAssetGroupId = newGroupID
+	hostSettings.AssetGroupProvider = provider
+	// Merge back: marshal hostSettings, then use the channel's raw OtherSettings
+	// field to persist the updated JSON so no fields from either type are lost.
+	if data, err := common.Marshal(hostSettings); err == nil {
+		if string(data) != "{}" {
+			ch.OtherSettings = string(data)
+		}
+	}
 
 	if err := ch.Save(); err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf(

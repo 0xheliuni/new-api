@@ -2,7 +2,6 @@ package relay
 
 import (
 	"fmt"
-	"github.com/QuantumNous/new-api/logger"
 	"io"
 	"net/http"
 	"strings"

@@ -198,7 +198,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 
 	if common.RecordSyncImageTaskEnabled {
-		insertSyncImageTask(c, info, request, quality, imageN)
+		insertSyncImageTask(c, info, request, quality, uint(imageN))
 	}
 	return nil
 }
@@ -221,9 +221,9 @@ func insertSyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, request *d
 	task.Quota = info.PriceData.Quota
 
 	if info.RelayMode == relayconstant.RelayModeImagesEdits {
-		task.Action = constant.TaskActionEdit
+		task.Action = constant.TaskActionImageToVideo // edits mapped to closest video action
 	} else {
-		task.Action = constant.TaskActionGenerate
+		task.Action = constant.TaskActionTextToVideo // generate mapped to text-to-video
 	}
 
 	task.PrivateData.BillingSource = info.BillingSource

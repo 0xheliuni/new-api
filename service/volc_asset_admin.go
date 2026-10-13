@@ -51,7 +51,7 @@ func NewVolcAssetAdminClient(channel *model.Channel) (*VolcAssetAdminClient, err
 	if channel == nil {
 		return nil, fmt.Errorf("channel is nil")
 	}
-	other := channel.GetOtherSettings()
+	other := channel.GetHostOtherSettings()
 	if other.BytePlusAccessKey == "" || other.BytePlusSecretKey == "" {
 		return nil, fmt.Errorf("渠道 #%d 未配置 AK/SK,无法查询官方素材库", channel.Id)
 	}

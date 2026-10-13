@@ -1445,25 +1445,17 @@ func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
 	updateUserUsedQuotaAndRequestCount(id, quota, 1)
 }
 
-<<<<<<< HEAD
 // UpdateUserUsedQuotaDelta 只调整 used_quota（正=补扣、负=退款冲抵），
 // 不改变 request_count——任务的请求数在预扣时已计 1 次。
-func UpdateUserUsedQuotaDelta(id int, quota int) {
-=======
 // UpdateUserUsedQuota adjusts accumulated usage without changing request count.
-func UpdateUserUsedQuota(id int, quota int) {
->>>>>>> origin/main
+func UpdateUserUsedQuotaDelta(id int, quota int) {
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
 		return
 	}
-<<<<<<< HEAD
-	updateUserUsedQuota(id, quota)
-=======
 	if err := DB.Model(&User{}).Where("id = ?", id).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error; err != nil {
 		common.SysLog(common.LogText("failed to update user used quota: %s", err.Error()))
 	}
->>>>>>> origin/main
 }
 
 func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {

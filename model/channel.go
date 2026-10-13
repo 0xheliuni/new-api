@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -1078,6 +1079,20 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 	return setting
 }
 
+// GetHostOtherSettings 按 prod 的 dto.ChannelOtherSettings 解析 other_settings。
+// 合并 upstream 后 GetOtherSettings 返回 relaykit/dto 的类型，不含 BytePlus/Volc
+// 素材库等 prod 专有字段；只读这些字段的场景用本方法。
+// 注意：不要用本方法的结果回写 SetOtherSettings —— 两个结构体字段集不同，回写会丢字段。
+func (channel *Channel) GetHostOtherSettings() hostdto.ChannelOtherSettings {
+	setting := hostdto.ChannelOtherSettings{}
+	if channel.OtherSettings != "" {
+		if err := common.UnmarshalJsonStr(channel.OtherSettings, &setting); err != nil {
+			common.SysLog(common.LogText("failed to unmarshal host other settings: channel_id=%d, error=%v", channel.Id, err))
+		}
+	}
+	return setting
+}
+
 func (channel *Channel) SetOtherSettings(setting dto.ChannelOtherSettings) {
 	settingBytes, err := common.Marshal(setting)
 	if err != nil {
@@ -1213,7 +1228,7 @@ type ChannelCostInfo struct {
 	CostMode     string
 	CostDiscount float64
 	IsAggregator bool
-	SubSuppliers []dto.ChannelSubSupplier
+	SubSuppliers []hostdto.ChannelSubSupplier
 }
 
 // GetAllUserGroups 一次性载入全部用户当前所属分组（主库），返回 username -> group。
@@ -1244,7 +1259,7 @@ func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {
 	for _, ch := range channels {
 		info := &ChannelCostInfo{Id: ch.Id, Name: ch.Name}
 		if ch.Setting != nil && *ch.Setting != "" {
-			var s dto.ChannelSettings
+			var s hostdto.ChannelSettings
 			if err := common.UnmarshalJsonStr(*ch.Setting, &s); err == nil {
 				info.CostRatio = s.CostRatio
 				info.CostMode = s.CostMode

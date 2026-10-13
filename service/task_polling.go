@@ -18,6 +18,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -384,7 +385,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 		}
 
 		// Suno 任务成功后异步触发 CloudPaste 转存
-		if responseItem.Status == model.TaskStatusSuccess {
+		if responseItem.TaskInfo.Status == model.TaskStatusSuccess {
 			triggerMediaTransfer(task)
 		}
 	}

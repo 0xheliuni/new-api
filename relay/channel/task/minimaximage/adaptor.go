@@ -16,8 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	reltypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -84,7 +84,7 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionImageToVideo)
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -147,41 +147,44 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(data), nil
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(err, string(types.ErrorCodeBadResponse), http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(err, string(reltypes.ErrorCodeBadResponse), http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, service.TaskErrorWrapper(
+		return nil, service.TaskErrorWrapper(
 			errors.New(string(responseBody)),
-			string(types.ErrorCodeBadResponseStatusCode),
+			string(reltypes.ErrorCodeBadResponseStatusCode),
 			resp.StatusCode,
 		)
 	}
 
 	var sResp asyncSubmitResponse
 	if err := common.Unmarshal(responseBody, &sResp); err != nil {
-		return "", nil, service.TaskErrorWrapper(err, string(types.ErrorCodeBadResponseBody), http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(err, string(reltypes.ErrorCodeBadResponseBody), http.StatusInternalServerError)
 	}
 	if sResp.BaseResp.StatusCode != 0 {
-		return "", nil, service.TaskErrorWrapper(
+		return nil, service.TaskErrorWrapper(
 			errors.New(sResp.BaseResp.StatusMsg),
-			string(types.ErrorCodeBadResponse),
+			string(reltypes.ErrorCodeBadResponse),
 			http.StatusBadGateway,
 		)
 	}
 
-	c.JSON(http.StatusOK, sResp)
-	return sResp.TaskID, responseBody, nil
+	return &channel.TaskSubmitResponse{
+		UpstreamTaskID: sResp.TaskID,
+		TaskData:       responseBody,
+		ClientResponse: sResp,
+	}, nil
 }
 
 // FetchTask polls GET /v1/content/images/tasks/{task_id}.
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok || taskID == "" {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	taskID := task.GetUpstreamTaskID()
+	if taskID == "" {
 		return nil, errors.New("minimax image: invalid task_id")
 	}
 	url := fmt.Sprintf("%s/v1/content/images/tasks/%s", baseUrl, taskID)
@@ -203,7 +206,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 //
 // MiniMax signals completion by omitting the "status" field and including a
 // "data" array; a non-empty "status" means still pending.
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var r fetchedTaskResponse
 	if err := common.Unmarshal(respBody, &r); err != nil {
 		return nil, fmt.Errorf("minimax image: parse task result: %w", err)

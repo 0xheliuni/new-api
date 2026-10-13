@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/samber/lo"
 
@@ -25,6 +26,15 @@ import (
 // ============================
 // Request / Response structures
 // ============================
+
+var ModelList = []string{
+	"wanx2.1-t2v-turbo",
+	"wanx2.1-t2v-plus",
+	"wanx2.1-i2v-turbo",
+	"wanx2.1-i2v-plus",
+}
+
+var ChannelName = "ali"
 
 // AliVideoRequest 阿里通义万相视频生成请求
 type AliVideoRequest struct {
@@ -80,9 +90,9 @@ type AliVideoOutput struct {
 
 // AliUsage 使用统计
 type AliUsage struct {
-	Duration   dto.IntValue `json:"duration,omitempty"`
-	VideoCount dto.IntValue `json:"video_count,omitempty"`
-	SR         dto.IntValue `json:"SR,omitempty"`
+	Duration   kitdto.IntValue `json:"duration,omitempty"`
+	VideoCount kitdto.IntValue `json:"video_count,omitempty"`
+	SR         kitdto.IntValue `json:"SR,omitempty"`
 }
 
 type AliMetadata struct {
@@ -374,54 +384,52 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
-// DoResponse handles upstream response
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+// ParseResponse handles upstream response, returns TaskSubmitResponse.
+func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
 
 	// 解析阿里响应
 	var aliResp AliVideoResponse
 	if err := common.Unmarshal(responseBody, &aliResp); err != nil {
-		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 
 	// 检查错误
 	if aliResp.Code != "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s: %s", aliResp.Code, aliResp.Message), "ali_api_error", resp.StatusCode)
-		return
+		return nil, service.TaskErrorWrapper(fmt.Errorf("%s: %s", aliResp.Code, aliResp.Message), "ali_api_error", resp.StatusCode)
 	}
 
 	if aliResp.Output.TaskID == "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
 
 	// 转换为 OpenAI 格式响应
-	openAIResp := dto.NewOpenAIVideo()
+	openAIResp := kitdto.NewOpenAIVideo()
 	openAIResp.ID = info.PublicTaskID
 	openAIResp.TaskID = info.PublicTaskID
-	openAIResp.Model = c.GetString("model")
-	if openAIResp.Model == "" && info != nil {
-		openAIResp.Model = info.OriginModelName
+	model := c.GetString("model")
+	if model == "" && info != nil {
+		model = info.OriginModelName
 	}
+	openAIResp.Model = model
 	openAIResp.Status = convertAliStatus(aliResp.Output.TaskStatus)
 	openAIResp.CreatedAt = common.GetTimestamp()
 
-	// 返回 OpenAI 格式
-	c.JSON(http.StatusOK, openAIResp)
-
-	return aliResp.Output.TaskID, responseBody, nil
+	return &channel.TaskSubmitResponse{
+		UpstreamTaskID: aliResp.Output.TaskID,
+		TaskData:       responseBody,
+		ClientResponse: openAIResp,
+	}, nil
 }
 
 // FetchTask 查询任务状态
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	taskID := task.GetUpstreamTaskID()
+	if taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
@@ -450,7 +458,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // ParseTaskResult 解析任务结果
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var aliResp AliVideoResponse
 	if err := common.Unmarshal(respBody, &aliResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
@@ -492,7 +500,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		return nil, errors.Wrap(err, "unmarshal ali response failed")
 	}
 
-	openAIResp := dto.NewOpenAIVideo()
+	openAIResp := kitdto.NewOpenAIVideo()
 	openAIResp.ID = task.TaskID
 	openAIResp.Status = convertAliStatus(aliResp.Output.TaskStatus)
 	openAIResp.Model = task.Properties.OriginModelName
@@ -510,12 +518,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 
 	// 错误处理
 	if aliResp.Code != "" {
-		openAIResp.Error = &dto.OpenAIVideoError{
+		openAIResp.Error = &kitdto.OpenAIVideoError{
 			Code:    aliResp.Code,
 			Message: aliResp.Message,
 		}
 	} else if aliResp.Output.Code != "" {
-		openAIResp.Error = &dto.OpenAIVideoError{
+		openAIResp.Error = &kitdto.OpenAIVideoError{
 			Code:    aliResp.Output.Code,
 			Message: aliResp.Output.Message,
 		}
@@ -527,14 +535,14 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 func convertAliStatus(aliStatus string) string {
 	switch aliStatus {
 	case "PENDING":
-		return dto.VideoStatusQueued
+		return kitdto.VideoStatusQueued
 	case "RUNNING":
-		return dto.VideoStatusInProgress
+		return kitdto.VideoStatusInProgress
 	case "SUCCEEDED":
-		return dto.VideoStatusCompleted
+		return kitdto.VideoStatusCompleted
 	case "FAILED", "CANCELED", "UNKNOWN":
-		return dto.VideoStatusFailed
+		return kitdto.VideoStatusFailed
 	default:
-		return dto.VideoStatusUnknown
+		return kitdto.VideoStatusUnknown
 	}
 }

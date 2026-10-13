@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -1016,7 +1017,7 @@ func DeleteSelf(c *gin.Context) {
 // 返回值约定：
 //   - ok=true 时 user 可直接 Insert；其余三个返回值为零。
 //   - ok=false 时 code 是 i18n 键；validatorErr 只在 code == MsgUserInputInvalid 时非 nil。
-func applyCreateUserRequest(req dto.CreateUserRequest, callerRole int) (
+func applyCreateUserRequest(req hostdto.CreateUserRequest, callerRole int) (
 	cleanUser model.User, code string, validatorErr error, ok bool,
 ) {
 	req.Username = strings.TrimSpace(req.Username)
@@ -1125,7 +1126,7 @@ func ensureUsernameNotTaken(
 }
 
 func CreateUser(c *gin.Context) {
-	var req dto.CreateUserRequest
+	var req hostdto.CreateUserRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -1160,9 +1161,7 @@ func CreateUser(c *gin.Context) {
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}
-		touched, err := updateAdminPermissionsForUserInTx(c, tx, cleanUser.Id, cleanUser.Role, req.AdminPermissions)
-		authzTouched = touched
-		return err
+		return nil
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -1175,8 +1174,9 @@ func CreateUser(c *gin.Context) {
 	}
 	cleanUser.FinishInsert(0)
 
-	auditParams["username"] = cleanUser.Username
-	recordManageAuditFor(c, cleanUser.Id, "user.create", auditParams)
+	recordManageAuditFor(c, cleanUser.Id, "user.create", map[string]any{
+		"username": cleanUser.Username,
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1289,7 +1289,7 @@ func ManageUser(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		if err := model.InvalidateUserCache(user.Id); err != nil {
+		if err := model.InvalidateUserTokensCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate user cache for user %d: %s", user.Id, err.Error()))
 		}
 		recordManageAuditFor(c, user.Id, "user.volc_asset_limit", map[string]interface{}{
@@ -1323,6 +1323,8 @@ func ManageUser(c *gin.Context) {
 		user.Role = common.RoleCommonUser
 	default:
 		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
 
 	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserManage, service.AdminUserManageContext{UserID: user.Id, Action: req.Action})
 	if authorization == nil {

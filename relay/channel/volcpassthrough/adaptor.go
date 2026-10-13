@@ -39,11 +39,17 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	// info.ChannelOtherSettings is relaykit/dto.ChannelOtherSettings; convert to
+	// dto.ChannelOtherSettings via JSON round-trip so the Volc-specific methods are available.
+	var otherSettings dto.ChannelOtherSettings
+	if data, err := common.Marshal(info.ChannelOtherSettings); err == nil {
+		_ = common.Unmarshal(data, &otherSettings)
+	}
 	a.cred = ChannelCredentials{
 		BaseURL:       info.ChannelBaseUrl,
 		APIKey:        info.ApiKey,
 		Proxy:         info.ChannelSetting.Proxy,
-		OtherSettings: info.ChannelOtherSettings,
+		OtherSettings: otherSettings,
 	}
 }
 
@@ -74,7 +80,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 让 seedance 的档位与视频输入探测走 metadata 快路径,与既有渠道行为一致。
 	promoteTopLevelFields(raw, &req)
 
-	info.Action = constant.TaskActionGenerate
+	info.Action = constant.TaskActionImageToVideo
 	c.Set("task_request", req)
 	return nil
 }
@@ -130,15 +136,11 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
-// DoResponse 原样回写官方响应体。
-//
-// 不构造 OpenAIVideo 外壳:客户按官方文档解析 {"id": "cgt-..."},站点若换成
-// task_xxxx 就与官方不一致了。因此上游 id 同时作为公开 id 落库,后续查询按同一
-// id 回源官方 —— 这也是同源约束的一部分。
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
+// ParseResponse 原样回写官方响应体。
+func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
 
@@ -146,28 +148,28 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		ID string `json:"id"`
 	}
 	if err := common.Unmarshal(responseBody, &submitted); err != nil {
-		return "", nil, service.TaskErrorWrapper(fmt.Errorf("unmarshal submit response failed: %w, body: %s", err, responseBody),
+		return nil, service.TaskErrorWrapper(fmt.Errorf("unmarshal submit response failed: %w, body: %s", err, responseBody),
 			"unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if submitted.ID == "" {
-		return "", nil, service.TaskErrorWrapper(fmt.Errorf("upstream returned empty task id"),
+		return nil, service.TaskErrorWrapper(fmt.Errorf("upstream returned empty task id"),
 			"invalid_response", http.StatusInternalServerError)
 	}
 
 	// 公开 ID 对齐上游 ID:客户拿到的 id 必须能直接用于官方格式的查询路径。
 	info.PublicTaskID = submitted.ID
 
-	CopyDownstreamResponseHeaders(c.Writer.Header(), resp.Header)
-	c.Writer.WriteHeader(resp.StatusCode)
-	_, _ = c.Writer.Write(responseBody)
-
-	return submitted.ID, responseBody, nil
+	return &channel.TaskSubmitResponse{
+		UpstreamTaskID: submitted.ID,
+		TaskData:       responseBody,
+		ClientResponse: json.RawMessage(responseBody),
+	}, nil
 }
 
 // FetchTask 供轮询链路查询任务状态,与提交同源(同一渠道 BaseURL + 同一密钥)。
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok || taskID == "" {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	taskID := task.GetUpstreamTaskID()
+	if taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 	uri := strings.TrimRight(baseUrl, "/") + generationsTaskPath + "/" + taskID
@@ -188,7 +190,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 // ParseTaskResult 把官方任务状态映射为站点内部状态。
 // 成功时带回 usage.total_tokens,轮询结算据此重算实际额度
 // (见 service.settleTaskBillingOnComplete 的 token 重算分支)。
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var upstream struct {
 		Status  string `json:"status"`
 		Content struct {

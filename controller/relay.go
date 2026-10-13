@@ -777,7 +777,7 @@ func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
 // 视频任务提交被上游拒绝时用户无从排查。任务提交失败与计费直接相关（预扣后
 // 静默退款）且低频，因此不受 ERROR_LOG_ENABLED 开关限制、始终记录——该环境
 // 变量默认关闭，若沿用开关此日志在多数部署中永远不会出现。
-func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
+func recordTaskErrorLog(c *gin.Context, taskErr *taskdto.TaskError) {
 	if taskErr == nil || taskErr.LocalError {
 		// 本地错误（参数校验/额度不足等）与聊天路径口径一致，不写错误日志。
 		return
@@ -791,19 +791,17 @@ func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
 	tokenId := c.GetInt("token_id")
 	userGroup := c.GetString("group")
 	channelId := c.GetInt("channel_id")
-	other := make(map[string]interface{})
+	logOther := model.NewLogOther()
 	if c.Request != nil && c.Request.URL != nil {
-		other["request_path"] = c.Request.URL.Path
+		logOther.SetAdmin("request_path", c.Request.URL.Path)
 	}
-	other["error_type"] = "task_error"
-	other["error_code"] = taskErr.Code
-	other["status_code"] = taskErr.StatusCode
-	other["channel_id"] = channelId
-	other["channel_name"] = c.GetString("channel_name")
-	other["channel_type"] = c.GetInt("channel_type")
-	adminInfo := make(map[string]interface{})
-	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-	other["admin_info"] = adminInfo
+	logOther.SetAdmin("error_type", "task_error")
+	logOther.SetAdmin("error_code", taskErr.Code)
+	logOther.SetAdmin("status_code", taskErr.StatusCode)
+	logOther.SetAdmin("channel_id", channelId)
+	logOther.SetAdmin("channel_name", c.GetString("channel_name"))
+	logOther.SetAdmin("channel_type", c.GetInt("channel_type"))
+	logOther.SetAdmin("use_channel", c.GetStringSlice("use_channel"))
 	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 	if startTime.IsZero() {
 		startTime = time.Now()
@@ -811,31 +809,14 @@ func recordTaskErrorLog(c *gin.Context, taskErr *dto.TaskError) {
 	useTimeSeconds := int(time.Since(startTime).Seconds())
 	model.RecordErrorLog(c, userId, channelId, modelName, tokenName,
 		buildTaskErrorLogContent(taskErr, c.GetString(common.RequestIdKey)),
-		tokenId, useTimeSeconds, false, userGroup, other)
-}
-	other["error_code"] = taskErr.Code
-	other["status_code"] = taskErr.StatusCode
-	other["channel_id"] = channelId
-	other["channel_name"] = c.GetString("channel_name")
-	other["channel_type"] = c.GetInt("channel_type")
-	adminInfo := make(map[string]interface{})
-	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-	other["admin_info"] = adminInfo
-	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-	if startTime.IsZero() {
-		startTime = time.Now()
-	}
-	useTimeSeconds := int(time.Since(startTime).Seconds())
-	model.RecordErrorLog(c, userId, channelId, modelName, tokenName,
-		buildTaskErrorLogContent(taskErr, c.GetString(common.RequestIdKey)),
-		tokenId, useTimeSeconds, false, userGroup, other)
+		tokenId, useTimeSeconds, false, userGroup, logOther)
 }
 
 // buildTaskErrorLogContent 组装任务错误日志内容：与聊天错误日志同格式
 // （status_code=N, 完整上游报错文字），上游 Request ID 换成系统 request id；
 // 消息为空才落回 error_code 兜底。上游本身也是网关时其 message 可能已带
 // "status_code=" 前缀（同族网关的兜底文案会原样透传回来），不重复叠加。
-func buildTaskErrorLogContent(taskErr *dto.TaskError, requestId string) string {
+func buildTaskErrorLogContent(taskErr *taskdto.TaskError, requestId string) string {
 	msg := common.MaskSensitiveInfo(taskErr.Message)
 	msg = replaceUpstreamRequestId(msg, requestId)
 	if msg == "" {
@@ -902,10 +883,9 @@ func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
 		return false
-	return types.NewOpenAIError(err, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
+	}
+	return decideTaskRetry(c, taskErr, retryTimes).Action == "retry"
 }
-
-// decideTaskRetry is the single retry decision for task submissions. The
 // reason is recorded in the request policy decision events of the log details.
 func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int) service.PolicyDecision {
 	stop := service.PolicyDecision{Action: "stop", Source: "system"}

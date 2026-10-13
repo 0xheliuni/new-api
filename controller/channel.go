@@ -18,6 +18,7 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -1238,7 +1239,11 @@ func UpdateChannel(c *gin.Context) {
 	if channel.Setting != nil {
 		var newSetting dto.ChannelSettings
 		if err := common.UnmarshalJsonStr(*channel.Setting, &newSetting); err == nil {
-			appendCostVersionIfChanged(c, channel.Id, &newSetting)
+			var hostSetting hostdto.ChannelSettings
+			if data, me := common.Marshal(newSetting); me == nil {
+				_ = common.Unmarshal(data, &hostSetting)
+			}
+			appendCostVersionIfChanged(c, channel.Id, &hostSetting)
 		}
 	}
 	if proxyChanged {

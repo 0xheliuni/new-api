@@ -38,16 +38,12 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/sub2api"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	taskAigc "github.com/QuantumNous/new-api/relay/channel/task/aigc"
-	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
-	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
-	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
 	taskminimaximage "github.com/QuantumNous/new-api/relay/channel/task/minimaximage"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
-	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
@@ -173,32 +169,17 @@ func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, p
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {
-		case constant.ChannelTypeAli:
-			return &taskali.TaskAdaptor{}
-		case constant.ChannelTypeKling:
-			return &kling.TaskAdaptor{}
-		case constant.ChannelTypeJimeng:
-			return &taskjimeng.TaskAdaptor{}
-		case constant.ChannelTypeVertexAi:
-			return &taskvertex.TaskAdaptor{}
-		case constant.ChannelTypeVidu:
-			return &taskVidu.TaskAdaptor{}
-		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
-			return &taskdoubao.TaskAdaptor{}
-		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
-			return &tasksora.TaskAdaptor{}
-		case constant.ChannelTypeGemini:
-			return &taskGemini.TaskAdaptor{}
+		case constant.ChannelTypeVertexAi,
+			constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine,
+			constant.ChannelTypeSora, constant.ChannelTypeOpenAI,
+			constant.ChannelTypeAIGCVideo,
+			constant.ChannelTypeSeedance3rd,
+			constant.ChannelTypeVolcPassthrough,
+			constant.ChannelTypeMinimaxImage:
+			// Native Go adaptors — handled by GetTaskAdaptor directly.
+			return nil, false
 		case constant.ChannelTypeMiniMax:
 			return nil, false
-		case constant.ChannelTypeAIGCVideo:
-			return &taskAigc.TaskAdaptor{}
-		case constant.ChannelTypeSeedance3rd:
-			return &taskSeedance3rd.TaskAdaptor{}
-		case constant.ChannelTypeVolcPassthrough:
-			return &volcpassthrough.TaskAdaptor{}
-		case constant.ChannelTypeMinimaxImage:
-			return &taskminimaximage.TaskAdaptor{}
 		}
 	}
 	if key, ok := taskPluginKeys[platform]; ok {
@@ -230,6 +211,25 @@ func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, strin
 }
 
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	// Check for native Go adaptors first.
+	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
+		switch channelType {
+		case constant.ChannelTypeVertexAi:
+			return &taskvertex.TaskAdaptor{}
+		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
+			return &taskdoubao.TaskAdaptor{}
+		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+			return &tasksora.TaskAdaptor{}
+		case constant.ChannelTypeAIGCVideo:
+			return &taskAigc.TaskAdaptor{}
+		case constant.ChannelTypeSeedance3rd:
+			return &taskSeedance3rd.TaskAdaptor{}
+		case constant.ChannelTypeVolcPassthrough:
+			return &volcpassthrough.TaskAdaptor{}
+		case constant.ChannelTypeMinimaxImage:
+			return &taskminimaximage.TaskAdaptor{}
+		}
+	}
 	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
 	if !ok {
 		return nil

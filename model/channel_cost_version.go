@@ -140,7 +140,7 @@ var ErrBaselineVersion = errors.New("cannot delete the baseline (effective_from=
 func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		q := tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", channelId)
-		if !common.UsingSQLite {
+		if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		var rows []ChannelCostVersion

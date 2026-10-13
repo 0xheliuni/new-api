@@ -572,7 +572,7 @@ func applyUpstreamTaskIdOverride(data []byte, task *model.Task) []byte {
 	if err != nil || ch == nil {
 		return data
 	}
-	if !ch.GetOtherSettings().ExposeUpstreamTaskId {
+	if !ch.GetHostOtherSettings().ExposeUpstreamTaskId {
 		return data
 	}
 

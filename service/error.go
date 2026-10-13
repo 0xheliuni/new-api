@@ -206,10 +206,10 @@ const taskUpstreamBodyPreviewLimit = 512
 // 全部过 MaskSensitiveInfo 脱敏。上游 401/403 属渠道凭证问题，不透传给客户
 // （避免误导客户排查自己的 key，也避免泄露渠道侧信息），改写为 503 + 固定提示，
 // 让重试逻辑照常换渠道。
-func TaskErrorFromUpstreamBody(statusCode int, body []byte) *dto.TaskError {
+func TaskErrorFromUpstreamBody(statusCode int, body []byte) *taskdto.TaskError {
 	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
 		msg := "上游渠道认证失败，请联系管理员"
-		return &dto.TaskError{
+		return &taskdto.TaskError{
 			Code:       "upstream_auth_failed",
 			Message:    msg,
 			StatusCode: http.StatusServiceUnavailable,
@@ -239,7 +239,7 @@ func TaskErrorFromUpstreamBody(statusCode int, body []byte) *dto.TaskError {
 	}
 	message = common.MaskSensitiveInfo(message)
 
-	return &dto.TaskError{
+	return &taskdto.TaskError{
 		Code:       code,
 		Message:    message,
 		StatusCode: statusCode,

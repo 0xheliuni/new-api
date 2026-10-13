@@ -23,17 +23,23 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const CHANNEL_TYPE_OLLAMA = 4
 
-export const CHANNEL_TYPE_ADVANCED_CUSTOM = 61
+export const CHANNEL_TYPE_ADVANCED_CUSTOM = 58
 
-export const CHANNEL_TYPE_SUB2API = 62
+export const CHANNEL_TYPE_SUB2API = 59
 
-export const CHANNEL_TYPE_NEW_API = 63
+export const CHANNEL_TYPE_NEW_API = 60
 
-export const CHANNEL_TYPE_TASK_PLUGIN = 64
+export const CHANNEL_TYPE_TASK_PLUGIN = 61
 
-export const CHANNEL_TYPE_VLLM = 65
+export const CHANNEL_TYPE_VLLM = 62
 
-export const CHANNEL_TYPE_SGLANG = 66
+export const CHANNEL_TYPE_SGLANG = 63
+
+export const CHANNEL_TYPE_AIGC_VIDEO = 64
+
+export const CHANNEL_TYPE_SEEDANCE_3RD = 65
+
+export const CHANNEL_TYPE_VOLC_PASSTHROUGH = 66
 
 export const CHANNEL_TYPE_MINIMAX_IMAGE = 67
 
@@ -92,15 +98,15 @@ export const CHANNEL_TYPES = {
   55: 'Sora',
   56: 'Replicate',
   57: 'ChatGPT Subscription (Codex)',
-  58: 'OpenAI Video',
-  59: 'seedance(第三方)',
-  60: '字节火山透传',
-  61: 'Advanced Custom',
-  62: 'Sub2API',
-  63: 'New API',
-  64: 'Task Plugin',
-  65: 'vLLM',
-  66: 'SGLang',
+  58: 'Advanced Custom',
+  59: 'Sub2API',
+  60: 'New API',
+  61: 'Task Plugin',
+  62: 'vLLM',
+  63: 'SGLang',
+  64: 'OpenAI Video',
+  65: 'seedance(第三方)',
+  66: '字节火山透传',
   67: 'MiniMax Image',
 } as const
 
@@ -171,23 +177,23 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   55: { descriptionKey: 'Connect to OpenAI Sora video generation services' },
   56: { descriptionKey: 'Access hosted model predictions through Replicate' },
   57: { descriptionKey: 'Access Codex using ChatGPT subscription credentials' },
-  58: { descriptionKey: 'Connect to OpenAI video generation services' },
-  59: { descriptionKey: 'Connect to Seedance video generation through a third-party gateway' },
-  60: { descriptionKey: 'Connect to Volcengine Ark with full passthrough of Bytedance control-plane APIs' },
-  61: {
+  58: {
     descriptionKey:
       'Configure endpoint routing, authentication and protocol conversion for different upstream services',
     detailKey:
       "New API's flexible channel lets you configure upstream addresses and authentication per endpoint, choose native forwarding or supported protocol conversions, and configure model listing and balance queries independently",
     badge: { labelKey: 'Flexible integration', tone: 'primary' },
   },
-  62: { descriptionKey: 'Connect to model services through a Sub2API gateway' },
-  63: {
+  59: { descriptionKey: 'Connect to model services through a Sub2API gateway' },
+  60: {
     descriptionKey:
       'Connect to New API model services with support for multiple task plugins',
   },
-  65: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
-  66: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
+  63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  64: { descriptionKey: 'Connect to OpenAI video generation services' },
+  65: { descriptionKey: 'Connect to Seedance video generation through a third-party gateway' },
+  66: { descriptionKey: 'Connect to Volcengine Ark with full passthrough of Bytedance control-plane APIs' },
   67: { descriptionKey: 'Connect to MiniMax image generation services' },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
@@ -195,9 +201,9 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 >
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 63, 61, 62, 64, 42, 34, 20,
-  4, 65, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56, 58, 59, 60, 66, 67,
+  1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
+  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
+  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56, 64, 65, 66, 63, 67,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -575,10 +581,10 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   50: 'Format: AccessKey|SecretKey (or just ApiKey if upstream is New API)',
   51: 'Format: Access Key ID|Secret Access Key',
   57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id)',
-  62: 'Enter API key for this channel',
-  63: 'Enter API key for this channel',
-  65: 'vLLM API key, or EMPTY if authentication is disabled',
-  66: 'SGLang API key, or EMPTY if authentication is disabled',
+  59: 'Enter API key for this channel',
+  60: 'Enter API key for this channel',
+  62: 'vLLM API key, or EMPTY if authentication is disabled',
+  63: 'SGLang API key, or EMPTY if authentication is disabled',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

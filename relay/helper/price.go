@@ -217,7 +217,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 
 	if !success {
 		if isMjSpeedModel(info.OriginModelName) {
-			return types.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
+			return hosttypes.PriceData{}, modelPriceNotConfiguredError(c, info.OriginModelName, info.UserId)
 		}
 		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
 		if ok {
