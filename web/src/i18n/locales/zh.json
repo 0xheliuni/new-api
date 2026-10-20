@@ -1869,7 +1869,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "强制返回语法合法的 JSON",
@@ -7609,6 +7609,14 @@
     "{{provider}} returned empty user info, please check settings": "{{provider}} 获取用户信息为空，请检查设置",
     "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "{{provider}} 充值成功，充值额度: {{quota}}，支付金额: {{amount}}",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "身份验证已通过，请前往服务提供商完成账户绑定。",
-    "Zhipu GLM": "智谱GLM"
+    "Zhipu GLM": "智谱GLM",
+    "Supply Type": "供应方式",
+    "Pool Supplier": "号池供应商",
+    "Only used for display and filtering in the channel list; does not affect routing or billing": "仅用于渠道列表展示与筛选，不影响路由和计费",
+    "Set supply type for selected channels": "为所选渠道设置供应方式",
+    "Set Supply Type": "设置供应方式",
+    "Set the supply type for {{count}} selected channel(s).": "为已选择的 {{count}} 个渠道设置供应方式。",
+    "Supply type set successfully": "供应方式设置成功",
+    "Failed to set supply type": "设置供应方式失败"
   }
 }

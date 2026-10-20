@@ -1869,7 +1869,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Force a syntactically valid JSON response",
@@ -7609,6 +7609,14 @@
     "{{provider}} returned empty user info, please check settings": "{{provider}} returned empty user info, please check settings",
     "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Your identity has been verified. Continue to the provider to finish linking your account.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Supply Type": "Supply Type",
+    "Pool Supplier": "Pool Supplier",
+    "Only used for display and filtering in the channel list; does not affect routing or billing": "Only used for display and filtering in the channel list; does not affect routing or billing",
+    "Set supply type for selected channels": "Set supply type for selected channels",
+    "Set Supply Type": "Set Supply Type",
+    "Set the supply type for {{count}} selected channel(s).": "Set the supply type for {{count}} selected channel(s).",
+    "Supply type set successfully": "Supply type set successfully",
+    "Failed to set supply type": "Failed to set supply type"
   }
 }

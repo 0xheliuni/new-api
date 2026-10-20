@@ -92,6 +92,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Sheet,
   SheetClose,
@@ -2554,6 +2555,39 @@ export function ChannelMutateDrawer({
   const basicSection = (
     <div className='scroll-mt-4'>
       <ChannelBasicSection>
+        <FormField
+          control={form.control}
+          name='supply_type'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Supply Type')}</FormLabel>
+              <FormControl>
+                <ToggleGroup
+                  value={[field.value]}
+                  onValueChange={(values) => {
+                    if (values[0] === 'key' || values[0] === 'pool') {
+                      field.onChange(values[0])
+                    }
+                  }}
+                  variant='outline'
+                  size='sm'
+                  aria-label={t('Supply Type')}
+                >
+                  <ToggleGroupItem value='key'>{t('Key')}</ToggleGroupItem>
+                  <ToggleGroupItem value='pool'>
+                    {t('Pool Supplier')}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Only used for display and filtering in the channel list; does not affect routing or billing'
+                )}
+              </FormDescription>
+            </FormItem>
+          )}
+        />
+
         <div className='grid gap-4'>
           <FormField
             control={form.control}

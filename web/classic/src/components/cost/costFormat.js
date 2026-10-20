@@ -17,18 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-// 成本报表的金额口径：与站点管理员在「系统设置 → 运营设置 → 额度展示类型」
-// (quota_display_type) 里选择的口径保持一致 —— 与 helpers/render.jsx 的
-// renderQuota()/getQuotaDisplayType() 读取同一个 localStorage key。
+// 成本报表的金额口径：后端每个金额字段的货币由字段名声明 —— revenue_usd /
+// list_usd / refund_usd 是美元，cost_cny / profit_cny 是人民币（成本 = 刊例$ ×
+// 渠道倍率，倍率单位是「每 $1 刊例记 ¥N」）。展示时按查询汇率换算，主副行是
+// 同一笔钱的两种货币：
 //
-// 后端每个金额只是**一个数 N**，它的货币由额度展示类型声明；筛选栏汇率**不缩放
-// 这个数**，只用来推导另一种货币的副行：
+//   原生 USD → $N，¥ (N × 汇率)
+//   原生 CNY → ¥N，$ (N ÷ 汇率)
 //
-//   展示 CNY → 主行 ¥N，副行 $ (N ÷ 汇率)
-//   展示 USD → 主行 $N，副行 ¥ (N × 汇率)
-//
-// 所以切换展示类型只是给同一个 N 换标签并翻转推导方向，绝不会把主行数值乘大。
-// 图表只有一条轴，走 getCostChartCurrency() 只贴符号、同样不缩放。
+// 额度展示类型 (quota_display_type，与 helpers/render.jsx 同一个 localStorage
+// key) 只决定哪种货币做主行。把 cost_cny 直接贴 $ 会让成本虚高汇率倍。
+// 图表只有一条轴，走 getCostChartCurrency().fromCny() 换算一次后贴符号。
 
 import { getCurrencyConfig } from '../../helpers/render';
 
@@ -51,42 +50,28 @@ export function formatCny(value, digits = 2) {
 }
 
 /**
- * 成本报表的金额展示：amount 已经是展示货币下的那个数 N，主行只贴符号，
- * 副行用筛选栏汇率推导出另一种货币（见文件头注释）。
+ * 成本报表的双币种金额：按字段原生货币换算出 USD/CNY 两个值，展示类型决定主行。
  *
- * @param {number} amount 后端返回的单一金额，单位即展示货币
+ * @param {number} amount 后端返回的金额
+ * @param {'usd'|'cny'} native 该字段的原生货币（*_usd / *_cny）
  * @param {'usd'|'cny'} primary 展示类型决定的主行货币
- * @param {number} exchangeRate 筛选栏汇率，仅用于推导副行
+ * @param {number} exchangeRate 查询汇率
  * @param {number} digits
  * @returns {{primary: string, secondary: string}}
  */
-export function resolveDualMoney(amount, primary, exchangeRate, digits = 2) {
+export function resolveDualMoney(
+  amount,
+  native,
+  primary,
+  exchangeRate,
+  digits = 2,
+) {
   const n = Number(amount || 0);
+  const usd = native === 'usd' ? n : deriveUsdFromCny(n, exchangeRate);
+  const cny = native === 'cny' ? n : deriveCnyFromUsd(n, exchangeRate);
   return primary === 'cny'
-    ? {
-        primary: formatCny(n, digits),
-        secondary: formatUsd(deriveUsdFromCny(n, exchangeRate), digits),
-      }
-    : {
-        primary: formatUsd(n, digits),
-        secondary: formatCny(deriveCnyFromUsd(n, exchangeRate), digits),
-      };
-}
-
-/**
- * 展示货币下的利润：后端 profit_cny = revenue_usd × 汇率 − cost_cny，
- * 只把汇率混进了一边，汇率 ≠ 1 时三个主行数字就对不上账。
- * 统一用同一口径的两个数相减重算。
- */
-export function profitAmountOf(row) {
-  return (Number(row?.revenue_usd) || 0) - (Number(row?.cost_cny) || 0);
-}
-
-/** 利润率：用重算后的同口径金额相除。 */
-export function profitRateOf(row) {
-  const revenue = Number(row?.revenue_usd) || 0;
-  if (!revenue) return 0;
-  return profitAmountOf(row) / revenue;
+    ? { primary: formatCny(cny, digits), secondary: formatUsd(usd, digits) }
+    : { primary: formatUsd(usd, digits), secondary: formatCny(cny, digits) };
 }
 
 /** 用当前查询生效的汇率，把仅有人民币的字段（成本/利润）换算出美元。 */
@@ -126,12 +111,11 @@ export function effectiveCostRatioOf(row) {
  * CNY → ¥；CUSTOM → 自定义符号；
  * USD / TOKENS → $（金额用 token 表达无意义，与新前端 getBillingDisplayMeta 同口径）。
  *
- * format() 接受的是**展示货币下的那个数 N**，只贴符号、不做换算 —— 后端返回的
- * 金额已经是展示货币口径（见文件头注释），再乘一次 rateFromUsd 就会把本该只是
- * 换个标签的数值放大。rateFromUsd 仍然导出，供确实需要"站点 USD→本币汇率"的
- * 调用方使用，但成本图表不属于这一类。
+ * 趋势/堆叠点只带 *_cny（按查询汇率算出）。fromCny() 把它换算一次成展示货币：
+ * 展示 CNY 原样；其余先按查询汇率折回美元，再乘站点 USD→展示货币汇率。
+ * format() 只贴符号。
  *
- * @returns {{symbol: string, rateFromUsd: number, format: (amount: number) => string}}
+ * @returns {{symbol: string, rateFromUsd: number, fromCny: (cny: number, queryRate: number) => number, format: (amount: number) => string}}
  */
 export function getCostChartCurrency() {
   const { symbol, rate, type } = getCurrencyConfig();
@@ -142,6 +126,10 @@ export function getCostChartCurrency() {
   return {
     symbol: displaySymbol,
     rateFromUsd,
+    fromCny: (cny, queryRate) =>
+      type === 'CNY'
+        ? Number(cny) || 0
+        : deriveUsdFromCny(cny, queryRate) * rateFromUsd,
     format: (amount, digits = 2) =>
       `${displaySymbol}${Number(amount || 0).toFixed(digits)}`,
   };

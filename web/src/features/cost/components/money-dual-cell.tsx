@@ -20,10 +20,12 @@ import { cn } from '@/lib/utils'
 import { resolveDualMoney, type MoneyPrimaryCurrency } from '../lib'
 
 interface MoneyDualCellProps {
-  /** The backend's single figure, already in the display currency. */
+  /** The backend's figure, in the currency named by `native`. */
   amount: number | null | undefined
+  /** Currency the backend field is denominated in (`*_usd` vs `*_cny`). */
+  native: MoneyPrimaryCurrency
   primary: MoneyPrimaryCurrency
-  /** Filter rate, used only to derive the secondary line. */
+  /** Query rate used to convert between USD and CNY. */
   exchangeRate: number
   /** Applied to the primary (top) line only, e.g. profit's green/red sign coloring. */
   primaryClassName?: string
@@ -38,6 +40,7 @@ interface MoneyDualCellProps {
  */
 export function MoneyDualCell({
   amount,
+  native,
   primary,
   exchangeRate,
   primaryClassName,
@@ -45,6 +48,7 @@ export function MoneyDualCell({
 }: MoneyDualCellProps) {
   const { primary: primaryText, secondary: secondaryText } = resolveDualMoney(
     amount,
+    native,
     primary,
     exchangeRate
   )

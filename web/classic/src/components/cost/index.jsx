@@ -27,12 +27,7 @@ import { useCostData } from './useCostData';
 import { createCardProPagination } from '../../helpers/utils';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
-import {
-  getMoneyPrimaryCurrency,
-  profitAmountOf,
-  profitRateOf,
-  resolveDualMoney,
-} from './costFormat';
+import { getMoneyPrimaryCurrency, resolveDualMoney } from './costFormat';
 
 const { Text } = Typography;
 
@@ -74,21 +69,25 @@ const CostAccounting = () => {
   const appliedExchangeRate = overview?.exchange_rate || filters.exchangeRate;
   const primaryCurrency = getMoneyPrimaryCurrency();
 
-  const totalsProfit = profitAmountOf(totals);
-  const totalsProfitRate = profitRateOf(totals);
+  // 后端 profit_cny = revenue_usd × 汇率 − cost_cny，两边同为人民币。
+  const totalsProfit = Number(totals.profit_cny) || 0;
+  const totalsProfitRate = Number(totals.profit_rate) || 0;
 
   const revenueMoney = resolveDualMoney(
     totals.revenue_usd,
+    'usd',
     primaryCurrency,
     appliedExchangeRate,
   );
   const costMoney = resolveDualMoney(
     totals.cost_cny,
+    'cny',
     primaryCurrency,
     appliedExchangeRate,
   );
   const profitMoney = resolveDualMoney(
     totalsProfit,
+    'cny',
     primaryCurrency,
     appliedExchangeRate,
   );
@@ -121,6 +120,7 @@ const CostAccounting = () => {
               {
                 resolveDualMoney(
                   totals.refund_usd,
+                  'usd',
                   primaryCurrency,
                   appliedExchangeRate,
                 ).primary

@@ -62,5 +62,16 @@ export function setStatusData(data) {
 }
 
 export function setUserData(data) {
+  // data may be the legacy flat shape or the new {access_token, user, ...} shape.
+  // Normalise to a flat object so the rest of the codebase keeps working.
+  if (data && data.user && data.access_token) {
+    const flat = {
+      ...data.user,
+      access_token: data.access_token,
+      token_type: data.token_type,
+    };
+    localStorage.setItem('user', JSON.stringify(flat));
+    return;
+  }
   localStorage.setItem('user', JSON.stringify(data));
 }

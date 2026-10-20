@@ -24,6 +24,7 @@ import type { InferenceStatus } from './lib/inference-status'
 import type {
   AddChannelRequest,
   BatchDeleteParams,
+  BatchSetSupplyTypeParams,
   BatchSetTagParams,
   Channel,
   ChannelBalanceResponse,
@@ -248,6 +249,20 @@ export async function batchSetChannelTag(
 ): Promise<{ success: boolean; message?: string; data?: number }> {
   const res = await api.post(
     '/api/channel/batch/tag',
+    data,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+/**
+ * Batch set the supply type label (key / pool) for channels
+ */
+export async function batchSetChannelSupplyType(
+  data: BatchSetSupplyTypeParams
+): Promise<{ success: boolean; message?: string; data?: number }> {
+  const res = await api.post(
+    '/api/channel/batch/supply_type',
     data,
     channelActionConfig()
   )

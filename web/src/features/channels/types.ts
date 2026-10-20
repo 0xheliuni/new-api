@@ -37,6 +37,8 @@ export type ChannelInfo = z.infer<typeof channelInfoSchema>
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
+  // 供应方式标签，仅展示与筛选；旧数据可能为空，按 key 处理
+  supply_type: z.string().nullish(),
   key: z.string(),
   openai_organization: z.string().nullish(),
   test_model: z.string().nullish(),
@@ -303,11 +305,15 @@ export type ChannelSortBy =
 
 export type ChannelSortOrder = 'asc' | 'desc'
 
+/** Channel supply label: own API key, or a key-pool supplier. Display/filter only. */
+export type ChannelSupplyType = 'key' | 'pool'
+
 export interface GetChannelsParams {
   p?: number
   page_size?: number
   status?: string // 'enabled', 'disabled', or empty for all
   type?: number
+  supply_type?: ChannelSupplyType
   group?: string
   id_sort?: boolean
   tag_mode?: boolean
@@ -321,6 +327,7 @@ export interface SearchChannelsParams {
   model?: string
   status?: string
   type?: number
+  supply_type?: ChannelSupplyType
   id_sort?: boolean
   tag_mode?: boolean
   sort_by?: ChannelSortBy
@@ -361,6 +368,11 @@ export interface BatchDeleteParams {
 export interface BatchSetTagParams {
   ids: number[]
   tag: string | null
+}
+
+export interface BatchSetSupplyTypeParams {
+  ids: number[]
+  supply_type: ChannelSupplyType
 }
 
 export interface TagOperationParams {

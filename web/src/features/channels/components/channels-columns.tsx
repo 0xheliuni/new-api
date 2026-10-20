@@ -938,6 +938,29 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      // Supply type column (display/filter label only)
+      {
+        id: 'supply_type',
+        accessorFn: (channel) =>
+          (channel as Channel).supply_type === 'pool' ? 'pool' : 'key',
+        header: t('Supply Type'),
+        cell: ({ row }) => {
+          if (isTagAggregateRow(row.original)) return null
+          const isPool = row.getValue('supply_type') === 'pool'
+          return (
+            <StatusBadge
+              label={isPool ? t('Pool Supplier') : t('Key')}
+              variant={isPool ? 'warning' : 'blue'}
+              size='sm'
+              copyable={false}
+              className='-ml-1.5'
+            />
+          )
+        },
+        size: 120,
+        enableSorting: false,
+      },
+
       // Status column
       {
         accessorKey: 'status',

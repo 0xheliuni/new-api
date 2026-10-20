@@ -22,7 +22,7 @@ import { Card, Empty } from '@douyinfe/semi-ui';
 import { VChart } from '@visactor/react-vchart';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
 import { CHART_CONFIG, CARD_PROPS } from '../../constants/dashboard.constants';
-import { getCostChartCurrency, deriveUsdFromCny } from './costFormat';
+import { getCostChartCurrency } from './costFormat';
 
 const MAX_STACK_SERIES = 8;
 
@@ -81,28 +81,25 @@ const STACK_COLORS = [
 ];
 
 // 将 trend 数据（宽表）转换为 VChart 需要的长表。
-// 后端趋势点只带 *_cny：revenue_cny 已乘过一次查询汇率，除回汇率得到展示货币
-// 下的 N；cost_cny 本身是结算成本（采购倍率来的），就是 N。利润 = 收入N − 成本N。
-// currency.format() 只负责贴符号，不再乘汇率。
-function buildTrendData(trend, seriesNames, queryRate) {
+// 后端趋势点只带 *_cny（revenue_cny = 收入$ × 查询汇率，cost_cny = 刊例$ × 渠道
+// 倍率，profit_cny 为两者之差），用 toDisplay 各换算一次成展示货币。
+function buildTrendData(trend, seriesNames, toDisplay) {
   const rows = [];
-  const toN = (cny) => deriveUsdFromCny(cny, queryRate);
   (trend || []).forEach((point) => {
-    const revenueN = toN(point.revenue_cny);
     rows.push({
       date: point.date,
       series: seriesNames.revenue,
-      value: revenueN,
+      value: toDisplay(point.revenue_cny),
     });
     rows.push({
       date: point.date,
       series: seriesNames.cost,
-      value: Number(point.cost_cny) || 0,
+      value: toDisplay(point.cost_cny),
     });
     rows.push({
       date: point.date,
       series: seriesNames.profit,
-      value: revenueN - (Number(point.cost_cny) || 0),
+      value: toDisplay(point.profit_cny),
     });
   });
   return rows;
@@ -168,10 +165,9 @@ const CostCharts = ({
     initVChartSemiTheme({ isWatchingThemeSwitch: true });
   }, []);
 
-  // 展示货币跟随「系统设置 → 运营设置 → 额度展示类型」，只负责贴货币符号；
-  // 金额已是展示货币口径，不再二次换算（见 getCostChartCurrency 注释）。
+  // 展示货币跟随「系统设置 → 运营设置 → 额度展示类型」；后端图表数据都是 *_cny，
+  // 经 fromCny 按查询汇率换算一次再贴符号（见 getCostChartCurrency 注释）。
   const currency = useMemo(() => getCostChartCurrency(), []);
-  // 趋势点只带 *_cny，revenue_cny 需除回查询汇率得到展示货币下的 N。
   const queryRate = Number(exchangeRate) || 0;
 
   const seriesNames = useMemo(
@@ -184,8 +180,11 @@ const CostCharts = ({
   );
 
   const trendData = useMemo(
-    () => buildTrendData(trend, seriesNames, queryRate),
-    [trend, seriesNames, queryRate],
+    () =>
+      buildTrendData(trend, seriesNames, (cny) =>
+        currency.fromCny(cny, queryRate),
+      ),
+    [trend, seriesNames, currency, queryRate],
   );
 
   const { data: stackData, domain: stackDomain } = useMemo(
@@ -193,14 +192,14 @@ const CostCharts = ({
     [costStack, t],
   );
 
-  // 堆叠柱直接用结算成本，保证与折线图口径一致。
+  // 堆叠柱同样换算一次，保证与折线图口径一致。
   const stackDisplayData = useMemo(
     () =>
       stackData.map((d) => ({
         ...d,
-        cost_display: Number(d.cost_cny) || 0,
+        cost_display: currency.fromCny(d.cost_cny, queryRate),
       })),
-    [stackData],
+    [stackData, currency, queryRate],
   );
 
   const trendTicks = useMemo(

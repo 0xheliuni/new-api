@@ -37,12 +37,7 @@ import {
 import CardTable from '../common/ui/CardTable';
 import { API, showError, showSuccess } from '../../helpers';
 import { mergeBreakdown, MERGE_VIEW_OPTIONS } from './costMerge';
-import {
-  getMoneyPrimaryCurrency,
-  profitAmountOf,
-  profitRateOf,
-  resolveDualMoney,
-} from './costFormat';
+import { getMoneyPrimaryCurrency, resolveDualMoney } from './costFormat';
 import { CostHelpHeader, CostHelpFormula, CostHelpNotes } from './CostHelp';
 import CostVersionPanel from './CostVersionPanel';
 import {
@@ -131,6 +126,7 @@ const buildMetricColumns = (
       if (row.__isNote) return null;
       const { primary, secondary } = resolveDualMoney(
         row.list_usd,
+        'usd',
         primaryCurrency,
         exchangeRate,
       );
@@ -216,6 +212,7 @@ const buildMetricColumns = (
       if (row.__isNote) return null;
       const { primary, secondary } = resolveDualMoney(
         row.cost_cny,
+        'cny',
         primaryCurrency,
         exchangeRate,
       );
@@ -231,6 +228,7 @@ const buildMetricColumns = (
       if (row.__isNote) return null;
       const { primary, secondary } = resolveDualMoney(
         row.revenue_usd,
+        'usd',
         primaryCurrency,
         exchangeRate,
       );
@@ -244,9 +242,10 @@ const buildMetricColumns = (
     width: 130,
     render: (_, row) => {
       if (row.__isNote) return null;
-      const profit = profitAmountOf(row);
+      const profit = Number(row.profit_cny) || 0;
       const { primary, secondary } = resolveDualMoney(
         profit,
+        'cny',
         primaryCurrency,
         exchangeRate,
       );
@@ -277,7 +276,7 @@ const buildMetricColumns = (
     width: 100,
     render: (_, row) => {
       if (row.__isNote) return null;
-      const rate = profitRateOf(row);
+      const rate = Number(row.profit_rate) || 0;
       return <span style={profitStyle(rate)}>{percent(rate)}</span>;
     },
   },

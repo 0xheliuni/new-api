@@ -1869,7 +1869,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Buộc phản hồi JSON hợp lệ về cú pháp",
@@ -7609,6 +7609,14 @@
     "{{provider}} returned empty user info, please check settings": "{{provider}} trả về thông tin người dùng trống, vui lòng kiểm tra cài đặt",
     "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Nạp tiền qua {{provider}} thành công, số tiền đã nạp: {{quota}}, số tiền thanh toán: {{amount}}",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Danh tính đã được xác minh. Tiếp tục đến nhà cung cấp để hoàn tất liên kết tài khoản.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Supply Type": "Hình thức cung cấp",
+    "Pool Supplier": "Nhà cung cấp pool",
+    "Only used for display and filtering in the channel list; does not affect routing or billing": "Chỉ dùng để hiển thị và lọc trong danh sách kênh; không ảnh hưởng đến định tuyến và tính phí",
+    "Set supply type for selected channels": "Đặt hình thức cung cấp cho các kênh đã chọn",
+    "Set Supply Type": "Đặt hình thức cung cấp",
+    "Set the supply type for {{count}} selected channel(s).": "Đặt hình thức cung cấp cho {{count}} kênh đã chọn.",
+    "Supply type set successfully": "Đã đặt hình thức cung cấp thành công",
+    "Failed to set supply type": "Đặt hình thức cung cấp thất bại"
   }
 }

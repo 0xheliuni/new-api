@@ -4328,6 +4328,14 @@
     "素材组计入条数": "Tính cả nhóm tệp",
     "保存素材库设置": "Lưu cài đặt thư viện",
     "上游没有查询素材配额的接口，请在火山控制台的「配额管理」中查看真实上限并填入此处，提额请走「配额中心 → 申请配额」。": "Nguồn không có API truy vấn hạn ngạch tài sản. Xem giới hạn thực tế trong console (Quản lý hạn ngạch) và nhập vào đây; xin tăng qua Trung tâm hạn ngạch → Đăng ký hạn ngạch.",
-    "最后登录": "Đăng nhập cuối"
+    "最后登录": "Đăng nhập cuối",
+    "供应方式": "Hình thức cung cấp",
+    "号池供应商": "Nhà cung cấp pool",
+    "全部供应方式": "Tất cả hình thức cung cấp",
+    "仅用于渠道列表展示与筛选，不影响路由和计费": "Chỉ dùng để hiển thị và lọc trong danh sách kênh; không ảnh hưởng đến định tuyến và tính phí",
+    "批量设置供应方式": "Đặt hình thức cung cấp hàng loạt",
+    "请选择要设置的供应方式": "Chọn hình thức cung cấp cần đặt",
+    "请先选择要设置供应方式的渠道！": "Vui lòng chọn kênh cần đặt hình thức cung cấp trước!",
+    "已为 ${count} 个渠道设置供应方式！": "Đã đặt hình thức cung cấp cho ${count} kênh!"
   }
 }

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type Table } from '@tanstack/react-table'
-import { Power, PowerOff, Tag, Trash2 } from 'lucide-react'
+import type { Table } from '@tanstack/react-table'
+import { Layers, Power, PowerOff, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -27,6 +27,7 @@ import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
   TooltipContent,
@@ -44,9 +45,10 @@ import {
   handleBatchDelete,
   handleBatchDisable,
   handleBatchEnable,
+  handleBatchSetSupplyType,
   handleBatchSetTag,
 } from '../lib'
-import type { Channel } from '../types'
+import type { Channel, ChannelSupplyType } from '../types'
 
 interface DataTableBulkActionsProps<TData> {
   table: Table<TData>
@@ -60,6 +62,9 @@ export function DataTableBulkActions<TData>({
   const [showTagDialog, setShowTagDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [tagValue, setTagValue] = useState('')
+  const [showSupplyTypeDialog, setShowSupplyTypeDialog] = useState(false)
+  const [supplyTypeValue, setSupplyTypeValue] =
+    useState<ChannelSupplyType>('pool')
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
     currentUser,
@@ -102,6 +107,13 @@ export function DataTableBulkActions<TData>({
     handleBatchSetTag(selectedIds, tagValue || null, queryClient, () => {
       setShowTagDialog(false)
       setTagValue('')
+      handleClearSelection()
+    })
+  }
+
+  const handleSetSupplyType = () => {
+    handleBatchSetSupplyType(selectedIds, supplyTypeValue, queryClient, () => {
+      setShowSupplyTypeDialog(false)
       handleClearSelection()
     })
   }
@@ -171,6 +183,29 @@ export function DataTableBulkActions<TData>({
           </TooltipTrigger>
           <TooltipContent>
             <p>{t('Set tag for selected channels')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={() => setShowSupplyTypeDialog(true)}
+                className='size-8'
+                aria-label={t('Set supply type for selected channels')}
+                title={t('Set supply type for selected channels')}
+              />
+            }
+          >
+            <Layers />
+            <span className='sr-only'>
+              {t('Set supply type for selected channels')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Set supply type for selected channels')}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -250,6 +285,49 @@ export function DataTableBulkActions<TData>({
               onChange={(e) => setTagValue(e.target.value)}
             />
           </div>
+        </div>
+      </Dialog>
+
+      {/* Set Supply Type Dialog */}
+      <Dialog
+        open={showSupplyTypeDialog}
+        onOpenChange={setShowSupplyTypeDialog}
+        title={t('Set Supply Type')}
+        description={t('Set the supply type for {{count}} selected channel(s).', {
+          count: selectedIds.length,
+        })}
+        contentHeight='auto'
+        bodyClassName='space-y-4'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              onClick={() => setShowSupplyTypeDialog(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button onClick={handleSetSupplyType}>
+              {t('Set Supply Type')}
+            </Button>
+          </>
+        }
+      >
+        <div className='grid gap-2 py-4'>
+          <Label>{t('Supply Type')}</Label>
+          <ToggleGroup
+            value={[supplyTypeValue]}
+            onValueChange={(values) => {
+              if (values[0] === 'key' || values[0] === 'pool') {
+                setSupplyTypeValue(values[0])
+              }
+            }}
+            variant='outline'
+            size='sm'
+            aria-label={t('Supply Type')}
+          >
+            <ToggleGroupItem value='key'>{t('Key')}</ToggleGroupItem>
+            <ToggleGroupItem value='pool'>{t('Pool Supplier')}</ToggleGroupItem>
+          </ToggleGroup>
         </div>
       </Dialog>
 

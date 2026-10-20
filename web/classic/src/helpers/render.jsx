@@ -101,7 +101,6 @@ import {
   SiOkta,
   SiOpenid,
   SiReddit,
-  SiSlack,
   SiTelegram,
   SiTwitch,
   SiWechat,
@@ -518,7 +517,7 @@ const oauthProviderIconMap = {
   linkedin: FaLinkedin,
   x: SiX,
   twitter: SiX,
-  slack: SiSlack,
+  slack: SiTelegram,  // SiSlack removed in react-icons v5; using Telegram icon as placeholder
   telegram: SiTelegram,
   wechat: SiWechat,
   keycloak: SiKeycloak,

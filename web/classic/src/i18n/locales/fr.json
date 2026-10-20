@@ -3797,6 +3797,14 @@
     "素材组计入条数": "Compter les groupes d’actifs",
     "保存素材库设置": "Enregistrer les paramètres",
     "上游没有查询素材配额的接口，请在火山控制台的「配额管理」中查看真实上限并填入此处，提额请走「配额中心 → 申请配额」。": "L’amont n’expose aucune API de quota d’actifs. Consultez la limite réelle dans la console (Gestion des quotas) et saisissez-la ici ; demandez une augmentation via Centre de quotas → Demander un quota.",
-    "最后登录": "Dernière connexion"
+    "最后登录": "Dernière connexion",
+    "供应方式": "Type d’approvisionnement",
+    "号池供应商": "Fournisseur de pool",
+    "全部供应方式": "Tous les types d’approvisionnement",
+    "仅用于渠道列表展示与筛选，不影响路由和计费": "Utilisé uniquement pour l’affichage et le filtrage dans la liste des canaux ; n’affecte ni le routage ni la facturation",
+    "批量设置供应方式": "Définir le type d’approvisionnement par lot",
+    "请选择要设置的供应方式": "Sélectionnez le type d’approvisionnement à définir",
+    "请先选择要设置供应方式的渠道！": "Veuillez d’abord sélectionner les canaux !",
+    "已为 ${count} 个渠道设置供应方式！": "Type d’approvisionnement défini pour ${count} canaux !"
   }
 }

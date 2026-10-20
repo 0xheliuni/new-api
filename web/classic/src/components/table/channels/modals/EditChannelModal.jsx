@@ -51,6 +51,7 @@ import {
   Tooltip,
   Collapse,
   Dropdown,
+  Radio,
 } from '@douyinfe/semi-ui';
 import {
   getChannelModels,
@@ -175,6 +176,8 @@ const EditChannelModal = (props) => {
   const originInputs = {
     name: '',
     type: 1,
+    // 供应方式标签：key（自有 Key）/ pool（号池供应商），仅用于列表展示与筛选
+    supply_type: 'key',
     key: '',
     openai_organization: '',
     max_input_tokens: 0,
@@ -1110,6 +1113,7 @@ const EditChannelModal = (props) => {
       }
 
       initialBaseUrlRef.current = data.base_url || '';
+      data.supply_type = data.supply_type === 'pool' ? 'pool' : 'key';
       setInputs(data);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -2852,6 +2856,20 @@ const EditChannelModal = (props) => {
                         </Space>
                       </Banner>
                     )}
+
+                    <Form.RadioGroup
+                      field='supply_type'
+                      label={t('供应方式')}
+                      type='button'
+                      initValue={inputs.supply_type || 'key'}
+                      onChange={(e) =>
+                        handleInputChange('supply_type', e.target.value)
+                      }
+                      extraText={t('仅用于渠道列表展示与筛选，不影响路由和计费')}
+                    >
+                      <Radio value='key'>{t('Key')}</Radio>
+                      <Radio value='pool'>{t('号池供应商')}</Radio>
+                    </Form.RadioGroup>
 
                     <Form.Select
                       field='type'

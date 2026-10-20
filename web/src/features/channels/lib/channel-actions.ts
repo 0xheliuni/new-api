@@ -31,6 +31,7 @@ import {
   updateChannelStatus,
   batchUpdateChannelStatus,
   batchDeleteChannels,
+  batchSetChannelSupplyType,
   batchSetChannelTag,
   enableTagChannels,
   disableTagChannels,
@@ -41,7 +42,11 @@ import {
   updateAllChannelsBalance,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import type { ChannelTestResponse, CopyChannelParams } from '../types'
+import type {
+  ChannelSupplyType,
+  ChannelTestResponse,
+  CopyChannelParams,
+} from '../types'
 
 // ============================================================================
 // Query Keys
@@ -509,6 +514,37 @@ export async function handleBatchSetTag(
     }
   } catch (error) {
     handleServerError(error, i18next.t('Failed to set tag'))
+  }
+}
+
+/**
+ * Batch set the supply type label (key / pool) for channels
+ */
+export async function handleBatchSetSupplyType(
+  ids: number[],
+  supplyType: ChannelSupplyType,
+  queryClient?: QueryClient,
+  onSuccess?: () => void
+): Promise<void> {
+  if (ids.length === 0) {
+    toast.error(i18next.t('No channels selected'))
+    return
+  }
+
+  try {
+    const response = await batchSetChannelSupplyType({
+      ids,
+      supply_type: supplyType,
+    })
+    if (response.success) {
+      toast.success(i18next.t(SUCCESS_MESSAGES.SUPPLY_TYPE_SET))
+      queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      onSuccess?.()
+    } else {
+      handleServerError(response, i18next.t('Failed to set supply type'))
+    }
+  } catch (error) {
+    handleServerError(error, i18next.t('Failed to set supply type'))
   }
 }
 

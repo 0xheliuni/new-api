@@ -260,6 +260,12 @@ export const CHANNEL_STATUS_OPTIONS = [
   { value: 'disabled', label: 'Disabled' },
 ] as const
 
+// 供应方式标签筛选项：label 为 i18n 键，由 faceted filter 统一 t()
+export const CHANNEL_SUPPLY_TYPE_OPTIONS = [
+  { value: 'key', label: 'Key' },
+  { value: 'pool', label: 'Pool Supplier' },
+] as const
+
 export const CHANNEL_STATUS_CONFIG = {
   [CHANNEL_STATUS.UNKNOWN]: {
     variant: 'neutral' as const,
@@ -397,6 +403,7 @@ export const SUCCESS_MESSAGES = {
   MODELS_FETCHED: 'Models fetched successfully',
   COPIED: 'Channel copied successfully',
   TAG_SET: 'Tag set successfully',
+  SUPPLY_TYPE_SET: 'Supply type set successfully',
   BATCH_DELETED: 'Channels deleted successfully',
 } as const
 

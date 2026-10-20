@@ -52,6 +52,7 @@ import {
   DEFAULT_PAGE_SIZE,
   CHANNEL_STATUS,
   CHANNEL_STATUS_OPTIONS,
+  CHANNEL_SUPPLY_TYPE_OPTIONS,
 } from '../constants'
 import {
   channelsQueryKeys,
@@ -60,7 +61,7 @@ import {
   isTagAggregateRow,
   getChannelTypeLabel,
 } from '../lib'
-import type { Channel, ChannelSortBy } from '../types'
+import type { Channel, ChannelSortBy, ChannelSupplyType } from '../types'
 import { ChannelCard } from './channel-card'
 import { ChannelTypeLogo } from './channel-type-badge'
 import { useChannelsColumns } from './channels-columns'
@@ -133,6 +134,7 @@ export function ChannelsTable() {
         },
       },
       { columnId: 'type', searchKey: 'type', type: 'array' },
+      { columnId: 'supply_type', searchKey: 'supply_type', type: 'array' },
       { columnId: 'group', searchKey: 'group', type: 'array' },
       { columnId: 'model', searchKey: 'model', type: 'string' },
     ],
@@ -163,6 +165,15 @@ export function ChannelsTable() {
   )
   const groupFilter =
     (columnFilters.find((f) => f.id === 'group')?.value as string[]) || []
+  const supplyTypeValue = (
+    columnFilters.find((f) => f.id === 'supply_type')?.value as
+      | string[]
+      | undefined
+  )?.[0]
+  const supplyTypeFilter: ChannelSupplyType | undefined =
+    supplyTypeValue === 'key' || supplyTypeValue === 'pool'
+      ? supplyTypeValue
+      : undefined
   const {
     value: modelFilter,
     inputValue: modelFilterInput,
@@ -237,6 +248,7 @@ export function ChannelsTable() {
         typeFilter.length > 0 && !typeFilter.includes('all')
           ? Number(typeFilter[0])
           : undefined,
+      supply_type: supplyTypeFilter,
       tag_mode: enableTagMode,
       id_sort: idSort,
       ...sortParams,
@@ -261,6 +273,7 @@ export function ChannelsTable() {
               typeFilter.length > 0 && !typeFilter.includes('all')
                 ? Number(typeFilter[0])
                 : undefined,
+            supply_type: supplyTypeFilter,
             tag_mode: enableTagMode,
             id_sort: idSort,
             ...sortParams,
@@ -283,6 +296,7 @@ export function ChannelsTable() {
               typeFilter.length > 0 && !typeFilter.includes('all')
                 ? Number(typeFilter[0])
                 : undefined,
+            supply_type: supplyTypeFilter,
             tag_mode: enableTagMode,
             id_sort: idSort,
             ...sortParams,
@@ -451,6 +465,12 @@ export function ChannelsTable() {
             columnId: 'status',
             title: t('Status'),
             options: [...CHANNEL_STATUS_OPTIONS],
+            singleSelect: true,
+          },
+          {
+            columnId: 'supply_type',
+            title: t('Supply Type'),
+            options: [...CHANNEL_SUPPLY_TYPE_OPTIONS],
             singleSelect: true,
           },
           {

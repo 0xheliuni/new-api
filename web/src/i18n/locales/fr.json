@@ -1869,7 +1869,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Imposer une réponse JSON syntaxiquement valide",
@@ -7609,6 +7609,14 @@
     "{{provider}} returned empty user info, please check settings": "{{provider}} a renvoyé des informations utilisateur vides, veuillez vérifier les paramètres",
     "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Recharge {{provider}} réussie, montant ajouté : {{quota}}, montant payé : {{amount}}",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Votre identité a été vérifiée. Poursuivez chez le fournisseur pour terminer la liaison du compte.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Supply Type": "Type d’approvisionnement",
+    "Pool Supplier": "Fournisseur de pool",
+    "Only used for display and filtering in the channel list; does not affect routing or billing": "Utilisé uniquement pour l’affichage et le filtrage dans la liste des canaux ; n’affecte ni le routage ni la facturation",
+    "Set supply type for selected channels": "Définir le type d’approvisionnement des canaux sélectionnés",
+    "Set Supply Type": "Définir le type d’approvisionnement",
+    "Set the supply type for {{count}} selected channel(s).": "Définir le type d’approvisionnement pour {{count}} canal(aux) sélectionné(s).",
+    "Supply type set successfully": "Type d’approvisionnement défini avec succès",
+    "Failed to set supply type": "Échec de la définition du type d’approvisionnement"
   }
 }

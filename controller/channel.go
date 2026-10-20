@@ -146,14 +146,14 @@ func applyChannelStatusFilter(query *gorm.DB, statusFilter int) *gorm.DB {
 	return query
 }
 
-func buildChannelListQuery(group string, statusFilter int, typeFilter int) *gorm.DB {
+func buildChannelListQuery(group string, statusFilter int, typeFilter int, supplyType string) *gorm.DB {
 	query := model.DB.Model(&model.Channel{})
 	query = model.ApplyChannelGroupFilter(query, group)
 	query = applyChannelStatusFilter(query, statusFilter)
 	if typeFilter >= 0 {
 		query = query.Where("type = ?", typeFilter)
 	}
-	return query
+	return model.ApplyChannelSupplyTypeFilter(query, supplyType)
 }
 
 func GetChannelOps(c *gin.Context) {
@@ -199,6 +199,7 @@ func GetAllChannels(c *gin.Context) {
 	statusParam := c.Query("status")
 	// statusFilter: -1 all, 1 enabled, 0 disabled (include auto & manual)
 	statusFilter := parseStatusFilter(statusParam)
+	supplyTypeFilter := c.Query("supply_type")
 	// type filter
 	typeStr := c.Query("type")
 	typeFilter := -1
@@ -211,13 +212,13 @@ func GetAllChannels(c *gin.Context) {
 	var total int64
 
 	if enableTagMode {
-		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter, supplyTypeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 		if err != nil {
 			common.SysError(common.LogText("failed to get paginated tags: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to fetch tags. Please try again later")
 			return
 		}
-		total, err = model.CountChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter))
+		total, err = model.CountChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter, supplyTypeFilter))
 		if err != nil {
 			common.SysError(common.LogText("failed to count tags: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to count tags. Please try again later")
@@ -228,7 +229,7 @@ func GetAllChannels(c *gin.Context) {
 				continue
 			}
 			var tagChannels []*model.Channel
-			err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter).Where("tag = ?", *tag)).
+			err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter, supplyTypeFilter).Where("tag = ?", *tag)).
 				Omit("key").
 				Find(&tagChannels).Error
 			if err != nil {
@@ -239,13 +240,13 @@ func GetAllChannels(c *gin.Context) {
 			channelData = append(channelData, tagChannels...)
 		}
 	} else {
-		if err := buildChannelListQuery(groupFilter, statusFilter, typeFilter).Count(&total).Error; err != nil {
+		if err := buildChannelListQuery(groupFilter, statusFilter, typeFilter, supplyTypeFilter).Count(&total).Error; err != nil {
 			common.SysError(common.LogText("failed to count channels: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to count channels. Please try again later")
 			return
 		}
 
-		err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter)).
+		err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter, supplyTypeFilter)).
 			Limit(pageInfo.GetPageSize()).
 			Offset(pageInfo.GetStartIdx()).
 			Omit("key").
@@ -261,7 +262,7 @@ func GetAllChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 
-	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1)
+	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1, supplyTypeFilter)
 	var results []struct {
 		Type  int64
 		Count int64
@@ -380,7 +381,7 @@ func SearchChannels(c *gin.Context) {
 		for _, tag := range tags {
 			if tag != nil && *tag != "" {
 				var tagChannels []*model.Channel
-				err := sortOptions.Apply(buildChannelListQuery(group, -1, -1).Where("tag = ?", *tag)).
+				err := sortOptions.Apply(buildChannelListQuery(group, -1, -1, "").Where("tag = ?", *tag)).
 					Omit("key").
 					Find(&tagChannels).Error
 				if err != nil {
@@ -409,6 +410,17 @@ func SearchChannels(c *gin.Context) {
 				continue
 			}
 			filtered = append(filtered, ch)
+		}
+		channelData = filtered
+	}
+
+	if supplyType := c.Query("supply_type"); supplyType == model.ChannelSupplyTypeKey || supplyType == model.ChannelSupplyTypePool {
+		filtered := make([]*model.Channel, 0, len(channelData))
+		for _, ch := range channelData {
+			isPool := ch.SupplyType == model.ChannelSupplyTypePool
+			if isPool == (supplyType == model.ChannelSupplyTypePool) {
+				filtered = append(filtered, ch)
+			}
 		}
 		channelData = filtered
 	}
@@ -535,6 +547,13 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return common.NewMessage("Invalid channel settings format: {{error}}", map[string]any{"error": err.Error()})
+	}
+	// 更新时空值表示未修改（GORM Updates 跳过零值），新建时空值落默认 key。
+	if channel.SupplyType == "" && isAdd {
+		channel.SupplyType = model.ChannelSupplyTypeKey
+	}
+	if channel.SupplyType != "" && !model.IsValidChannelSupplyType(channel.SupplyType) {
+		return fmt.Errorf("invalid supply_type: must be %q or %q", model.ChannelSupplyTypeKey, model.ChannelSupplyTypePool)
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
 		pluginKey := strings.TrimSpace(channel.GetSetting().TaskPluginKey)
@@ -1515,6 +1534,34 @@ func BatchSetChannelTag(c *gin.Context) {
 		"data":    len(channelBatch.Ids),
 	})
 	return
+}
+
+type ChannelBatchSupplyTypeRequest struct {
+	Ids        []int  `json:"ids"`
+	SupplyType string `json:"supply_type"`
+}
+
+func BatchSetChannelSupplyType(c *gin.Context) {
+	req := ChannelBatchSupplyTypeRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Ids) == 0 || !model.IsValidChannelSupplyType(req.SupplyType) {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	updated, err := model.BatchSetChannelSupplyType(req.Ids, req.SupplyType)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	recordManageAudit(c, "channel.supply_type_batch_set", map[string]any{
+		"count":       len(req.Ids),
+		"supply_type": req.SupplyType,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    updated,
+	})
 }
 
 func GetTagModels(c *gin.Context) {

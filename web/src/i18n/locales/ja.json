@@ -1869,7 +1869,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "構文的に有効な JSON 応答を強制",
@@ -7609,6 +7609,14 @@
     "{{provider}} returned empty user info, please check settings": "{{provider}} から返されたユーザー情報が空です。設定を確認してください",
     "{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "{{provider}} のチャージが完了しました。追加額：{{quota}}、支払額：{{amount}}",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "本人確認が完了しました。連携先でアカウント連携を完了してください。",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Supply Type": "供給方式",
+    "Pool Supplier": "プールサプライヤー",
+    "Only used for display and filtering in the channel list; does not affect routing or billing": "チャネル一覧での表示と絞り込みにのみ使用され、ルーティングや課金には影響しません",
+    "Set supply type for selected channels": "選択したチャネルの供給方式を設定",
+    "Set Supply Type": "供給方式を設定",
+    "Set the supply type for {{count}} selected channel(s).": "選択した {{count}} 個のチャネルの供給方式を設定します。",
+    "Supply type set successfully": "供給方式を設定しました",
+    "Failed to set supply type": "供給方式の設定に失敗しました"
   }
 }

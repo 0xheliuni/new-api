@@ -23,8 +23,6 @@ import { StatCard } from '@/features/dashboard/components/ui/stat-card'
 import type { CostOverview } from '../types'
 import {
   formatRate,
-  profitAmountOf,
-  profitRateOf,
   resolveDualMoney,
   useMoneyPrimaryCurrency,
 } from '../lib'
@@ -40,25 +38,24 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
   const totals = overview?.totals
   const exchangeRate = overview?.exchange_rate ?? 0
   const unpricedCount = overview?.unpriced_channel_count ?? 0
-  // Profit is recomputed on the display currency's own figures so the three
-  // headline cards add up; the backend's profit_cny mixes in the filter rate.
-  const profitAmount = totals ? profitAmountOf(totals) : 0
+  // Backend profit_cny = revenue_usd × rate − cost_cny: both sides in CNY.
+  const profitAmount = totals?.profit_cny ?? 0
   const profitTone = profitAmount < 0 ? ('rose' as const) : ('teal' as const)
 
   const revenue = totals
-    ? resolveDualMoney(totals.revenue_usd, primary, exchangeRate)
+    ? resolveDualMoney(totals.revenue_usd, 'usd', primary, exchangeRate)
     : undefined
   const cost = totals
-    ? resolveDualMoney(totals.cost_cny, primary, exchangeRate)
+    ? resolveDualMoney(totals.cost_cny, 'cny', primary, exchangeRate)
     : undefined
   const listPrice = totals
-    ? resolveDualMoney(totals.list_usd, primary, exchangeRate)
+    ? resolveDualMoney(totals.list_usd, 'usd', primary, exchangeRate)
     : undefined
   const refund = totals
-    ? resolveDualMoney(totals.refund_usd, primary, exchangeRate)
+    ? resolveDualMoney(totals.refund_usd, 'usd', primary, exchangeRate)
     : undefined
   const profit = totals
-    ? resolveDualMoney(profitAmount, primary, exchangeRate)
+    ? resolveDualMoney(profitAmount, 'cny', primary, exchangeRate)
     : undefined
 
   return (
@@ -126,7 +123,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
         <div className='bg-card rounded-xl border p-3'>
           <StatCard
             title={t('Profit Rate')}
-            value={loading || !totals ? '--' : formatRate(profitRateOf(totals))}
+            value={loading || !totals ? '--' : formatRate(totals.profit_rate)}
             description={
               loading || !totals || !profit || !revenue
                 ? ''

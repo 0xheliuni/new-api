@@ -55,12 +55,37 @@ type Channel struct {
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
+	// SupplyType 渠道供应方式标签：ChannelSupplyTypeKey（自有 Key）| ChannelSupplyTypePool
+	// （号池供应商）。仅用于列表展示与筛选，不参与路由、计费与密钥处理。
+	SupplyType string `json:"supply_type" gorm:"type:varchar(16);default:'key'"`
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
 }
 
 const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
+
+const (
+	ChannelSupplyTypeKey  = "key"
+	ChannelSupplyTypePool = "pool"
+)
+
+// IsValidChannelSupplyType 只接受两种已知取值，避免任意字符串写进筛选列。
+func IsValidChannelSupplyType(v string) bool {
+	return v == ChannelSupplyTypeKey || v == ChannelSupplyTypePool
+}
+
+// ApplyChannelSupplyTypeFilter 按供应方式筛选；空值不筛选。key 同时匹配空串与 NULL，
+// 兜住列加上之前写入、未被默认值回填的旧行。
+func ApplyChannelSupplyTypeFilter(query *gorm.DB, supplyType string) *gorm.DB {
+	switch supplyType {
+	case ChannelSupplyTypePool:
+		return query.Where("supply_type = ?", ChannelSupplyTypePool)
+	case ChannelSupplyTypeKey:
+		return query.Where("(supply_type = ? OR supply_type = '' OR supply_type IS NULL)", ChannelSupplyTypeKey)
+	}
+	return query
+}
 
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
@@ -1128,6 +1153,13 @@ func GetChannelsByIds(ids []int) ([]*Channel, error) {
 	var channels []*Channel
 	err := DB.Where("id in (?)", ids).Find(&channels).Error
 	return channels, err
+}
+
+// BatchSetChannelSupplyType 批量设置供应方式标签。该字段不参与 abilities 与路由，
+// 无需像 BatchSetChannelTag 那样重建 abilities；返回实际更新的行数。
+func BatchSetChannelSupplyType(ids []int, supplyType string) (int64, error) {
+	result := DB.Model(&Channel{}).Where("id in (?)", ids).Update("supply_type", supplyType)
+	return result.RowsAffected, result.Error
 }
 
 func BatchSetChannelTag(ids []int, tag *string) error {

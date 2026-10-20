@@ -4063,6 +4063,14 @@
     "素材组计入条数": "Count asset groups",
     "保存素材库设置": "Save asset library settings",
     "上游没有查询素材配额的接口，请在火山控制台的「配额管理」中查看真实上限并填入此处，提额请走「配额中心 → 申请配额」。": "Upstream has no API for querying the asset quota. Look up the real limit in the console under Quota Management and enter it here; request increases via Quota Center → Apply for Quota.",
-    "最后登录": "Last Login"
+    "最后登录": "Last Login",
+    "供应方式": "Supply Type",
+    "号池供应商": "Pool Supplier",
+    "全部供应方式": "All supply types",
+    "仅用于渠道列表展示与筛选，不影响路由和计费": "Only used for display and filtering in the channel list; does not affect routing or billing",
+    "批量设置供应方式": "Batch Set Supply Type",
+    "请选择要设置的供应方式": "Select the supply type to set",
+    "请先选择要设置供应方式的渠道！": "Please select the channels to set the supply type for first!",
+    "已为 ${count} 个渠道设置供应方式！": "Supply type set for ${count} channels!"
   }
 }
