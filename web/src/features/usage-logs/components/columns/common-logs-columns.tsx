@@ -76,6 +76,7 @@ import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
+import { TaskStatusBadge } from '../task-progress-ring'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
 
@@ -149,6 +150,12 @@ function buildTypeDetailSegments(
 
   if (log.type !== 2) return []
 
+  // Async video task: surface failure reason at the top so it's visible without opening the dialog.
+  const failSegments: DetailSegment[] =
+    log.task_info?.status === 'FAILURE' && log.task_info.fail_reason
+      ? [{ text: log.task_info.fail_reason, danger: true }]
+      : []
+
   const isViolation = isViolationFeeLog(other)
   if (isViolation) {
     const segments: DetailSegment[] = []
@@ -166,9 +173,9 @@ function buildTypeDetailSegments(
     return segments
   }
 
-  if (!other) return []
+  if (!other) return failSegments
 
-  const segments: DetailSegment[] = []
+  const segments: DetailSegment[] = [...failSegments]
 
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
   const formatPrice = (price: number) =>
@@ -726,7 +733,8 @@ export function useCommonLogsColumns(
           const other = parseLogOther(log.other)
 
           const promptTokens = log.prompt_tokens || 0
-          const completionTokens = log.completion_tokens || 0
+          // Async video tasks: output tokens come from task_info (pre-consume row itself is 0).
+          const completionTokens = log.completion_tokens || log.task_info?.output_tokens || 0
           if (promptTokens === 0 && completionTokens === 0) {
             return <span className='text-muted-foreground text-xs'>-</span>
           }
@@ -772,6 +780,48 @@ export function useCommonLogsColumns(
 
           const quota = row.getValue('quota') as number
           const other = parseLogOther(log.other)
+
+          // Async video tasks: three-state cost (generating / final / refunded).
+          const ti = log.task_info
+          if (ti && ti.status !== 'UNKNOWN' && other?.billing_source !== 'subscription') {
+            if (ti.status === 'SUCCESS' || ti.status === 'FAILURE') {
+              return (
+                <div className='flex flex-col gap-0.5'>
+                  <StatusBadge
+                    type='badge'
+                    variant='neutral'
+                    size='lg'
+                    copyable={false}
+                    className='border-border/80 bg-muted/60 text-foreground w-fit rounded-md border font-semibold tabular-nums'
+                  >
+                    <span className='whitespace-nowrap'>
+                      {formatLogQuota(ti.final_quota)}
+                    </span>
+                  </StatusBadge>
+                  {ti.status === 'FAILURE' && (
+                    <StatusBadge
+                      label={t('Refunded')}
+                      variant='red'
+                      size='sm'
+                      copyable={false}
+                      className='w-fit'
+                    />
+                  )}
+                </div>
+              )
+            }
+            // IN_PROGRESS / SUBMITTED / QUEUED: show generating badge, not pre-consumed amount
+            return (
+              <StatusBadge
+                label={t('Generating')}
+                variant='neutral'
+                size='sm'
+                copyable={false}
+                pulse
+              />
+            )
+          }
+
           return (
             <LogCostDisplay
               quota={quota}
@@ -800,6 +850,18 @@ export function useCommonLogsColumns(
               isStream={log.is_stream}
             />
           )
+        },
+      },
+
+      {
+        // Async video task state column: four-state status badge (queued/generating/success/failure).
+        // Shown only when task_info is present; empty for all other log types.
+        id: 'task_status',
+        header: t('Status'),
+        cell: ({ row }) => {
+          const ti = row.original.task_info
+          if (!ti) return null
+          return <TaskStatusBadge status={ti.status} progress={ti.progress} />
         },
       },
 

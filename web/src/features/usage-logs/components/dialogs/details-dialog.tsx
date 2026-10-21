@@ -93,6 +93,7 @@ import {
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
+import { TaskStatusBadge } from '../task-progress-ring'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -475,6 +476,78 @@ interface DetailsDialogProps {
   isRoot: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+// Tier label map shared by billing and task detail sections.
+const buildTierLabelMap = (
+  t: (key: string) => string
+): Record<string, string> => ({
+  base: t('480p / 720p'),
+  '1080p': '1080p',
+  '4k': '4K',
+})
+
+// SeedanceTaskSection renders the task-info block for async video task logs
+// (seedance / wan3.0-video). It shows status, request parameters, quota, and IDs.
+function SeedanceTaskSection(props: { log: UsageLog }) {
+  const { t } = useTranslation()
+  const ti = props.log.task_info
+  if (!ti) return null
+
+  const tierLabelMap = buildTierLabelMap(t)
+  const rows: Array<{ label: string; value: string }> = []
+
+  if (ti.resolution) {
+    rows.push({ label: t('Resolution'), value: ti.resolution })
+  } else if (ti.resolution_tier) {
+    rows.push({
+      label: t('Resolution Tier'),
+      value: tierLabelMap[ti.resolution_tier] ?? ti.resolution_tier,
+    })
+  }
+  if (ti.ratio) {
+    rows.push({ label: t('Aspect Ratio'), value: ti.ratio })
+  }
+  if (ti.duration_s && ti.duration_s > 0) {
+    rows.push({ label: t('Duration (s)'), value: String(ti.duration_s) })
+  }
+  rows.push({ label: t('Reference Video'), value: ti.has_input ? t('Yes') : t('No') })
+  if (ti.output_tokens && ti.output_tokens > 0) {
+    rows.push({ label: t('Output Tokens'), value: ti.output_tokens.toLocaleString() })
+  }
+  if (ti.effective_ratio && ti.effective_ratio > 0) {
+    rows.push({
+      label: ti.is_user_ratio ? t('User Exclusive Ratio') : t('Group Ratio'),
+      value: `${ti.effective_ratio.toFixed(4)}x`,
+    })
+  }
+  rows.push({
+    label: `${t('Pre-charged')} → ${t('Final Charged')}`,
+    value: `${formatLogQuota(ti.pre_quota)} → ${formatLogQuota(ti.final_quota)}`,
+  })
+  if (ti.fail_reason) {
+    rows.push({ label: t('Fail Reason'), value: ti.fail_reason })
+  }
+  if (ti.task_id) {
+    rows.push({ label: t('Task ID'), value: ti.task_id })
+  }
+  if (ti.upstream_task_id) {
+    rows.push({ label: t('Upstream Task ID'), value: ti.upstream_task_id })
+  }
+  if (ti.result_url) {
+    rows.push({ label: t('Video URL'), value: ti.result_url })
+  }
+
+  return (
+    <DetailSection label={t('Video Task')}>
+      <div className='flex items-center gap-2 py-1'>
+        <TaskStatusBadge status={ti.status} progress={ti.progress} />
+      </div>
+      {rows.map((row, idx) => (
+        <DetailRow key={idx} label={row.label} value={row.value} mono />
+      ))}
+    </DetailSection>
+  )
 }
 
 export function DetailsDialog(props: DetailsDialogProps) {
@@ -1169,6 +1242,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
         {isDisplayableType(props.log.type) && other && (
           <TokenBreakdown log={props.log} other={other} />
         )}
+
+        {/* Async video task section (seedance / wan3.0-video) */}
+        {isConsume && <SeedanceTaskSection log={props.log} />}
 
         {/* Billing breakdown (consume type) */}
         {isConsume && other && !isViolation && (
