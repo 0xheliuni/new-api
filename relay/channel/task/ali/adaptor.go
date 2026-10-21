@@ -28,6 +28,8 @@ import (
 // ============================
 
 var ModelList = []string{
+	"wan3.0-video",
+	"wan3.0-video-prime",
 	"wanx2.1-t2v-turbo",
 	"wanx2.1-t2v-plus",
 	"wanx2.1-i2v-turbo",
