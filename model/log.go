@@ -475,10 +475,27 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-// seedanceHiddenStageCond 把 seedance 任务的结算/退款行从分页列表隐藏：
-// 展示层合并为一条（预扣行 + task_info 增强），DB 数据与导出流式扫描不受影响。
+// isAsyncVideoTaskLog 判定模型是否属于使用 pre_consume/settle/refund
+// 三段日志的异步视频任务（展示层合并为单行）。
+// 新增模型时只需扩展此函数，其余过滤和增强逻辑自动生效。
+func isAsyncVideoTaskLog(modelName string) bool {
+	return strings.Contains(modelName, "seedance") ||
+		strings.Contains(modelName, "wan3.0-video")
+}
+
+// IsAsyncVideoTaskLog 是 isAsyncVideoTaskLog 的导出入口，供 controller 复用。
+func IsAsyncVideoTaskLog(modelName string) bool {
+	return isAsyncVideoTaskLog(modelName)
+}
+
+// asyncVideoHiddenStageCond 把异步视频任务（seedance / wan3.0-video）的结算/退款行
+// 从分页列表隐藏：展示层合并为一条（预扣行 + task_info 增强），DB 数据与导出流式扫描不受影响。
 // 纯 LIKE 保证 SQLite/MySQL/PG 三库兼容；common.Marshal 生成的 JSON 无空格。
-const seedanceHiddenStageCond = `NOT (logs.model_name LIKE '%seedance%' AND (logs.other LIKE '%"billing_stage":"settle"%' OR logs.other LIKE '%"billing_stage":"refund"%'))`
+const asyncVideoHiddenStageCond = `NOT ((logs.model_name LIKE '%seedance%' OR logs.model_name LIKE '%wan3.0-video%') AND (logs.other LIKE '%"billing_stage":"settle"%' OR logs.other LIKE '%"billing_stage":"refund"%'))`
+
+// seedanceHiddenStageCond is kept as an alias so any code that still references
+// the old name continues to compile. Prefer asyncVideoHiddenStageCond for new code.
+const seedanceHiddenStageCond = asyncVideoHiddenStageCond
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB

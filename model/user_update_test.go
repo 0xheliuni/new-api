@@ -113,8 +113,8 @@ func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
 	require.NoError(t, DB.Create(&user).Error)
 	require.NoError(t, DB.Create(&channel).Error)
 
-	UpdateUserUsedQuota(user.Id, -200)
-	UpdateUserUsedQuota(user.Id, 50)
+	UpdateUserUsedQuotaDelta(user.Id, -200)
+	UpdateUserUsedQuotaDelta(user.Id, 50)
 	UpdateChannelUsedQuota(channel.Id, -200)
 	UpdateChannelUsedQuota(channel.Id, 50)
 
@@ -127,8 +127,8 @@ func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
 	assert.Equal(t, int64(850), gotChannel.UsedQuota)
 
 	common.BatchUpdateEnabled = true
-	UpdateUserUsedQuota(user.Id, 400)
-	UpdateUserUsedQuota(user.Id, -100)
+	UpdateUserUsedQuotaDelta(user.Id, 400)
+	UpdateUserUsedQuotaDelta(user.Id, -100)
 	UpdateChannelUsedQuota(channel.Id, 400)
 	UpdateChannelUsedQuota(channel.Id, -100)
 

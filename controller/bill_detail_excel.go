@@ -250,7 +250,7 @@ func mergeSeedanceTaskRows(logs []*model.Log) []billDetailRow {
 	for i < len(logs) {
 		log := logs[i]
 		rid := log.RequestId
-		if rid == "" || !strings.Contains(log.ModelName, "seedance") || !strings.Contains(log.Other, `"billing_stage"`) {
+		if rid == "" || !model.IsAsyncVideoTaskLog(log.ModelName) || !strings.Contains(log.Other, `"billing_stage"`) {
 			rows = append(rows, billDetailRow{log: log})
 			i++
 			continue

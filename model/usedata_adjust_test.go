@@ -26,7 +26,7 @@ func TestLogQuotaDataAdjustment_NetsWithoutCount(t *testing.T) {
 	clearQuotaData(t)
 	ts := int64(7200) // 整点
 	// 预扣：常规路径 count+1, quota+1000
-	LogQuotaData(1, "u1", "doubao-seedance-1-0", 1000, ts, 50)
+	LogQuotaData(QuotaDataLogParams{UserID: 1, Username: "u1", ModelName: "doubao-seedance-1-0", Quota: 1000, CreatedAt: ts, TokenUsed: 50})
 	// 结算补扣镜像 +200；退款镜像 -1200
 	LogQuotaDataAdjustment(1, "u1", "doubao-seedance-1-0", 200, ts)
 	LogQuotaDataAdjustment(1, "u1", "doubao-seedance-1-0", -1200, ts)

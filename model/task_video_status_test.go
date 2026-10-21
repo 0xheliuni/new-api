@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,22 +17,22 @@ func TestToVideoStatusNeverLeaksUnknown(t *testing.T) {
 		in   TaskStatus
 		want string
 	}{
-		{"NotStart 视为排队中", TaskStatusNotStart, dto.VideoStatusQueued},
-		{"Submitted 视为排队中", TaskStatus(TaskStatusSubmitted), dto.VideoStatusQueued},
-		{"Queued 视为排队中", TaskStatus(TaskStatusQueued), dto.VideoStatusQueued},
-		{"InProgress 视为进行中", TaskStatus(TaskStatusInProgress), dto.VideoStatusInProgress},
-		{"Unknown 视为进行中（继续轮询）", TaskStatus(TaskStatusUnknown), dto.VideoStatusInProgress},
-		{"Success 视为已完成", TaskStatus(TaskStatusSuccess), dto.VideoStatusCompleted},
-		{"Failure 视为失败", TaskStatus(TaskStatusFailure), dto.VideoStatusFailed},
-		{"未来未识别枚举走防御性兜底", TaskStatus("FUTURE_UNRECOGNIZED_VALUE"), dto.VideoStatusQueued},
-		{"空字符串走防御性兜底", TaskStatus(""), dto.VideoStatusQueued},
+		{"NotStart 视为排队中", TaskStatusNotStart, kitdto.VideoStatusQueued},
+		{"Submitted 视为排队中", TaskStatus(TaskStatusSubmitted), kitdto.VideoStatusQueued},
+		{"Queued 视为排队中", TaskStatus(TaskStatusQueued), kitdto.VideoStatusQueued},
+		{"InProgress 视为进行中", TaskStatus(TaskStatusInProgress), kitdto.VideoStatusInProgress},
+		{"Unknown 视为进行中（继续轮询）", TaskStatus(TaskStatusUnknown), kitdto.VideoStatusInProgress},
+		{"Success 视为已完成", TaskStatus(TaskStatusSuccess), kitdto.VideoStatusCompleted},
+		{"Failure 视为失败", TaskStatus(TaskStatusFailure), kitdto.VideoStatusFailed},
+		{"未来未识别枚举走防御性兜底", TaskStatus("FUTURE_UNRECOGNIZED_VALUE"), kitdto.VideoStatusQueued},
+		{"空字符串走防御性兜底", TaskStatus(""), kitdto.VideoStatusQueued},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.in.ToVideoStatus()
 			assert.Equalf(t, tc.want, got, "ToVideoStatus(%q) 应为 %q，实际 %q", tc.in, tc.want, got)
-			assert.NotEqualf(t, dto.VideoStatusUnknown, got,
-				"ToVideoStatus(%q) 不允许向客户端泄露 %q", tc.in, dto.VideoStatusUnknown)
+			assert.NotEqualf(t, kitdto.VideoStatusUnknown, got,
+				"ToVideoStatus(%q) 不允许向客户端泄露 %q", tc.in, kitdto.VideoStatusUnknown)
 		})
 	}
 }
@@ -54,25 +54,25 @@ func TestTaskToOpenAIVideoCompletedAtOnlyTerminal(t *testing.T) {
 
 	t.Run("NotStart 不写 CompletedAt", func(t *testing.T) {
 		v := build(TaskStatusNotStart).ToOpenAIVideo()
-		require.Equal(t, dto.VideoStatusQueued, v.Status)
+		require.Equal(t, kitdto.VideoStatusQueued, v.Status)
 		require.Zerof(t, v.CompletedAt, "未完成任务 CompletedAt 应为 0，实际 %d", v.CompletedAt)
 	})
 
 	t.Run("InProgress 不写 CompletedAt", func(t *testing.T) {
 		v := build(TaskStatus(TaskStatusInProgress)).ToOpenAIVideo()
-		require.Equal(t, dto.VideoStatusInProgress, v.Status)
+		require.Equal(t, kitdto.VideoStatusInProgress, v.Status)
 		require.Zero(t, v.CompletedAt)
 	})
 
 	t.Run("Success 写入 CompletedAt", func(t *testing.T) {
 		v := build(TaskStatus(TaskStatusSuccess)).ToOpenAIVideo()
-		require.Equal(t, dto.VideoStatusCompleted, v.Status)
+		require.Equal(t, kitdto.VideoStatusCompleted, v.Status)
 		require.Equal(t, now, v.CompletedAt)
 	})
 
 	t.Run("Failure 写入 CompletedAt", func(t *testing.T) {
 		v := build(TaskStatus(TaskStatusFailure)).ToOpenAIVideo()
-		require.Equal(t, dto.VideoStatusFailed, v.Status)
+		require.Equal(t, kitdto.VideoStatusFailed, v.Status)
 		require.Equal(t, now, v.CompletedAt)
 	})
 }

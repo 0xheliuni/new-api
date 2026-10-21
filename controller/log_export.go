@@ -270,7 +270,7 @@ func buildTaskInfoBillingText(log *model.Log) string {
 func applySeedanceExportMerge(batch []*model.Log) []*model.Log {
 	out := batch[:0]
 	for _, log := range batch {
-		if strings.Contains(log.ModelName, "seedance") &&
+		if model.IsAsyncVideoTaskLog(log.ModelName) &&
 			(strings.Contains(log.Other, `"billing_stage":"settle"`) || strings.Contains(log.Other, `"billing_stage":"refund"`)) {
 			continue
 		}

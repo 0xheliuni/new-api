@@ -55,7 +55,7 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 	taskIds := make([]string, 0)
 	reqIds := make([]string, 0)
 	for _, l := range logs {
-		if l.Type != LogTypeConsume || !strings.Contains(l.ModelName, "seedance") {
+		if l.Type != LogTypeConsume || !isAsyncVideoTaskLog(l.ModelName) {
 			continue
 		}
 		if !strings.Contains(l.Other, `"billing_stage":"pre_consume"`) {
@@ -99,7 +99,7 @@ func enrichSeedanceTaskLogs(logs []*Log, includeUpstreamId bool) {
 		var sibs []*Log
 		if err := LOG_DB.Where("request_id IN ? AND type IN ?", reqIds, []int{LogTypeConsume, LogTypeRefund}).Find(&sibs).Error; err == nil {
 			for _, s := range sibs {
-				if !strings.Contains(s.ModelName, "seedance") {
+				if !isAsyncVideoTaskLog(s.ModelName) {
 					continue
 				}
 				if !strings.Contains(s.Other, `"billing_stage":"settle"`) && !strings.Contains(s.Other, `"billing_stage":"refund"`) {
@@ -339,7 +339,7 @@ func parseTaskVideoMeta(data []byte) (durationS int, outputTokens int) {
 	}
 	scan := func(m map[string]interface{}) {
 		if durationS == 0 {
-			durationS = pickInt(m, "duration", "seconds", "duration_seconds", "video_duration")
+			durationS = pickInt(m, "duration", "seconds", "duration_seconds", "video_duration", "output_video_duration")
 		}
 		if outputTokens == 0 {
 			outputTokens = pickInt(m, "completion_tokens", "total_tokens")
