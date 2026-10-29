@@ -195,6 +195,15 @@ type RelayInfo struct {
 	ImageResultURLs     []string
 	ImageResultB64Count int
 
+	// SampledImageBytes / SampledImageURL hold the first image of an OpenAI
+	// image response, captured in-process for the global image-detection
+	// trigger. b64_json responses set SampledImageBytes (decoded, capped at
+	// 10 MB); URL-only responses set SampledImageURL. The detection goroutine
+	// prefers bytes (they don't expire) and falls back to fetching the URL.
+	// Populated by the non-stream and JSON-as-stream image handlers only.
+	SampledImageBytes []byte
+	SampledImageURL   string
+
 	// RequestConversionChain records request format conversions in order, e.g.
 	// ["openai", "openai_responses"] or ["openai", "claude"].
 	RequestConversionChain []types.RelayFormat
@@ -439,32 +448,32 @@ func (info *RelayInfo) ToString() string {
 
 // 定义支持流式选项的通道类型
 var streamSupportedChannels = map[int]bool{
-	constant.ChannelTypeOpenAI:         true,
-	constant.ChannelTypeAnthropic:      true,
-	constant.ChannelTypeAws:            true,
-	constant.ChannelTypeGemini:         true,
-	constant.ChannelCloudflare:         true,
-	constant.ChannelTypeAzure:          true,
-	constant.ChannelTypeVolcEngine:     true,
-	constant.ChannelTypeOllama:         true,
-	constant.ChannelTypeXai:            true,
-	constant.ChannelTypeDeepSeek:       true,
-	constant.ChannelTypeBaiduV2:        true,
-	constant.ChannelTypeZhipu_v4:       true,
-	constant.ChannelTypeAli:            true,
-	constant.ChannelTypeSubmodel:       true,
-	constant.ChannelTypeCodex:          true,
-	constant.ChannelTypeMoonshot:       true,
-	constant.ChannelTypeMiniMax:        true,
-	constant.ChannelTypeSiliconFlow:    true,
+	constant.ChannelTypeOpenAI:      true,
+	constant.ChannelTypeAnthropic:   true,
+	constant.ChannelTypeAws:         true,
+	constant.ChannelTypeGemini:      true,
+	constant.ChannelCloudflare:      true,
+	constant.ChannelTypeAzure:       true,
+	constant.ChannelTypeVolcEngine:  true,
+	constant.ChannelTypeOllama:      true,
+	constant.ChannelTypeXai:         true,
+	constant.ChannelTypeDeepSeek:    true,
+	constant.ChannelTypeBaiduV2:     true,
+	constant.ChannelTypeZhipu_v4:    true,
+	constant.ChannelTypeAli:         true,
+	constant.ChannelTypeSubmodel:    true,
+	constant.ChannelTypeCodex:       true,
+	constant.ChannelTypeMoonshot:    true,
+	constant.ChannelTypeMiniMax:     true,
+	constant.ChannelTypeSiliconFlow: true,
 	// 火山方舟 /api/v3 与 OpenAI 协议兼容，stream_options 官方支持。
 	constant.ChannelTypeVolcPassthrough: true,
-	constant.ChannelTypeAdvancedCustom: true,
-	constant.ChannelTypeSub2API:        true,
-	constant.ChannelTypeNewAPI:         true,
-	constant.ChannelTypeVLLM:           true,
-	constant.ChannelTypeSGLang:         true,
-	constant.ChannelTypeTencent:        true,
+	constant.ChannelTypeAdvancedCustom:  true,
+	constant.ChannelTypeSub2API:         true,
+	constant.ChannelTypeNewAPI:          true,
+	constant.ChannelTypeVLLM:            true,
+	constant.ChannelTypeSGLang:          true,
+	constant.ChannelTypeTencent:         true,
 }
 
 func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {

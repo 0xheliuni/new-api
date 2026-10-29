@@ -114,6 +114,14 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+export type ImageDetectionStepResult =
+  | 'pass'
+  | 'fail'
+  | 'pending'
+  | 'error'
+  | 'skipped'
+  | 'not_checked'
+
 export interface LogOtherData {
   admin_info?: {
     request_policy?: PolicyEvent[]
@@ -243,6 +251,41 @@ export interface LogOtherData {
   image_generation_call_price?: number
   image_generation_call_count?: number
   is_system_prompt_overwritten?: boolean
+  // Image detection status enriched at query time from image_detection_records.
+  // Present only on LogTypeConsume rows for openai_image model requests.
+  detection_status?: 'not_checked' | 'checking' | 'checked' | 'error'
+  // pass = OpenAI provenance signal found; fail = resolution mismatch or no
+  // signal after SynthID ran. Absent while the result is still undecided.
+  detection_verdict?: 'pass' | 'fail'
+  // Per-layer results for the resolution → metadata (C2PA) → content
+  // (SynthID) pipeline shown on the details dialog.
+  detection_steps?: {
+    resolution?: ImageDetectionStepResult
+    metadata?: ImageDetectionStepResult
+    content?: ImageDetectionStepResult
+    request_size?: string
+    actual_size?: string
+    // Total detection work time in milliseconds (resolution + metadata, plus
+    // the SynthID call when it ran). Absent on records made before it existed.
+    duration_ms?: number
+    // Reason codes when a step ended in "error" (e.g. "tool_unavailable",
+    // "no_api_key", "http_error") or C2PA metadata did not count (e.g.
+    // "invalid_credentials"), "rate_limited" while the content provenance
+    // check waits, the raw content provenance detail, and whether the image is
+    // kept for manual verification (root only).
+    metadata_error?: string
+    content_error?: string
+    content_error_detail?: string
+    image_available?: boolean
+    // The official Content Provenance answer per signal, read independently:
+    // C2PA outcome with its validation state and issuer, the SynthID outcome,
+    // and the model it names. Empty until the API has answered.
+    provenance_c2pa?: string
+    provenance_c2pa_state?: string
+    provenance_issuer?: string
+    provenance_synthid?: string
+    provenance_model?: string
+  }
   po?: string[]
   billing_source?: string
   group?: string
@@ -317,6 +360,7 @@ export interface MidjourneyLog {
   description?: string
   buttons?: string
   properties?: string
+  detection_status?: 'not_checked' | 'checking' | 'checked' | 'error'
   image_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, MODAL
   other?: string

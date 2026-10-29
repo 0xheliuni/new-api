@@ -2,9 +2,11 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -20,7 +22,9 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -197,22 +201,59 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 
+	var syncTask *model.Task
 	if common.RecordSyncImageTaskEnabled {
-		insertSyncImageTask(c, info, request, quality, uint(imageN))
+		syncTask = insertSyncImageTask(c, info, request, quality, uint(imageN))
 	}
+
+	// Global detection: L1/L2 always run; L3 is gated by sampling rate.
+	// Uses gopool.Go so the goroutine has panic recovery from the pool.
+	// context.Background() ensures the pipeline outlives the HTTP request.
+	if s := operation_setting.GetImageDetectionSetting(); s.GlobalEnabled {
+		channelID := info.GetChannelID()
+		if s.IsChannelInScope(channelID, nil) && rand.Float64() < s.GlobalSampleRate {
+			taskID := ""
+			if syncTask != nil {
+				taskID = syncTask.TaskID
+			}
+			// Prefer decoded bytes (captured by sampleImagePayload in the
+			// openai image handler); fall back to fetching the URL when only
+			// a URL was returned (URL-only responses, expires in ~1h).
+			imgBytes := info.SampledImageBytes
+			if len(imgBytes) == 0 && info.SampledImageURL != "" {
+				if fetched, err := fetchSampledImageURL(info.SampledImageURL); err == nil {
+					imgBytes = fetched
+				}
+			}
+			job := service.ImageDetectionJob{
+				TaskID:      taskID,
+				RequestID:   info.RequestId,
+				ChannelID:   channelID,
+				Model:       request.Model,
+				RequestSize: request.Size,
+				LatencyMs:   info.FirstResponseTime.Sub(info.StartTime).Milliseconds(),
+				ImageBytes:  imgBytes,
+				Trigger:     service.ImageDetectionTriggerGlobal,
+			}
+			gopool.Go(func() { service.RunImageDetectionPipeline(job) })
+		}
+	}
+
 	return nil
 }
 
 // insertSyncImageTask 将同步生图调用合成一条 task 记录写入 tasks 表，
-// 让其在「绘图日志」中可见。任何错误仅记录日志，不影响响应。
-func insertSyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ImageRequest, quality string, imageN uint) {
+// 让其在「绘图日志」中可见。任何错误仅记录日志，不影响响应。返回写入的
+// task，供全局图片检测复用其 task_id；插入失败或 panic 时返回 nil。
+func insertSyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ImageRequest, quality string, imageN uint) (task *model.Task) {
 	defer func() {
 		if r := recover(); r != nil {
 			common.SysError(fmt.Sprintf("insertSyncImageTask panic: %v", r))
+			task = nil
 		}
 	}()
 
-	task := model.InitTask(constant.TaskPlatformOpenAIImage, info)
+	task = model.InitTask(constant.TaskPlatformOpenAIImage, info)
 	now := time.Now().Unix()
 	task.Status = model.TaskStatusSuccess
 	task.Progress = "100%"
@@ -251,5 +292,33 @@ func insertSyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, request *d
 
 	if err := task.Insert(); err != nil {
 		common.SysError("insert sync image task error: " + err.Error())
+		return nil
 	}
+	return task
+}
+
+// fetchSampledImageURL downloads the image at imageURL for passive detection.
+// Uses the project's SSRF-protected HTTP client so private-network URLs from
+// pool channels cannot reach internal infrastructure.
+// Returns nil bytes on any error; the detection pipeline handles nil gracefully.
+func fetchSampledImageURL(imageURL string) ([]byte, error) {
+	const maxBytes = 10 * 1024 * 1024
+	client := service.GetSSRFProtectedHTTPClient()
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodGet, imageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d fetching sampled image", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }

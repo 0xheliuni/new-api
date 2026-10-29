@@ -31,6 +31,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
@@ -61,6 +69,7 @@ const _systemInfoSchema = z.object({
     user_agreement: z.string().optional(),
     privacy_policy: z.string().optional(),
   }),
+  frontend_theme: z.enum(['default', 'classic']),
 })
 
 type SystemInfoFormValues = z.infer<typeof _systemInfoSchema>
@@ -93,6 +102,8 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       user_agreement: normalizeValue(defaultValues.legal?.user_agreement),
       privacy_policy: normalizeValue(defaultValues.legal?.privacy_policy),
     },
+    frontend_theme:
+      defaultValues.frontend_theme === 'classic' ? 'classic' : 'default',
   }
 
   const systemInfoSchemaWithI18n = z.object({
@@ -117,6 +128,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       user_agreement: z.string().optional(),
       privacy_policy: z.string().optional(),
     }),
+    frontend_theme: z.enum(['default', 'classic']),
   })
 
   const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
@@ -128,15 +140,24 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       >,
       defaultValues: normalizedDefaults,
       onSubmit: async (_data, changedFields) => {
+        let themeChanged = false
         for (const [key, value] of Object.entries(changedFields)) {
+          if (key === 'frontend_theme') {
+            await updateOption.mutateAsync({
+              key: 'theme.frontend',
+              value: String(value),
+            })
+            themeChanged = true
+            continue
+          }
           let v = normalizeValue(value)
           if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
             v = v.replace(/\/+$/, '')
           }
-          await updateOption.mutateAsync({
-            key,
-            value: v,
-          })
+          await updateOption.mutateAsync({ key, value: v })
+        }
+        if (themeChanged) {
+          window.location.replace('/')
         }
       },
     })
@@ -156,6 +177,52 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
             />
             <FormDirtyIndicator isDirty={isDirty} />
             <SettingsFormGrid>
+              <FormField
+                control={form.control}
+                name='frontend_theme'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Frontend Theme')}</FormLabel>
+                    <Select
+                      items={[
+                        {
+                          value: 'default',
+                          label: t('Default (New Frontend)'),
+                        },
+                        {
+                          value: 'classic',
+                          label: t('Classic (Legacy Frontend)'),
+                        },
+                      ]}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          <SelectItem value='default'>
+                            {t('Default (New Frontend)')}
+                          </SelectItem>
+                          <SelectItem value='classic'>
+                            {t('Classic (Legacy Frontend)')}
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {t(
+                        'Switch between the new frontend and the classic frontend. Changes take effect after page reload.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <FormField
                 control={form.control}
                 name='SystemName'

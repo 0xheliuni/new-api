@@ -454,6 +454,15 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
 		}
 
+		imageDetectionRoute := apiRouter.Group("/image-detection")
+		imageDetectionRoute.Use(middleware.RootAuth())
+		{
+			imageDetectionRoute.POST("/test", controller.TriggerImageDetection)
+			imageDetectionRoute.GET("/records", controller.GetImageDetectionRecords)
+			imageDetectionRoute.GET("/image", controller.GetImageDetectionImage)
+			imageDetectionRoute.POST("/install-c2pa", controller.InstallC2PATool)
+		}
+
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
 		deploymentsRoute.Use(middleware.AdminAuth())

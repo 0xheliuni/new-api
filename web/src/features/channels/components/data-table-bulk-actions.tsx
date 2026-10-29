@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { Layers, Power, PowerOff, Tag, Trash2 } from 'lucide-react'
+import { Layers, Power, PowerOff, ScanSearch, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
@@ -38,9 +39,11 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { batchImageDetection } from '../api'
 import {
   handleBatchDelete,
   handleBatchDisable,
@@ -116,6 +119,24 @@ export function DataTableBulkActions<TData>({
       setShowSupplyTypeDialog(false)
       handleClearSelection()
     })
+  }
+
+  const handleRunImageDetection = async () => {
+    if (selectedIds.length === 0) return
+    try {
+      const result = await batchImageDetection({ channel_ids: selectedIds })
+      if (result.success) {
+        toast.success(
+          t('Image detection task submitted for {{count}} channel(s)', {
+            count: selectedIds.length,
+          })
+        )
+      } else {
+        toast.error(result.message || t('Failed to start image detection'))
+      }
+    } catch (error) {
+      handleServerError(error, t('Failed to start image detection'))
+    }
   }
 
   return (
@@ -206,6 +227,29 @@ export function DataTableBulkActions<TData>({
           </TooltipTrigger>
           <TooltipContent>
             <p>{t('Set supply type for selected channels')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={() => void handleRunImageDetection()}
+                className='size-8'
+                aria-label={t('Run image detection on selected channels')}
+                title={t('Run image detection on selected channels')}
+              />
+            }
+          >
+            <ScanSearch className='size-4' />
+            <span className='sr-only'>
+              {t('Run image detection on selected channels')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Run image detection on selected channels')}</p>
           </TooltipContent>
         </Tooltip>
 

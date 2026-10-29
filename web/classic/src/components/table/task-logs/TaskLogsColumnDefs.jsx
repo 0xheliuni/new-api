@@ -308,6 +308,42 @@ const renderStorageStatus = (status, t) => {
   }
 };
 
+const renderDetectionStatus = (status, t) => {
+  if (!status || status === 'not_checked') {
+    return (
+      <Tag color='grey' shape='circle'>
+        {t('未检测')}
+      </Tag>
+    );
+  }
+  switch (status) {
+    case 'checking':
+      return (
+        <Tag color='orange' shape='circle'>
+          {t('检测中')}
+        </Tag>
+      );
+    case 'checked':
+      return (
+        <Tag color='green' shape='circle'>
+          {t('已检测')}
+        </Tag>
+      );
+    case 'error':
+      return (
+        <Tag color='red' shape='circle'>
+          {t('检测错误')}
+        </Tag>
+      );
+    default:
+      return (
+        <Tag color='grey' shape='circle'>
+          {t('未检测')}
+        </Tag>
+      );
+  }
+};
+
 export const getTaskLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -430,6 +466,15 @@ export const getTaskLogsColumns = ({
       dataIndex: 'status',
       render: (text, record, index) => {
         return <div>{renderStatus(text, t)}</div>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.DETECTION_STATUS,
+      title: t('图片检测'),
+      dataIndex: 'data',
+      render: (data, record) => {
+        if (record.platform !== 'openai_image') return null;
+        return renderDetectionStatus(data?.detection_status, t);
       },
     },
     {

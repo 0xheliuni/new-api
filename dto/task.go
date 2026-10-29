@@ -58,6 +58,9 @@ type TaskDto struct {
 	Data            json.RawMessage `json:"data"`
 	AdminInfo       *TaskAdminInfo  `json:"admin_info,omitempty"`
 	RootInfo        *TaskRootInfo   `json:"root_info,omitempty"`
+	// DetectionStatus is extracted from Data["detection_status"] for the drawing-log UI.
+	// It avoids having the frontend parse the Data JSON blob just to read one field.
+	DetectionStatus string `json:"detection_status,omitempty"`
 }
 
 type TaskPluginInfo struct {
