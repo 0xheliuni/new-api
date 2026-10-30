@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,6 +43,8 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	}
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
+	sampleImagePayload(info, responseBody) // passive detection capture (first image only)
+	info.SetFirstResponseTime()            // mark TTFB for non-streaming image responses
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -363,4 +366,41 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 
 func writeOpenaiImageStreamDone(c *gin.Context) error {
 	return helper.StringData(c, "[DONE]")
+}
+
+// sampleImagePayload captures the first image payload from an OpenAI image
+// response body for passive detection. It sets either SampledImageBytes (for
+// b64_json, decoded, capped at 10 MB) or SampledImageURL (for url responses).
+// Only the first payload is retained. Failures are silently discarded.
+func sampleImagePayload(info *relaycommon.RelayInfo, responseBody []byte) {
+	if info == nil {
+		return
+	}
+	const maxBytes = 10 * 1024 * 1024
+
+	captureItem := func(item gjson.Result) bool {
+		if b64 := item.Get("b64_json"); b64.Type == gjson.String && b64.Raw != `""` {
+			decoded, err := base64.StdEncoding.DecodeString(b64.Str)
+			if err == nil && len(decoded) <= maxBytes {
+				info.SampledImageBytes = decoded
+			}
+			return false
+		}
+		if u := item.Get("url"); u.Type == gjson.String && u.Raw != `""` {
+			info.SampledImageURL = u.Str
+			return false
+		}
+		return true
+	}
+
+	data := gjson.GetBytes(responseBody, "data")
+	if data.IsObject() {
+		captureItem(data)
+		return
+	}
+	if data.IsArray() {
+		data.ForEach(func(_, item gjson.Result) bool {
+			return captureItem(item)
+		})
+	}
 }

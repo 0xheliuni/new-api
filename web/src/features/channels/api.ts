@@ -588,6 +588,19 @@ export async function getTagModels(
 }
 
 // ============================================================================
+// Image Detection
+// ============================================================================
+
+export async function batchImageDetection(params: { channel_ids: number[] }) {
+  const res = await api.post<{
+    success: boolean
+    message: string
+    data?: { task_id: string; status: string }
+  }>('/api/image-detection/test', params)
+  return res.data
+}
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
 

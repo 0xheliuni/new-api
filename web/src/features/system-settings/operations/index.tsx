@@ -85,6 +85,22 @@ const defaultOperationsSettings: OperationsSettings = {
   'volc_asset_setting.enabled': false,
   'volc_asset_setting.default_asset_limit': 100,
   'volc_asset_setting.count_asset_groups': false,
+  'image_detection_setting.global_enabled': false,
+  'image_detection_setting.global_sample_rate': 1.0,
+  'image_detection_setting.scheduled_enabled': false,
+  'image_detection_setting.scheduled_cron': '0 */2 * * *',
+  'image_detection_setting.scheduled_batch_limit': 200,
+  'image_detection_setting.channel_scope': 'all',
+  'image_detection_setting.selected_channel_ids': [],
+  'image_detection_setting.check_resolution': true,
+  'image_detection_setting.check_c2pa': true,
+  'image_detection_setting.check_synth_id': true,
+  'image_detection_setting.synth_id_force': false,
+  'image_detection_setting.provenance_api_key': '',
+  'image_detection_setting.synth_id_rate_per_minute': 50,
+  'image_detection_setting.synth_id_rate_per_day': 500,
+  'image_detection_setting.c2pa_tool_path': '',
+  'image_detection_setting.c2pa_timeout_seconds': 3,
 }
 
 export function OperationsSettings() {

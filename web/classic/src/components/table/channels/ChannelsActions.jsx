@@ -57,6 +57,7 @@ const ChannelsActions = ({
   activePage,
   pageSize,
   setActivePage,
+  batchRunImageDetection,
   t,
 }) => {
   return (
@@ -99,6 +100,26 @@ const ChannelsActions = ({
             className='w-full md:w-auto'
           >
             {t('批量设置供应方式')}
+          </Button>
+
+          <Button
+            size='small'
+            disabled={!enableBatchDelete}
+            type='tertiary'
+            className='w-full md:w-auto'
+            onClick={() => {
+              Modal.confirm({
+                title: t('确定运行图片检测？'),
+                content: t(
+                  '将对所选渠道中等待内容溯源的图片执行内容溯源，是否继续？',
+                ),
+                onOk: () => batchRunImageDetection(),
+                size: 'small',
+                centered: true,
+              });
+            }}
+          >
+            {t('批量图片检测')}
           </Button>
 
           <Dropdown

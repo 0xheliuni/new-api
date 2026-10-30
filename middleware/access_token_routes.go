@@ -189,6 +189,12 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/system-info/stale-instances":      accessTokenScopeRule("ops:write"),
 	"DELETE /api/system-info/instances/:node_name": accessTokenScopeRule("ops:write"),
 
+	// router/api-router.go: /api/image-detection
+	"POST /api/image-detection/test":         accessTokenScopeRule("ops:write"),
+	"GET /api/image-detection/records":       accessTokenScopeRule("ops:read"),
+	"GET /api/image-detection/image":         accessTokenScopeRule("ops:read"),
+	"POST /api/image-detection/install-c2pa": accessTokenScopeRule("ops:write"),
+
 	// router/api-router.go: /api/plugin/task
 	"GET /api/plugin/task":                           accessTokenScopeRule("plugin:read"),
 	"POST /api/plugin/task":                          accessTokenScopeRule("plugin:write"),

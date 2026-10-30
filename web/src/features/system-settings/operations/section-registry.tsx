@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { VolcAssetSettingsSection } from '../general/volc-asset-settings-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
+import { ImageDetectionSection } from '../integrations/image-detection-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
@@ -177,6 +178,48 @@ const OPERATIONS_SECTIONS = [
           enabled: settings['volc_asset_setting.enabled'],
           defaultAssetLimit: settings['volc_asset_setting.default_asset_limit'],
           countAssetGroups: settings['volc_asset_setting.count_asset_groups'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'image-detection',
+    titleKey: 'Image Detection',
+    build: (settings: OperationsSettings) => (
+      <ImageDetectionSection
+        defaultValues={{
+          'image_detection_setting.global_enabled':
+            settings['image_detection_setting.global_enabled'] ?? false,
+          'image_detection_setting.global_sample_rate':
+            settings['image_detection_setting.global_sample_rate'] ?? 1.0,
+          'image_detection_setting.scheduled_enabled':
+            settings['image_detection_setting.scheduled_enabled'] ?? false,
+          'image_detection_setting.scheduled_cron':
+            settings['image_detection_setting.scheduled_cron'] ?? '0 */2 * * *',
+          'image_detection_setting.scheduled_batch_limit':
+            settings['image_detection_setting.scheduled_batch_limit'] ?? 200,
+          'image_detection_setting.channel_scope':
+            settings['image_detection_setting.channel_scope'] ?? 'all',
+          'image_detection_setting.selected_channel_ids':
+            settings['image_detection_setting.selected_channel_ids'] ?? [],
+          'image_detection_setting.check_resolution':
+            settings['image_detection_setting.check_resolution'] ?? true,
+          'image_detection_setting.check_c2pa':
+            settings['image_detection_setting.check_c2pa'] ?? true,
+          'image_detection_setting.check_synth_id':
+            settings['image_detection_setting.check_synth_id'] ?? true,
+          'image_detection_setting.synth_id_force':
+            settings['image_detection_setting.synth_id_force'] ?? false,
+          // Never returned by the options API; the field only takes a new key.
+          'image_detection_setting.provenance_api_key': '',
+          'image_detection_setting.synth_id_rate_per_minute':
+            settings['image_detection_setting.synth_id_rate_per_minute'] ?? 50,
+          'image_detection_setting.synth_id_rate_per_day':
+            settings['image_detection_setting.synth_id_rate_per_day'] ?? 500,
+          'image_detection_setting.c2pa_tool_path':
+            settings['image_detection_setting.c2pa_tool_path'] ?? '',
+          'image_detection_setting.c2pa_timeout_seconds':
+            settings['image_detection_setting.c2pa_timeout_seconds'] ?? 3,
         }}
       />
     ),

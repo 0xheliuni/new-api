@@ -728,6 +728,30 @@ export const useChannelsData = () => {
     }
   };
 
+  const [showBatchImageDetection, setShowBatchImageDetection] =
+    useState(false);
+
+  const batchRunImageDetection = async () => {
+    if (selectedChannels.length === 0) {
+      showError(t('请先选择要检测的渠道！'));
+      return;
+    }
+    const res = await API.post('/api/image-detection/test', {
+      channel_ids: selectedChannels.map((channel) => channel.id),
+    });
+    if (res.data.success) {
+      showSuccess(
+        t('已为 ${count} 个渠道提交图片检测任务！').replace(
+          '${count}',
+          selectedChannels.length,
+        ),
+      );
+      setShowBatchImageDetection(false);
+    } else {
+      showError(res.data.message);
+    }
+  };
+
   const batchDeleteChannels = async () => {
     if (selectedChannels.length === 0) {
       showError(t('请先选择要删除的通道！'));
@@ -1203,6 +1227,8 @@ export const useChannelsData = () => {
     setBatchSupplyTypeValue,
     batchSetTagValue,
     setBatchSetTagValue,
+    showBatchImageDetection,
+    setShowBatchImageDetection,
 
     // Column states
     visibleColumns,
@@ -1268,6 +1294,7 @@ export const useChannelsData = () => {
     handleRow,
     batchSetChannelTag,
     batchSetChannelSupplyType,
+    batchRunImageDetection,
     batchDeleteChannels,
     testAllChannels,
     deleteAllDisabledChannels,

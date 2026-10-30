@@ -950,7 +950,7 @@ export function useCommonLogsColumns(
         },
         size: 180,
         maxSize: 200,
-      }
+      },
     )
 
     return columns

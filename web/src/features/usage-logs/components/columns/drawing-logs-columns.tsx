@@ -39,6 +39,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { MJ_TASK_TYPES } from '../../constants'
@@ -224,6 +225,41 @@ export function useDrawingLogsColumns(
             </>
           )
         },
+      },
+      {
+        id: 'detection_status',
+        accessorKey: 'detection_status',
+        header: t('Detection'),
+        cell: ({ row }) => {
+          const status = row.getValue('detection_status') as
+            | 'not_checked'
+            | 'checking'
+            | 'checked'
+            | 'error'
+            | undefined
+          if (!status || status === 'not_checked') {
+            return <span className='text-muted-foreground/60 text-xs'>—</span>
+          }
+          const config: Record<
+            string,
+            { label: string; variant: 'default' | 'warning' | 'destructive' }
+          > = {
+            checking: { label: t('Checking'), variant: 'warning' },
+            checked: { label: t('Checked'), variant: 'default' },
+            error: { label: t('Error'), variant: 'destructive' },
+          }
+          const { label, variant } = config[status] ?? {
+            label: status,
+            variant: 'default',
+          }
+          return (
+            <Badge variant={variant} className='text-xs'>
+              {label}
+            </Badge>
+          )
+        },
+        enableSorting: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'prompt',

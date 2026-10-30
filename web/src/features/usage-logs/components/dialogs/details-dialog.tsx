@@ -46,10 +46,15 @@ import {
   Cloud,
   Globe,
   ShieldCheck,
+  X,
+  Minus,
+  SkipForward,
+  Loader2,
   UserCog,
   Info,
   LogIn,
 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -90,10 +95,19 @@ import {
   isPerCallBilling,
   isTimingLogType,
 } from '../../lib/utils'
-import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import {
+  USAGE_BILLING_PATH,
+  type ImageDetectionStepResult,
+  type LogOtherData,
+} from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { TaskStatusBadge } from '../task-progress-ring'
+import {
+  DetectionLog,
+  ManualVerification,
+  ProvenanceSignals,
+} from './image-detection-log'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -546,6 +560,249 @@ function SeedanceTaskSection(props: { log: UsageLog }) {
       {rows.map((row, idx) => (
         <DetailRow key={idx} label={row.label} value={row.value} mono />
       ))}
+    </DetailSection>
+  )
+}
+
+// ImageDetectionPipeline renders the resolution → metadata → content
+// detection steps as a horizontal pipeline: each step shows its title with the
+// result icon underneath (✓ pass, ✗ fail, spinner while pending, — when the
+// step did not run), joined by connector lines.
+const DETECTION_STEP_STYLES: Record<
+  ImageDetectionStepResult,
+  { badge: string; text: string }
+> = {
+  pass: {
+    badge:
+      'bg-emerald-500 text-white shadow-md shadow-emerald-500/30 ring-4 ring-emerald-500/15 dark:bg-emerald-400 dark:text-emerald-950',
+    text: 'text-emerald-600 dark:text-emerald-400',
+  },
+  fail: {
+    badge:
+      'bg-rose-500 text-white shadow-md shadow-rose-500/30 ring-4 ring-rose-500/15 dark:bg-rose-400 dark:text-rose-950',
+    text: 'text-rose-600 dark:text-rose-400',
+  },
+  pending: {
+    badge:
+      'bg-amber-500/15 text-amber-600 ring-4 ring-amber-500/10 dark:text-amber-400',
+    text: 'text-amber-600 dark:text-amber-400',
+  },
+  error: {
+    badge:
+      'bg-orange-500/15 text-orange-600 ring-4 ring-orange-500/10 dark:text-orange-400',
+    text: 'text-orange-600 dark:text-orange-400',
+  },
+  skipped: {
+    badge:
+      'border-muted-foreground/40 text-muted-foreground border border-dashed bg-transparent',
+    text: 'text-muted-foreground',
+  },
+  not_checked: {
+    badge:
+      'border-muted-foreground/30 text-muted-foreground/70 border border-dashed bg-transparent',
+    text: 'text-muted-foreground/80',
+  },
+}
+
+function DetectionStepIcon(props: { result: ImageDetectionStepResult }) {
+  switch (props.result) {
+    case 'pass':
+      return <Check className='size-4' strokeWidth={3.5} aria-hidden='true' />
+    case 'fail':
+      return <X className='size-4' strokeWidth={3.5} aria-hidden='true' />
+    case 'pending':
+      return <Loader2 className='size-4 animate-spin' aria-hidden='true' />
+    case 'error':
+      return <AlertTriangle className='size-3.5' aria-hidden='true' />
+    case 'skipped':
+      return <SkipForward className='size-3.5' aria-hidden='true' />
+    default:
+      return <Minus className='size-3.5' aria-hidden='true' />
+  }
+}
+
+function ImageDetectionPipeline(props: {
+  steps: NonNullable<LogOtherData['detection_steps']>
+  verdict?: LogOtherData['detection_verdict']
+  status?: LogOtherData['detection_status']
+  requestId: string
+  isRoot: boolean
+}) {
+  const { t } = useTranslation()
+  // The kept image is user content and its endpoint is root only; it is kept
+  // only when content provenance could not finish.
+  const canVerifyManually =
+    props.isRoot &&
+    props.steps.content === 'error' &&
+    props.steps.image_available === true &&
+    props.requestId !== ''
+
+  const resultLabels: Record<ImageDetectionStepResult, string> = {
+    pass: t('Passed'),
+    fail: t('Failed'),
+    pending: t('Detecting'),
+    error: t('Detection error'),
+    skipped: t('Skipped'),
+    not_checked: t('Not checked'),
+  }
+
+  const sizeHint =
+    props.steps.request_size || props.steps.actual_size
+      ? `${props.steps.request_size || '-'} → ${props.steps.actual_size || '-'}`
+      : undefined
+
+  const steps = [
+    {
+      key: 'resolution',
+      title: t('Resolution'),
+      result: props.steps.resolution ?? 'not_checked',
+      hint: sizeHint,
+    },
+    {
+      key: 'metadata',
+      title: t('Metadata'),
+      result: props.steps.metadata ?? 'not_checked',
+      hint: 'C2PA',
+    },
+    {
+      // The official OpenAI Content Provenance API, which itself checks the
+      // signed C2PA credentials (issuer and trust validated) and SynthID.
+      key: 'content',
+      title: t('Content provenance'),
+      result: props.steps.content ?? 'not_checked',
+      hint: 'OpenAI API',
+    },
+  ] satisfies Array<{
+    key: string
+    title: string
+    result: ImageDetectionStepResult
+    hint?: string
+  }>
+
+  // Overall result shown at the top right of the block: the pass/fail verdict
+  // when there is one, otherwise the detection status so the corner is never
+  // silently empty while the check is running or after it failed.
+  let resultBadge: ReactNode = null
+  if (props.verdict === 'pass') {
+    resultBadge = (
+      <StatusBadge
+        label={t('Passed')}
+        variant='success'
+        size='sm'
+        copyable={false}
+      />
+    )
+  } else if (props.verdict === 'fail') {
+    resultBadge = (
+      <StatusBadge
+        label={t('Failed')}
+        variant='danger'
+        size='sm'
+        copyable={false}
+      />
+    )
+  } else if (props.status === 'checking') {
+    resultBadge = (
+      <StatusBadge
+        label={t('Detecting')}
+        variant='warning'
+        size='sm'
+        copyable={false}
+      />
+    )
+  } else if (props.status === 'error') {
+    resultBadge = (
+      <StatusBadge
+        label={t('Detection error')}
+        variant='orange'
+        size='sm'
+        copyable={false}
+      />
+    )
+  } else if (props.status) {
+    resultBadge = (
+      <StatusBadge
+        label={
+          props.status === 'not_checked' ? t('Not checked') : t('Inconclusive')
+        }
+        variant='neutral'
+        size='sm'
+        copyable={false}
+      />
+    )
+  }
+
+  return (
+    <DetailSection label={t('Image detection')}>
+      <div
+        role='group'
+        aria-label={t('Detection summary')}
+        className='flex min-w-0 items-center gap-3 pb-1'
+      >
+        {props.steps.duration_ms ? (
+          <span className='flex items-center gap-1.5 text-xs'>
+            <span className='text-muted-foreground'>
+              {t('Detection duration')}
+            </span>
+            <span className='font-mono font-medium'>
+              {formatUseTime(props.steps.duration_ms / 1000)}
+            </span>
+          </span>
+        ) : null}
+        {resultBadge && (
+          <span className='ml-auto flex items-center gap-1.5 text-xs'>
+            <span className='text-muted-foreground'>{t('Overall result')}</span>
+            {resultBadge}
+          </span>
+        )}
+      </div>
+      <ol aria-label={t('Image detection')} className='flex items-start py-1'>
+        {steps.map((step, index) => {
+          const style = DETECTION_STEP_STYLES[step.result]
+          const isLast = index === steps.length - 1
+          return (
+            <li
+              key={step.key}
+              className='relative flex min-w-0 flex-1 flex-col items-center gap-1.5 text-center'
+            >
+              {!isLast && (
+                <span
+                  aria-hidden='true'
+                  className={cn(
+                    'absolute top-[38px] left-[calc(50%+22px)] h-px w-[calc(100%-44px)]',
+                    step.result === 'pass'
+                      ? 'bg-emerald-500/50'
+                      : 'bg-border border-t border-dashed bg-transparent'
+                  )}
+                />
+              )}
+              <span className='text-foreground text-xs font-medium'>
+                {step.title}
+              </span>
+              <span
+                className={cn(
+                  'flex size-8 items-center justify-center rounded-full transition-colors',
+                  style.badge
+                )}
+                title={resultLabels[step.result]}
+              >
+                <DetectionStepIcon result={step.result} />
+              </span>
+              <span className={cn('text-[11px] font-medium', style.text)}>
+                {resultLabels[step.result]}
+              </span>
+              {step.hint && (
+                <span className='text-muted-foreground max-w-full truncate font-mono text-[10px]'>
+                  {step.hint}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+      <ProvenanceSignals steps={props.steps} />
+      <DetectionLog steps={props.steps} />
+      {canVerifyManually && <ManualVerification requestId={props.requestId} />}
     </DetailSection>
   )
 }
@@ -1443,6 +1700,17 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </p>
             </div>
           </div>
+        )}
+
+        {/* Image detection pipeline (consume logs with a detection record) */}
+        {isConsume && other?.detection_steps && (
+          <ImageDetectionPipeline
+            steps={other.detection_steps}
+            verdict={other.detection_verdict}
+            status={other.detection_status}
+            requestId={props.log.request_id}
+            isRoot={props.isRoot}
+          />
         )}
       </div>
     </Dialog>

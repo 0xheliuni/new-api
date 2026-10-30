@@ -34,6 +34,7 @@ import {
   CreditCard,
   Server,
   Activity,
+  ScanSearch,
 } from 'lucide-react';
 
 import SystemSetting from '../../components/settings/SystemSetting';
@@ -49,6 +50,7 @@ import DrawingSetting from '../../components/settings/DrawingSetting';
 import PaymentSetting from '../../components/settings/PaymentSetting';
 import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
 import PerformanceSetting from '../../components/settings/PerformanceSetting';
+import ImageDetectionSetting from '../../components/settings/ImageDetectionSetting';
 
 const Setting = () => {
   const { t } = useTranslation();
@@ -157,6 +159,16 @@ const Setting = () => {
       ),
       content: <PerformanceSetting />,
       itemKey: 'performance',
+    });
+    panes.push({
+      tab: (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <ScanSearch size={18} />
+          {t('图片检测设置')}
+        </span>
+      ),
+      content: <ImageDetectionSetting />,
+      itemKey: 'image-detection',
     });
     panes.push({
       tab: (

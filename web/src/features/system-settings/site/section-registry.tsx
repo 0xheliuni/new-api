@@ -26,7 +26,6 @@ import {
 import { HeaderNavigationSection } from '../maintenance/header-navigation-section'
 import { NoticeSection } from '../maintenance/notice-section'
 import { SidebarModulesSection } from '../maintenance/sidebar-modules-section'
-import { FrontendThemeSection } from './frontend-theme-section'
 import type { SiteSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 
@@ -51,6 +50,9 @@ const SITE_SECTIONS = [
             user_agreement: settings['legal.user_agreement'],
             privacy_policy: settings['legal.privacy_policy'],
           },
+          frontend_theme: (settings['theme.frontend'] === 'classic'
+            ? 'classic'
+            : 'default'),
         }}
       />
     ),
@@ -60,13 +62,6 @@ const SITE_SECTIONS = [
     titleKey: 'System Notice',
     build: (settings: SiteSettings) => (
       <NoticeSection defaultValue={settings.Notice ?? ''} />
-    ),
-  },
-  {
-    id: 'frontend-theme',
-    titleKey: 'Frontend Theme',
-    build: (settings: SiteSettings) => (
-      <FrontendThemeSection defaultValue={settings['theme.frontend'] ?? 'default'} />
     ),
   },
   {

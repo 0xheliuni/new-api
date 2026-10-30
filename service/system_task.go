@@ -12,7 +12,47 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/robfig/cron/v3"
 )
+
+// CronScheduledSystemTaskHandler extends ScheduledSystemTaskHandler with a
+// cron expression for flexible scheduling. When implemented, the scheduler
+// uses NextRunAfter to compute the next due time instead of the fixed Interval.
+// NextRunAfter must return a zero time when the task is disabled or the
+// expression cannot be parsed; the scheduler will skip the task in that case.
+type CronScheduledSystemTaskHandler interface {
+	ScheduledSystemTaskHandler
+	// CronExpression returns a standard 5-field cron expression.
+	CronExpression() string
+	// NextRunAfter returns the next scheduled time after ref.
+	NextRunAfter(ref time.Time) time.Time
+}
+
+// ParseAndNext parses a standard 5-field cron expression and returns the next
+// scheduled time strictly after ref. Returns a zero time when expr is empty or
+// cannot be parsed so callers can treat it as "never run".
+func ParseAndNext(expr string, ref time.Time) time.Time {
+	if len(expr) == 0 {
+		return time.Time{}
+	}
+	schedule, err := cron.ParseStandard(expr)
+	if err != nil {
+		return time.Time{}
+	}
+	return schedule.Next(ref)
+}
+
+// ValidateCronExpression returns an error when expr is not a parseable
+// standard 5-field cron expression, or nil when valid.
+func ValidateCronExpression(expr string) error {
+	if len(expr) == 0 {
+		return errors.New("cron expression must not be empty")
+	}
+	if _, err := cron.ParseStandard(expr); err != nil {
+		return fmt.Errorf("invalid cron expression: %w", err)
+	}
+	return nil
+}
 
 const (
 	// systemTaskRunnerIdleInterval is the fallback poll interval used to pick up
@@ -284,7 +324,15 @@ func runSystemTaskScheduler() {
 			if latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning {
 				continue // an active row already exists
 			}
-			if now-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
+			// CronScheduledSystemTaskHandler uses NextRunAfter for due-time
+			// calculation; fall back to fixed Interval for plain handlers.
+			if ch, ok := scheduled.(CronScheduledSystemTaskHandler); ok {
+				lastRun := time.Unix(latest.UpdatedAt, 0)
+				next := ch.NextRunAfter(lastRun)
+				if next.IsZero() || time.Now().Before(next) {
+					continue // not due yet or expression invalid/disabled
+				}
+			} else if now-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
 				continue // not due yet
 			}
 		}

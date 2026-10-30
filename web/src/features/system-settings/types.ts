@@ -418,6 +418,22 @@ export type OperationsSettings = {
   'volc_asset_setting.enabled': boolean
   'volc_asset_setting.default_asset_limit': number
   'volc_asset_setting.count_asset_groups': boolean
+  'image_detection_setting.global_enabled': boolean
+  'image_detection_setting.global_sample_rate': number
+  'image_detection_setting.scheduled_enabled': boolean
+  'image_detection_setting.scheduled_cron': string
+  'image_detection_setting.scheduled_batch_limit': number
+  'image_detection_setting.channel_scope': string
+  'image_detection_setting.selected_channel_ids': number[]
+  'image_detection_setting.check_resolution': boolean
+  'image_detection_setting.check_c2pa': boolean
+  'image_detection_setting.check_synth_id': boolean
+  'image_detection_setting.synth_id_force': boolean
+  'image_detection_setting.provenance_api_key': string
+  'image_detection_setting.synth_id_rate_per_minute': number
+  'image_detection_setting.synth_id_rate_per_day': number
+  'image_detection_setting.c2pa_tool_path': string
+  'image_detection_setting.c2pa_timeout_seconds': number
 }
 
 export type SecuritySettings = {

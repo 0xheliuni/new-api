@@ -125,3 +125,22 @@ export async function getTaskArtifacts(taskId: string) {
   )
   return parseTaskArtifactsResponse(response.data)
 }
+
+// ============================================================================
+// Image Detection API
+// ============================================================================
+
+/**
+ * Loads the image kept for a detection whose content provenance check could
+ * not finish (root only). Callers handle failures, e.g. a 404 once the image
+ * has been pruned.
+ */
+export async function getImageDetectionImage(requestId: string): Promise<Blob> {
+  const response = await api.get<Blob>('/api/image-detection/image', {
+    params: { request_id: requestId },
+    responseType: 'blob',
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  } satisfies ApiRequestConfig)
+  return response.data
+}

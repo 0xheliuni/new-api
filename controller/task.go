@@ -457,6 +457,14 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		item := relay.TaskModel2Dto(task)
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		item.ResultDiscarded = task.PrivateData.ResultDiscarded
+		if len(task.Data) > 0 {
+			var taskData map[string]any
+			if err := json.Unmarshal(task.Data, &taskData); err == nil {
+				if s, ok := taskData["detection_status"].(string); ok {
+					item.DetectionStatus = s
+				}
+			}
+		}
 		if task.Status == model.TaskStatusSuccess {
 			item.ResultURL = ""
 			if taskFailReasonIsLegacyResultURL(task.FailReason) {

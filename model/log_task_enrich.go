@@ -8,19 +8,84 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
+// enrichImageDetectionLogs attaches detection_status from image_detection_records
+// onto consume log rows that have a request_id. One batch query; no per-row N+1.
+// The status is written into the log's Other JSON so the API response carries it
+// without adding a new column to the logs table. It is called on the admin log
+// path only: detection results and their failure reasons describe channel
+// checks and configuration, which end users must not see.
+func enrichImageDetectionLogs(logs []*Log) {
+	reqIDs := make([]string, 0)
+	for _, l := range logs {
+		if l.Type == LogTypeConsume && l.RequestId != "" {
+			reqIDs = append(reqIDs, l.RequestId)
+		}
+	}
+	if len(reqIDs) == 0 {
+		return
+	}
+	statuses, err := GetDetectionStatusesByRequestIDs(reqIDs)
+	if err != nil {
+		common.SysError(common.LogText("failed to load image detection statuses: %s", err.Error()))
+		return
+	}
+	if len(statuses) == 0 {
+		return
+	}
+	for _, l := range logs {
+		if l.Type != LogTypeConsume || l.RequestId == "" {
+			continue
+		}
+		result, ok := statuses[l.RequestId]
+		if !ok {
+			continue
+		}
+		m, err := common.StrToMap(l.Other)
+		if err != nil || m == nil {
+			m = make(map[string]any)
+		}
+		m["detection_status"] = result.Status
+		if result.Verdict != "" {
+			m["detection_verdict"] = result.Verdict
+		}
+		m["detection_steps"] = map[string]any{
+			"resolution":   result.Resolution,
+			"metadata":     result.Metadata,
+			"content":      result.Content,
+			"request_size": result.RequestSize,
+			"actual_size":  result.ActualSize,
+			"duration_ms":  result.DurationMs,
+
+			"metadata_error":       result.MetadataError,
+			"content_error":        result.ContentError,
+			"content_error_detail": result.ContentErrorDetail,
+			"image_available":      result.ImageAvailable,
+
+			"provenance_c2pa":       result.Provenance.C2PA,
+			"provenance_c2pa_state": result.Provenance.C2PAState,
+			"provenance_issuer":     result.Provenance.Issuer,
+			"provenance_synthid":    result.Provenance.SynthID,
+			"provenance_model":      result.Provenance.Model,
+		}
+		if b, err := common.Marshal(m); err == nil {
+			l.Other = string(b)
+		}
+	}
+}
+
 // LogTaskInfo 是 seedance 视频任务预扣行的查询时增强载荷（gorm:"-"，不落库）。
 // 前端据此渲染完成状态列、三态费用与详情区块；字段命名与两个前端的
 // task_info 消费方保持一致。
 type LogTaskInfo struct {
-	Status         string  `json:"status"`
-	Progress       string  `json:"progress,omitempty"`
-	FailReason     string  `json:"fail_reason,omitempty"`
-	TaskId         string  `json:"task_id,omitempty"`
-	UpstreamTaskId string  `json:"upstream_task_id,omitempty"`
-	PreQuota       int     `json:"pre_quota"`
-	FinalQuota     int     `json:"final_quota"`
-	OutputTokens   int     `json:"output_tokens,omitempty"`
-	ResolutionTier string  `json:"resolution_tier,omitempty"`
+	Status         string `json:"status"`
+	Progress       string `json:"progress,omitempty"`
+	FailReason     string `json:"fail_reason,omitempty"`
+	TaskId         string `json:"task_id,omitempty"`
+	UpstreamTaskId string `json:"upstream_task_id,omitempty"`
+	PreQuota       int    `json:"pre_quota"`
+	FinalQuota     int    `json:"final_quota"`
+	OutputTokens   int    `json:"output_tokens,omitempty"`
+	ResolutionTier string `json:"resolution_tier,omitempty"`
 	// Resolution/Ratio/DurationS 为用户请求的原始参数（"720p"/"16:9"/5），
 	// 从 task.Properties.Input 解析（请求值优先，task.Data 兜底）。
 	Resolution     string  `json:"resolution,omitempty"`
