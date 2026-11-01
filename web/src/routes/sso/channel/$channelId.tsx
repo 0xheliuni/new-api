@@ -19,26 +19,31 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { SSOTransitionPage } from '@/features/channels/sso/sso-transition-page'
+import { resolveAuthentication } from '@/lib/auth-session'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-export const Route = createFileRoute('/_authenticated/channels/sso/$channelId')(
-  {
-    beforeLoad: ({ params }) => {
-      const { auth } = useAuthStore.getState()
+// Lives outside the `_authenticated` layout so the transition page renders
+// on its own (no console sidebar or header), with the same sign-in check.
+export const Route = createFileRoute('/sso/channel/$channelId')({
+  beforeLoad: async ({ location, params }) => {
+    await resolveAuthentication()
 
-      if (!auth.user || auth.user.role < ROLE.SUPER_ADMIN) {
-        throw redirect({ to: '/403' })
-      }
+    const { auth } = useAuthStore.getState()
+    if (!auth.user || !auth.accessToken) {
+      throw redirect({ to: '/sign-in', search: { redirect: location.href } })
+    }
+    if (auth.user.role < ROLE.SUPER_ADMIN) {
+      throw redirect({ to: '/403' })
+    }
 
-      const channelId = Number(params.channelId)
-      if (!Number.isInteger(channelId) || channelId <= 0) {
-        throw redirect({ to: '/channels' })
-      }
-    },
-    component: RouteComponent,
-  }
-)
+    const channelId = Number(params.channelId)
+    if (!Number.isInteger(channelId) || channelId <= 0) {
+      throw redirect({ to: '/channels' })
+    }
+  },
+  component: RouteComponent,
+})
 
 function RouteComponent() {
   const { channelId } = Route.useParams()

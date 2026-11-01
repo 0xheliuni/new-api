@@ -166,7 +166,7 @@ it('opens the SSO transition page synchronously when a super admin clicks the ro
   await userEvent.click(
     await screen.findByRole('menuitem', { name: 'Single sign-on' })
   )
-  expect(openSpy).toHaveBeenCalledWith('/channels/sso/7', '_blank', 'noopener')
+  expect(openSpy).toHaveBeenCalledWith('/sso/channel/7', '_blank', 'noopener')
 })
 
 function SSOSectionHarness(props: { channelId: number }) {
@@ -529,7 +529,7 @@ function TransitionPageHarness(props: { channelId: number }) {
     createRouter({
       routeTree: createRootRoute(),
       history: createMemoryHistory({
-        initialEntries: [`/channels/sso/${props.channelId}`],
+        initialEntries: [`/sso/channel/${props.channelId}`],
       }),
     })
   )
@@ -617,6 +617,15 @@ describe('channel SSO transition page', () => {
     expect(screen.getByText('Super Admin · admin')).toBeInTheDocument()
     expect(screen.getByText('Signed in again')).toBeInTheDocument()
     expect(screen.getByText('Entering…')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Upstream Console' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: 'Signed in to the upstream site' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('img', { name: 'Sign-in failed' })
+    ).not.toBeInTheDocument()
     expect(defaultSecureVerification.requestVerification).not.toHaveBeenCalled()
 
     await waitFor(
@@ -645,6 +654,12 @@ describe('channel SSO transition page', () => {
         'Upstream requires two-step or human verification; automatic login is not possible'
       )
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: 'Sign-in failed' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('img', { name: 'Signed in to the upstream site' })
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Back to channels' })

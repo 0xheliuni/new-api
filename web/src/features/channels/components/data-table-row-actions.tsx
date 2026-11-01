@@ -148,7 +148,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   // Opens the Channel SSO transition page in a new tab. Must stay a direct,
   // synchronous call so browsers do not block it as an unrelated popup.
   const handleOpenSSO = () => {
-    window.open(`/channels/sso/${channel.id}`, '_blank', 'noopener')
+    window.open(`/sso/channel/${channel.id}`, '_blank', 'noopener')
   }
 
   const handleToggleStatus = async (
