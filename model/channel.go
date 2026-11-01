@@ -532,6 +532,17 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 			tx.Rollback()
 			return 0, err
 		}
+		// Clean up Channel SSO secrets for the deleted channels in the same
+		// chunk/transaction as abilities, for the same reason abilities are
+		// cleaned up here: no orphaned per-channel row should survive.
+		if err := tx.Where("channel_id in (?)", chunk).Delete(&ChannelSSOCredential{}).Error; err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		if err := tx.Where("channel_id in (?)", chunk).Delete(&ChannelSSOUpstreamSession{}).Error; err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 	}
 	if err := tx.Commit().Error; err != nil {
 		return 0, err
@@ -664,6 +675,16 @@ func (channel *Channel) Delete() error {
 		return err
 	}
 	err = channel.DeleteAbilities()
+	// Channel SSO rows are secrets scoped to this channel; clean them up on a
+	// best-effort basis so they never outlive the channel they belong to.
+	// A cleanup failure here must not block channel deletion, which already
+	// succeeded above, so it is only logged.
+	if ssoErr := DeleteChannelSSOCredential(channel.Id); ssoErr != nil {
+		common.SysLog(common.LogText("failed to delete channel sso credential: channel_id=%d, error=%v", channel.Id, ssoErr))
+	}
+	if ssoErr := DeleteChannelSSOUpstreamSession(channel.Id); ssoErr != nil {
+		common.SysLog(common.LogText("failed to delete channel sso upstream session: channel_id=%d, error=%v", channel.Id, ssoErr))
+	}
 	return err
 }
 
@@ -952,7 +973,25 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("status = ?", status).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
 	result := DB.Where("status = ?", status).Delete(&Channel{})
+	if result.Error != nil {
+		return result.RowsAffected, result.Error
+	}
+	// Best-effort cleanup of Channel SSO secrets for the deleted channels,
+	// mirroring (*Channel).Delete: a cleanup failure must not surface as a
+	// failure of the channel deletion that already succeeded above.
+	if len(ids) > 0 {
+		if err := DB.Where("channel_id in (?)", ids).Delete(&ChannelSSOCredential{}).Error; err != nil {
+			common.SysLog(common.LogText("failed to delete channel sso credentials: channel_ids=%v, error=%v", ids, err))
+		}
+		if err := DB.Where("channel_id in (?)", ids).Delete(&ChannelSSOUpstreamSession{}).Error; err != nil {
+			common.SysLog(common.LogText("failed to delete channel sso upstream sessions: channel_ids=%v, error=%v", ids, err))
+		}
+	}
 	return result.RowsAffected, result.Error
 }
 

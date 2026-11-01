@@ -385,6 +385,8 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&ImageDetectionRecord{},
+		&ChannelSSOCredential{},
+		&ChannelSSOUpstreamSession{},
 	)
 	if err != nil {
 		return err
