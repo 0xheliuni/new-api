@@ -201,9 +201,6 @@ func main() {
 	}))
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
-	// Channel SSO proxy subdomains are served before any main-site
-	// middleware; requests for every other host pass straight through.
-	server.Use(channelsso.HostDispatch())
 	server.Use(middleware.RequestId())
 	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
@@ -224,8 +221,10 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: server,
+		Addr: ":" + port,
+		// Channel SSO proxy subdomains are served outside gin entirely;
+		// every other host reaches the gin engine unchanged.
+		Handler: channelsso.WrapHandler(server),
 	}
 
 	go func() {

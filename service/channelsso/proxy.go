@@ -1,6 +1,6 @@
 // Package channelsso: this file serves the per-session proxy subdomains
 // (design §4.6). A request whose Host is <label>.<SSO_PROXY_DOMAIN> never
-// reaches the main site's routes: /__sso/enter exchanges a one-time ticket
+// reaches the main site's handler (see WrapHandler): /__sso/enter exchanges a one-time ticket
 // for the proxy session cookie, and every other path is reverse-proxied to
 // the session's upstream new-api site using the channel's server-side
 // cookie jar. Third-party upstream JavaScript runs on this origin, so the
@@ -23,7 +23,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -49,28 +48,31 @@ const (
 	msgBodyTooLarge   = "Request body is too large"
 )
 
-// HostDispatch routes requests for proxy subdomains to the SSO proxy and
-// aborts the chain; every other request (and every request while Channel
-// SSO is disabled) continues to the main site untouched. Register it before
-// any other middleware that is not panic recovery.
-func HostDispatch() gin.HandlerFunc {
-	return func(c *gin.Context) {
+// WrapHandler serves requests for proxy subdomains with the SSO proxy and
+// passes every other request (and every request while Channel SSO is
+// disabled) to next untouched. Proxy requests never enter next, so the main
+// site's middleware — notably gin's panic recovery, which would swallow the
+// http.ErrAbortHandler that ReverseProxy raises on a cut-off stream and log
+// request headers carrying the proxy session cookie — never sees them, and
+// net/http aborts the connection as it should. Use the result as the
+// http.Server Handler.
+func WrapHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if Enabled() != nil {
-			c.Next()
+			next.ServeHTTP(w, r)
 			return
 		}
-		label, ok := proxyHostLabel(c.Request.Host, Current().ProxyDomain)
+		label, ok := proxyHostLabel(r.Host, Current().ProxyDomain)
 		if !ok {
-			c.Next()
+			next.ServeHTTP(w, r)
 			return
 		}
-		c.Abort()
-		if c.Request.URL.Path == enterPath {
-			serveEnter(c.Writer, c.Request, label)
+		if r.URL.Path == enterPath {
+			serveEnter(w, r, label)
 			return
 		}
-		serveProxy(c.Writer, c.Request, label)
-	}
+		serveProxy(w, r, label)
+	})
 }
 
 // proxyHostLabel reports whether host (port stripped, case-folded) is
@@ -255,7 +257,7 @@ func serveProxy(w http.ResponseWriter, r *http.Request, label string) {
 				}
 			}
 			if len(captured) > 0 {
-				persistProxyJar(s, stored, jar, captured)
+				persistProxyJar(s, captured)
 			}
 			if rest, ok := cutOriginPrefix(resp.Header.Get("Location"), upstreamOrigin); ok {
 				resp.Header.Set("Location", proxyOrigin+rest)
@@ -320,13 +322,38 @@ func cutOriginPrefix(value, origin string) (string, bool) {
 	return "", false
 }
 
-// persistProxyJar applies the upstream's Set-Cookie values to the request's
-// jar and, when that changes it, writes it back as the channel's login
-// state (last write wins across concurrent requests). It never fails the
-// response: errors are logged without any cookie value. A write is skipped
-// once the channel's SSO configuration has changed since the session was
-// created, so a request in flight cannot resurrect a discarded login state.
-func persistProxyJar(s *Session, stored *model.ChannelSSOUpstreamSession, jar *Jar, setCookies []*http.Cookie) {
+// persistProxyJar applies one response's Set-Cookie values to the channel's
+// login state as it is stored now (not to the jar this request started
+// with), so a cookie another request rotated meanwhile is not overwritten
+// with its stale value; concurrent writes of the same cookie are last write
+// wins. It never fails the response: errors are logged with the channel ID
+// only, never a cookie value. A write is skipped when the stored login
+// state is gone or the channel's SSO configuration has changed since the
+// session was created, so a request in flight cannot resurrect a discarded
+// login state.
+func persistProxyJar(s *Session, setCookies []*http.Cookie) {
+	cred, err := model.GetChannelSSOCredential(s.ChannelID)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("channel sso: load credential for channel %d failed: %v", s.ChannelID, err))
+		}
+		return
+	}
+	if cred.UpdatedAt != s.CredentialUpdatedAt {
+		return
+	}
+	stored, err := model.GetChannelSSOUpstreamSession(s.ChannelID)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("channel sso: load upstream login state for channel %d failed: %v", s.ChannelID, err))
+		}
+		return
+	}
+	jar, err := openStoredJar(stored)
+	if err != nil {
+		common.SysError(common.LogText("channel sso: open upstream login state for channel %d failed: %v", s.ChannelID, err))
+		return
+	}
 	before, err := jar.Marshal()
 	if err != nil {
 		common.SysError(common.LogText("channel sso: encode upstream login state for channel %d failed: %v", s.ChannelID, err))
@@ -339,10 +366,6 @@ func persistProxyJar(s *Session, stored *model.ChannelSSOUpstreamSession, jar *J
 		return
 	}
 	if bytes.Equal(before, after) {
-		return
-	}
-	cred, err := model.GetChannelSSOCredential(s.ChannelID)
-	if err != nil || cred.UpdatedAt != s.CredentialUpdatedAt {
 		return
 	}
 	user := &UpstreamUser{Raw: json.RawMessage(stored.UserSnapshot)}

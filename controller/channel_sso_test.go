@@ -314,6 +314,9 @@ func TestSavePreservesPasswordWhenBlank(t *testing.T) {
 		{"protocol-relative entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"//evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
 		{"backslash entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"/\\\\evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
 		{"relative entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"console"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"tab in entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"/\t/evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"newline in entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"/\r\n/evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"DEL in entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"/\u007f/evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
 		{"non-http base url", `{"base_url":"ftp://example.com","username":"u"}`, channelsso.ErrInvalidBaseURL},
 		{"missing username", fmt.Sprintf(`{"base_url":%q,"username":" "}`, env.upstream.URL), channelsso.ErrConfigIncomplete},
 	} {

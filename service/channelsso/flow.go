@@ -117,7 +117,11 @@ func SaveConfig(ctx context.Context, channelID int, in SaveConfigInput) error {
 		if entryPath == "" {
 			entryPath = defaultEntryPath
 		}
-		if !strings.HasPrefix(entryPath, "/") || strings.Contains(entryPath, "//") || strings.Contains(entryPath, `\`) || len(entryPath) > maxEntryPathLength {
+		// Browsers drop tab/CR/LF from URLs, so "/<TAB>/evil.com" would
+		// become the protocol-relative "//evil.com"; reject every control
+		// character outright.
+		hasControl := strings.ContainsFunc(entryPath, func(r rune) bool { return r < 0x20 || r == 0x7f })
+		if !strings.HasPrefix(entryPath, "/") || strings.Contains(entryPath, "//") || strings.Contains(entryPath, `\`) || hasControl || len(entryPath) > maxEntryPathLength {
 			return ErrInvalidEntryPath
 		}
 		existing, err := model.GetChannelSSOCredential(channelID)

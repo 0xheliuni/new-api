@@ -917,14 +917,13 @@ func startProxyTestSession(t *testing.T, kind string, rawUser string, handler ht
 	return active, srv, capture
 }
 
-func newProxyTestEngine() *gin.Engine {
+func newProxyTestEngine() http.Handler {
 	engine := gin.New()
-	engine.Use(HostDispatch())
 	engine.NoRoute(func(c *gin.Context) { c.String(http.StatusOK, "main-site") })
-	return engine
+	return WrapHandler(engine)
 }
 
-func proxyRequest(engine *gin.Engine, s *Session, method, target string, header http.Header) *httptest.ResponseRecorder {
+func proxyRequest(engine http.Handler, s *Session, method, target string, header http.Header) *httptest.ResponseRecorder {
 	// A cancelable context mirrors a real server request; ReverseProxy
 	// otherwise falls back to CloseNotify, which a recorder lacks.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1117,7 +1116,7 @@ func TestProxyRejectsWebSocketUpgrade(t *testing.T) {
 	assert.Zero(t, requests)
 }
 
-func TestHostDispatchIgnoresOtherHosts(t *testing.T) {
+func TestWrapHandlerIgnoresOtherHosts(t *testing.T) {
 	s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {})
 	engine := newProxyTestEngine()
 
@@ -1166,4 +1165,73 @@ func TestProxyStreamsSSE(t *testing.T) {
 	_, err = io.ReadFull(resp.Body, buf)
 	require.NoError(t, err, "the first event must arrive before the upstream sends the second")
 	assert.Equal(t, "data: a\n\n", string(buf))
+}
+
+// TestProxyAbortsTruncatedStream pins that an upstream stream cut off
+// mid-body reaches the browser as a broken connection, not as a cleanly
+// finished response, and that the main site's gin panic recovery (which
+// would append its own error body) never handles proxy requests.
+func TestProxyAbortsTruncatedStream(t *testing.T) {
+	s, _, _ := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: a\n\n"))
+		w.(http.Flusher).Flush()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	})
+	engine := gin.New()
+	engine.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
+		c.String(http.StatusInternalServerError, "Panic detected")
+	}))
+	engine.NoRoute(func(c *gin.Context) { c.String(http.StatusOK, "main-site") })
+	proxy := httptest.NewServer(WrapHandler(engine))
+	t.Cleanup(proxy.Close)
+
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/api/stream", nil)
+	require.NoError(t, err)
+	req.Host = s.HostLabel + ".modex-ai.cloud"
+	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "a truncated upstream stream must not look complete")
+	assert.Equal(t, "data: a\n\n", string(body))
+	assert.NotContains(t, string(body), "Panic detected")
+}
+
+// TestProxyWriteBackKeepsConcurrentRotation pins that the jar written back
+// after a response is the currently stored one plus this response's
+// cookies: a refresh cookie another request rotated while this one was in
+// flight must not be reverted to the value this request started with.
+func TestProxyWriteBackKeepsConcurrentRotation(t *testing.T) {
+	var channelID int
+	s, _, _ := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		// Request B finished first and rotated the refresh cookie.
+		rotated := &Jar{Cookies: []StoredCookie{{Name: "new_api_refresh", Value: "r2", Path: "/", HttpOnly: true}}}
+		user := UpstreamUser{Id: 1, Raw: []byte(`{"id":1}`)}
+		if err := saveUpstreamSession(channelID, rotated, "modern", &user); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "x", Value: "1", Path: "/"})
+		_, _ = w.Write([]byte("ok"))
+	})
+	channelID = s.ChannelID
+	engine := newProxyTestEngine()
+
+	rec := proxyRequest(engine, s, http.MethodGet, "/api/user/self", sessionCookieHeader(s))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	stored, err := model.GetChannelSSOUpstreamSession(s.ChannelID)
+	require.NoError(t, err)
+	jar, err := openStoredJar(stored)
+	require.NoError(t, err)
+	assert.True(t, jarHasCookie(jar, "new_api_refresh", "r2"), "the concurrently rotated refresh cookie must survive")
+	assert.False(t, jarHasCookie(jar, "new_api_refresh", "r1"))
+	assert.True(t, jarHasCookie(jar, "x", "1"))
 }
