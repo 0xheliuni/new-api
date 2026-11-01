@@ -15,18 +15,25 @@ import (
 // SecureVerificationRequired protects channel key disclosure. Other sensitive
 // operations validate their narrower proof scopes in their controller.
 func SecureVerificationRequired() gin.HandlerFunc {
+	return SecureVerificationRequiredFor(service.VerificationScopeChannelKeyRead)
+}
+
+// SecureVerificationRequiredFor requires a proof for a channel-scoped
+// verification scope, bound to the :id route parameter as
+// {"channel_id": id}.
+func SecureVerificationRequiredFor(scope string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		channelID, err := strconv.Atoi(c.Param("id"))
 		if err != nil || channelID <= 0 {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "code": "SECURITY_CONTEXT_INVALID", "message": service.ErrVerificationContextInvalid.Error()})
 			return
 		}
-		context, err := common.Marshal(service.ChannelKeyReadContext{ChannelID: channelID})
+		context, err := common.Marshal(map[string]int{"channel_id": channelID})
 		if err != nil {
 			c.AbortWithStatus(http.StatusInternalServerError)
 			return
 		}
-		if RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeChannelKeyRead, Context: context}) == nil {
+		if RequireSecurityProof(c, service.VerificationOperation{Scope: scope, Context: context}) == nil {
 			return
 		}
 		c.Set("secure_verified", true)

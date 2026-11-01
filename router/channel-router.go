@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 )
@@ -48,6 +49,19 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		middleware.SecureVerificationRequired(),
 		controller.GetChannelKey,
 	)
+
+	// Channel SSO (super admin only); see controller/channel_sso.go.
+	channelRoute.GET("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), controller.GetChannelSSOConfig)
+	channelRoute.PUT("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), controller.SaveChannelSSOConfig)
+	channelRoute.POST("/:id/sso/check",
+		middleware.RootAuth(),
+		middleware.CriticalRateLimit(),
+		middleware.DisableCache(),
+		middleware.SecureVerificationRequiredFor(service.VerificationScopeChannelSSOOpen),
+		controller.CheckChannelSSO,
+	)
+	channelRoute.POST("/sso/:sid/validate", middleware.RootAuth(), middleware.DisableCache(), controller.ValidateChannelSSO)
+	channelRoute.POST("/sso/:sid/open", middleware.RootAuth(), middleware.DisableCache(), controller.OpenChannelSSO)
 
 	for _, route := range channelPermissionRoutes {
 		handlePermissionRoute(channelRoute, route.method, route.path, route.permission, route.handler)

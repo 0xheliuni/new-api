@@ -219,6 +219,7 @@ type fakeCapture struct {
 	decryptedPassword string
 	origin            string
 	loginCalls        int
+	logoutRequests    []string
 }
 
 func (c *fakeCapture) get() (password, origin string, loginCalls int) {
@@ -362,6 +363,17 @@ func newFakeUpstream(t *testing.T, kind string, opts fakeOpts) *httptest.Server 
 		}
 		writeFakeJSON(w, map[string]any{"success": true, "data": map[string]any{"id": 1, "username": "u", "role": 100}})
 	})
+
+	recordLogout := func(w http.ResponseWriter, r *http.Request) {
+		if opts.Capture != nil {
+			opts.Capture.mu.Lock()
+			opts.Capture.logoutRequests = append(opts.Capture.logoutRequests, r.Method+" "+r.URL.Path)
+			opts.Capture.mu.Unlock()
+		}
+		writeFakeJSON(w, map[string]any{"success": true})
+	}
+	mux.HandleFunc("/api/user/auth/logout", recordLogout)
+	mux.HandleFunc("/api/user/logout", recordLogout)
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -511,6 +523,27 @@ func TestRefreshReusesJar(t *testing.T) {
 
 	_, _, loginCalls := capture.get()
 	assert.Equal(t, 0, loginCalls, "Refresh must not call /api/user/login")
+}
+
+// TestLogoutUsesKindSpecificEndpoint pins the logout endpoint per upstream
+// generation: a legacy upstream only has GET /api/user/logout.
+func TestLogoutUsesKindSpecificEndpoint(t *testing.T) {
+	allowPrivateUpstreamAccess(t)
+	setTestConfig(t, Config{Scheme: "http"}, true, true)
+
+	for kind, want := range map[string]string{
+		"modern": "POST /api/user/auth/logout",
+		"legacy": "GET /api/user/logout",
+	} {
+		capture := &fakeCapture{}
+		srv := newFakeUpstream(t, kind, fakeOpts{Capture: capture})
+		up, err := NewUpstream(srv.URL)
+		require.NoError(t, err)
+		require.NoError(t, up.Logout(context.Background(), &Jar{}, kind), kind)
+		capture.mu.Lock()
+		assert.Equal(t, []string{want}, capture.logoutRequests, kind)
+		capture.mu.Unlock()
+	}
 }
 
 func TestUpstreamRejectsPrivateAddress(t *testing.T) {

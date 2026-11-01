@@ -13,15 +13,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/channelsso"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -875,6 +876,7 @@ func DeleteChannel(c *gin.Context) {
 	} else {
 		channelLookupFailed = true
 	}
+	channelsso.ForgetChannel(c.Request.Context(), id)
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
 	if err != nil {
@@ -899,6 +901,17 @@ func DeleteChannel(c *gin.Context) {
 	return
 }
 
+// forgetChannelsSSO discards Channel SSO state for channels about to be
+// deleted, sharing one bounded budget so a slow upstream cannot stall a
+// bulk deletion.
+func forgetChannelsSSO(c *gin.Context, ids []int) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	for _, id := range ids {
+		channelsso.ForgetChannel(ctx, id)
+	}
+}
+
 func DeleteDisabledChannel(c *gin.Context) {
 	var ids []int
 	if err := model.DB.Model(&model.Channel{}).
@@ -907,6 +920,7 @@ func DeleteDisabledChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	forgetChannelsSSO(c, ids)
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
 		common.ApiError(c, err)
@@ -1053,6 +1067,7 @@ func DeleteChannelBatch(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	forgetChannelsSSO(c, channelBatch.Ids)
 	deletedCount, err := model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
 		common.ApiError(c, err)

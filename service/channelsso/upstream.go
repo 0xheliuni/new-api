@@ -47,6 +47,7 @@ var (
 	ErrNotNewAPI         = errors.New("Upstream site is not a new-api site")
 	ErrChallengeRequired = errors.New("Upstream requires two-step or human verification; automatic login is not possible")
 	ErrSessionInvalid    = errors.New("Upstream session is invalid")
+	ErrUpstreamNotHTTPS  = errors.New("Upstream URL must use https")
 )
 
 // UpstreamError carries an upstream {success:false, message:...} response
@@ -106,7 +107,7 @@ func NewUpstream(baseURL string) (*Upstream, error) {
 	}
 	u, _ := url.Parse(normalized)
 	if Current().Scheme == "https" && u.Scheme != "https" {
-		return nil, errors.New("Upstream URL must use https")
+		return nil, ErrUpstreamNotHTTPS
 	}
 	if err := service.ValidateSSRFProtectedFetchURL(normalized); err != nil {
 		return nil, err
@@ -477,12 +478,17 @@ func (u *Upstream) Self(ctx context.Context, jar *Jar, kind, accessToken string,
 	return &user, nil
 }
 
-// Logout tells the upstream to end the session the jar holds
-// (POST /api/user/auth/logout), best-effort: callers that cannot afford a
-// failure (configuration change, channel deletion) should log and continue
-// rather than block on its result.
-func (u *Upstream) Logout(ctx context.Context, jar *Jar) error {
-	resp, err := u.send(ctx, jar, http.MethodPost, "/api/user/auth/logout", nil, nil)
+// Logout tells the upstream to end the session the jar holds, best-effort:
+// callers that cannot afford a failure (configuration change, channel
+// deletion) should log and continue rather than block on its result. A
+// modern upstream ends it with POST /api/user/auth/logout; a legacy one
+// (kind "legacy") only has GET /api/user/logout.
+func (u *Upstream) Logout(ctx context.Context, jar *Jar, kind string) error {
+	method, path := http.MethodPost, "/api/user/auth/logout"
+	if kind == "legacy" {
+		method, path = http.MethodGet, "/api/user/logout"
+	}
+	resp, err := u.send(ctx, jar, method, path, nil, nil)
 	if err != nil {
 		return err
 	}
