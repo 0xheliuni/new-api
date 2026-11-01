@@ -6,7 +6,6 @@ package channelsso
 
 import (
 	"errors"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -54,9 +53,10 @@ var (
 
 // LoadConfig reads the Channel SSO environment variables, installs them as
 // the current package-level config, and returns the loaded Config. Call it
-// once at process startup. It does not panic or exit; if the result leaves
-// the feature disabled, it logs a single startup warning and callers must
-// still go through Enabled() before using any SSO capability.
+// once at process startup, after common.InitEnv. It does not panic, exit,
+// or log; the caller warns at startup when a configured proxy domain is
+// left disabled, and callers must still go through Enabled() before using
+// any SSO capability.
 func LoadConfig() Config {
 	cfg := Config{
 		ProxyDomain: strings.TrimSpace(os.Getenv("SSO_PROXY_DOMAIN")),
@@ -72,10 +72,6 @@ func LoadConfig() Config {
 	current = cfg
 	explicitSecret = hasExplicitSecret
 	mu.Unlock()
-
-	if err := Enabled(); err != nil {
-		log.Print(common.LogText("WARNING: %s; set SSO_PROXY_DOMAIN, CRYPTO_SECRET or SESSION_SECRET, and (for https) SESSION_COOKIE_SECURE=true to enable it.", err))
-	}
 	return cfg
 }
 

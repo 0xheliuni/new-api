@@ -2,6 +2,8 @@ package channelsso
 
 import (
 	"context"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	goredis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -848,4 +851,319 @@ func TestRevokeChannelSessionsFailsClosedOnDecodeError(t *testing.T) {
 
 	err = RevokeChannelSessions(902)
 	assert.Error(t, err, "a decode failure encountered while revoking must be reported, not swallowed as success")
+}
+
+// proxyUpstreamCapture records what the proxy test upstream received, so
+// tests can assert exactly what crossed the proxy.
+type proxyUpstreamCapture struct {
+	mu       sync.Mutex
+	requests int
+	header   http.Header
+}
+
+func (c *proxyUpstreamCapture) record(r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests++
+	c.header = r.Header.Clone()
+}
+
+func (c *proxyUpstreamCapture) snapshot() (int, http.Header) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.requests, c.header
+}
+
+// startProxyTestSession prepares everything the subdomain proxy needs: a
+// channel with an SSO credential, an upstream login state whose jar holds
+// new_api_refresh=r1, and an activated SSO session pointing at an
+// httptest upstream served by handler (wrapped to record each request).
+func startProxyTestSession(t *testing.T, kind string, rawUser string, handler http.HandlerFunc) (*Session, *httptest.Server, *proxyUpstreamCapture) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	setupChannelSSOModelTest(t)
+	allowPrivateUpstreamAccess(t)
+	setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+	resetChannelSSOStore(t, false)
+
+	capture := &proxyUpstreamCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.record(r)
+		handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	channel := &model.Channel{Name: "sso-proxy", Status: 1, Models: "gpt-4", Group: "default"}
+	require.NoError(t, channel.Insert())
+	cred := &model.ChannelSSOCredential{ChannelId: channel.Id, BaseURL: srv.URL, Username: "admin", PasswordCipher: "sealed", EntryPath: "/dashboard"}
+	require.NoError(t, model.SaveChannelSSOCredential(cred))
+
+	user := UpstreamUser{Id: 1, Username: "admin", Role: 100, Raw: []byte(rawUser)}
+	jar := &Jar{Cookies: []StoredCookie{{Name: "new_api_refresh", Value: "r1", Path: "/", HttpOnly: true}}}
+	require.NoError(t, saveUpstreamSession(channel.Id, jar, kind, &user))
+
+	pending := &Session{
+		ChannelID:           channel.Id,
+		AdminUserID:         7,
+		BaseURL:             srv.URL,
+		EntryPath:           "/dashboard",
+		CredentialUpdatedAt: cred.UpdatedAt,
+		UpstreamKind:        kind,
+		User:                user,
+	}
+	require.NoError(t, CreatePendingSession(pending))
+	active, err := ActivateSession(pending.ID)
+	require.NoError(t, err)
+	return active, srv, capture
+}
+
+func newProxyTestEngine() *gin.Engine {
+	engine := gin.New()
+	engine.Use(HostDispatch())
+	engine.NoRoute(func(c *gin.Context) { c.String(http.StatusOK, "main-site") })
+	return engine
+}
+
+func proxyRequest(engine *gin.Engine, s *Session, method, target string, header http.Header) *httptest.ResponseRecorder {
+	// A cancelable context mirrors a real server request; ReverseProxy
+	// otherwise falls back to CloseNotify, which a recorder lacks.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequestWithContext(ctx, method, target, nil)
+	req.Host = s.HostLabel + ".modex-ai.cloud"
+	maps.Copy(req.Header, header)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	return rec
+}
+
+func sessionCookieHeader(s *Session) http.Header {
+	return http.Header{"Cookie": {"__Host-sso=" + s.ID + "; main=1"}}
+}
+
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, c := range cookies {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestEnterConsumesTicketAndSetsCookie(t *testing.T) {
+	s, _, capture := startProxyTestSession(t, "modern", `{"id":1,"username":"admin","role":100}`, func(w http.ResponseWriter, r *http.Request) {})
+	engine := newProxyTestEngine()
+	ticket, err := IssueTicket(s.ID, s.HostLabel)
+	require.NoError(t, err)
+
+	rec := proxyRequest(engine, s, http.MethodGet, "/__sso/enter?ticket="+ticket, nil)
+	require.Equal(t, http.StatusFound, rec.Code)
+	assert.Equal(t, "/dashboard", rec.Header().Get("Location"))
+	assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"))
+
+	cookies := rec.Result().Cookies()
+	ssoCookie := findCookie(cookies, "__Host-sso")
+	require.NotNil(t, ssoCookie)
+	assert.Equal(t, s.ID, ssoCookie.Value)
+	assert.True(t, ssoCookie.HttpOnly)
+	assert.True(t, ssoCookie.Secure)
+	assert.Equal(t, http.SameSiteLaxMode, ssoCookie.SameSite)
+	assert.Equal(t, "/", ssoCookie.Path)
+	assert.Empty(t, ssoCookie.Domain)
+	assert.InDelta(t, (2 * time.Hour).Seconds(), float64(ssoCookie.MaxAge), 5)
+	hint := findCookie(cookies, "new_api_has_session")
+	require.NotNil(t, hint)
+	assert.False(t, hint.HttpOnly)
+	assert.Equal(t, "/", hint.Path)
+
+	again := proxyRequest(engine, s, http.MethodGet, "/__sso/enter?ticket="+ticket, nil)
+	assert.Equal(t, http.StatusBadRequest, again.Code)
+	assert.Contains(t, again.Body.String(), "SSO link is invalid or expired")
+	assert.Empty(t, again.Result().Cookies())
+
+	requests, _ := capture.snapshot()
+	assert.Zero(t, requests, "entering must not touch the upstream")
+}
+
+func TestEnterLegacySeedsLocalStorageSafely(t *testing.T) {
+	raw := `{"id":1,"username":"</script><script>alert(1)</script>","role":100}`
+	s, _, _ := startProxyTestSession(t, "legacy", raw, func(w http.ResponseWriter, r *http.Request) {})
+	engine := newProxyTestEngine()
+	ticket, err := IssueTicket(s.ID, s.HostLabel)
+	require.NoError(t, err)
+
+	rec := proxyRequest(engine, s, http.MethodGet, "/__sso/enter?ticket="+ticket, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "</script><script>alert")
+	assert.Contains(t, body, "localStorage.setItem('user',")
+	assert.Contains(t, body, `location.replace("/dashboard")`)
+	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"))
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "default-src 'none'; script-src 'nonce-")
+	assert.NotNil(t, findCookie(rec.Result().Cookies(), "__Host-sso"))
+	assert.Nil(t, findCookie(rec.Result().Cookies(), "new_api_has_session"), "the hint cookie is for modern upstreams only")
+}
+
+func TestProxyStripsBrowserCookiesAndUsesJar(t *testing.T) {
+	s, srv, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	engine := newProxyTestEngine()
+	header := sessionCookieHeader(s)
+	proxyOrigin := "https://" + s.HostLabel + ".modex-ai.cloud"
+	header.Set("Origin", proxyOrigin)
+	header.Set("Referer", proxyOrigin+"/console?x=1")
+	header.Set("Authorization", "Bearer upstream-access")
+	header.Set("X-Forwarded-For", "1.2.3.4")
+	header.Set("X-Real-IP", "1.2.3.4")
+	header.Set("Forwarded", "for=1.2.3.4")
+
+	rec := proxyRequest(engine, s, http.MethodGet, "/api/user/self", header)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "ok", rec.Body.String())
+
+	requests, got := capture.snapshot()
+	require.Equal(t, 1, requests)
+	assert.Equal(t, "new_api_refresh=r1", got.Get("Cookie"))
+	assert.Equal(t, srv.URL, got.Get("Origin"))
+	assert.Equal(t, srv.URL+"/console?x=1", got.Get("Referer"))
+	assert.Equal(t, "Bearer upstream-access", got.Get("Authorization"))
+	assert.Empty(t, got.Values("X-Forwarded-For"))
+	assert.Empty(t, got.Values("X-Real-IP"))
+	assert.Empty(t, got.Values("Forwarded"))
+}
+
+func TestProxyCapturesSetCookie(t *testing.T) {
+	s, _, _ := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "new_api_refresh", Value: "r2", Path: "/", HttpOnly: true})
+		http.SetCookie(w, &http.Cookie{Name: "new_api_has_session", Value: "1", Path: "/", Domain: "upstream.example.com"})
+		_, _ = w.Write([]byte("ok"))
+	})
+	engine := newProxyTestEngine()
+
+	rec := proxyRequest(engine, s, http.MethodPost, "/api/user/auth/refresh", sessionCookieHeader(s))
+	require.Equal(t, http.StatusOK, rec.Code)
+	cookies := rec.Result().Cookies()
+	assert.Nil(t, findCookie(cookies, "new_api_refresh"), "upstream session cookies must never reach the browser")
+	hint := findCookie(cookies, "new_api_has_session")
+	require.NotNil(t, hint)
+	assert.Empty(t, hint.Domain)
+
+	stored, err := model.GetChannelSSOUpstreamSession(s.ChannelID)
+	require.NoError(t, err)
+	jar, err := openStoredJar(stored)
+	require.NoError(t, err)
+	assert.True(t, jarHasCookie(jar, "new_api_refresh", "r2"))
+	assert.False(t, jarHasCookie(jar, "new_api_has_session", "1"))
+}
+
+func TestProxyRewritesOnlyUpstreamLocation(t *testing.T) {
+	var location string
+	s, srv, _ := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", location)
+		w.WriteHeader(http.StatusFound)
+	})
+	engine := newProxyTestEngine()
+
+	cases := map[string]string{
+		srv.URL + "/login":               "https://" + s.HostLabel + ".modex-ai.cloud/login",
+		"https://github.com/login/oauth": "https://github.com/login/oauth",
+		"/console":                       "/console",
+	}
+	for upstreamLocation, want := range cases {
+		location = upstreamLocation
+		rec := proxyRequest(engine, s, http.MethodGet, "/", sessionCookieHeader(s))
+		require.Equal(t, http.StatusFound, rec.Code)
+		assert.Equal(t, want, rec.Header().Get("Location"), upstreamLocation)
+	}
+}
+
+func TestProxyExpiredSessionReturns401(t *testing.T) {
+	s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {})
+	engine := newProxyTestEngine()
+
+	advanceClock(2*time.Hour + time.Second)
+	rec := proxyRequest(engine, s, http.MethodGet, "/dashboard", sessionCookieHeader(s))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "SSO session expired. Return to the admin console and start single sign-on again.")
+	nowFunc = time.Now
+
+	// A missing cookie, and a session presented on another label's host,
+	// fail the same way.
+	rec = proxyRequest(engine, s, http.MethodGet, "/dashboard", nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Host = "zzzz9999.modex-ai.cloud"
+	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	other := httptest.NewRecorder()
+	engine.ServeHTTP(other, req)
+	assert.Equal(t, http.StatusUnauthorized, other.Code)
+
+	requests, _ := capture.snapshot()
+	assert.Zero(t, requests, "the upstream must not see unauthenticated requests")
+}
+
+func TestProxyRejectsWebSocketUpgrade(t *testing.T) {
+	s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {})
+	engine := newProxyTestEngine()
+	header := sessionCookieHeader(s)
+	header.Set("Connection", "Upgrade")
+	header.Set("Upgrade", "websocket")
+
+	rec := proxyRequest(engine, s, http.MethodGet, "/ws", header)
+	assert.Equal(t, http.StatusNotImplemented, rec.Code)
+	requests, _ := capture.snapshot()
+	assert.Zero(t, requests)
+}
+
+func TestHostDispatchIgnoresOtherHosts(t *testing.T) {
+	s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {})
+	engine := newProxyTestEngine()
+
+	for _, host := range []string{"modex-ai.cloud", "api.modex-ai.cloud", s.HostLabel + ".evil.com", "x" + s.HostLabel + ".modex-ai.cloud"} {
+		req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+		req.Host = host
+		req.Header.Set("Cookie", "__Host-sso="+s.ID)
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, host)
+		assert.Equal(t, "main-site", rec.Body.String(), host)
+	}
+
+	// With the feature disabled, even a matching host reaches the main site.
+	setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, false)
+	rec := proxyRequest(engine, s, http.MethodGet, "/dashboard", sessionCookieHeader(s))
+	assert.Equal(t, "main-site", rec.Body.String())
+
+	requests, _ := capture.snapshot()
+	assert.Zero(t, requests)
+}
+
+func TestProxyStreamsSSE(t *testing.T) {
+	release := make(chan struct{})
+	s, _, _ := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: a\n\n"))
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = w.Write([]byte("data: b\n\n"))
+	})
+	proxy := httptest.NewServer(newProxyTestEngine())
+	t.Cleanup(proxy.Close)
+	defer close(release)
+
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/api/stream", nil)
+	require.NoError(t, err)
+	req.Host = s.HostLabel + ".modex-ai.cloud"
+	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	buf := make([]byte, len("data: a\n\n"))
+	_, err = io.ReadFull(resp.Body, buf)
+	require.NoError(t, err, "the first event must arrive before the upstream sends the second")
+	assert.Equal(t, "data: a\n\n", string(buf))
 }

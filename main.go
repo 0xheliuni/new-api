@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/channelsso"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -200,6 +201,9 @@ func main() {
 	}))
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
+	// Channel SSO proxy subdomains are served before any main-site
+	// middleware; requests for every other host pass straight through.
+	server.Use(channelsso.HostDispatch())
 	server.Use(middleware.RequestId())
 	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
@@ -308,6 +312,12 @@ func InitResources() error {
 
 	// 加载环境变量
 	common.InitEnv()
+
+	if cfg := channelsso.LoadConfig(); cfg.ProxyDomain != "" {
+		if err := channelsso.Enabled(); err != nil {
+			common.SysError(common.LogText("channel sso: %s; it requires CRYPTO_SECRET or SESSION_SECRET and, for https, SESSION_COOKIE_SECURE=true", err))
+		}
+	}
 
 	logger.SetupLogger()
 
