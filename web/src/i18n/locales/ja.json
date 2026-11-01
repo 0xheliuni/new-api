@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "SSO設定を保存しています…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "上流の認証情報を再入力せずに、このチャンネルの上流 New API コンソールにスーパー管理者がサインインできるようにします。",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "チャンネルSSO経由でアップストリームコンソールを開きました（チャンネルID: {{channel_id}}、アップストリームユーザー: {{upstream_username}}）",
-    "Single sign-on settings were not saved; edit the channel to set them": "SSO設定は保存されませんでした。チャンネルを編集して再設定してください"
+    "Single sign-on settings were not saved; edit the channel to set them": "SSO設定は保存されませんでした。チャンネルを編集して再設定してください",
+    "Verify to open upstream console": "アップストリームコンソールを開くために認証",
+    "Connecting…": "接続中…",
+    "In progress": "進行中",
+    "Verification cancelled": "認証がキャンセルされました",
+    "Reused existing session": "既存のセッションを再利用",
+    "Signed in again": "再度ログインしました",
+    "Entering…": "入室中…",
+    "Back to channels": "チャネル一覧に戻る",
+    "Edit channel": "チャネルを編集",
+    "Confirm the upstream site is reachable and read the upstream account role.": "アップストリームサイトへの到達可否を確認し、アカウントの権限を取得します。",
+    "Confirm the upstream session is valid.": "アップストリームのセッションが有効であることを確認します。",
+    "Enter the upstream console.": "アップストリームコンソールに入ります。"
   }
 }

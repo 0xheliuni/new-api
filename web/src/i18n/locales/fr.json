@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "Enregistrement des paramètres SSO…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Permet à un super administrateur de se connecter à la console New API amont de ce canal sans ressaisir les identifiants amont.",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Console amont ouverte via le SSO du canal (ID du canal : {{channel_id}}, utilisateur amont : {{upstream_username}})",
-    "Single sign-on settings were not saved; edit the channel to set them": "Les paramètres de connexion unique n'ont pas été enregistrés ; modifiez le canal pour les définir"
+    "Single sign-on settings were not saved; edit the channel to set them": "Les paramètres de connexion unique n'ont pas été enregistrés ; modifiez le canal pour les définir",
+    "Verify to open upstream console": "Vérifier pour ouvrir la console amont",
+    "Connecting…": "Connexion en cours…",
+    "In progress": "En cours",
+    "Verification cancelled": "Vérification annulée",
+    "Reused existing session": "Session existante réutilisée",
+    "Signed in again": "Reconnecté",
+    "Entering…": "Entrée en cours…",
+    "Back to channels": "Retour aux canaux",
+    "Edit channel": "Modifier le canal",
+    "Confirm the upstream site is reachable and read the upstream account role.": "Confirme que le site amont est accessible et lit le rôle du compte amont.",
+    "Confirm the upstream session is valid.": "Confirme que la session amont est valide.",
+    "Enter the upstream console.": "Entre dans la console amont."
   }
 }

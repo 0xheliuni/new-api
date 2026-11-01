@@ -59,6 +59,7 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedVolcAssetsIndexRouteImport } from './routes/_authenticated/volc-assets/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
+import { Route as AuthenticatedChannelsSsoChannelIdRouteImport } from './routes/_authenticated/channels/sso.$channelId'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
 import { Route as AuthenticatedSystemSettingsBillingIndexRouteImport } from './routes/_authenticated/system-settings/billing/index'
@@ -345,6 +346,12 @@ const PricingModelIdIndexRoute = PricingModelIdIndexRouteImport.update({
   path: '/pricing/$modelId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedChannelsSsoChannelIdRoute =
+  AuthenticatedChannelsSsoChannelIdRouteImport.update({
+    id: '/channels/sso/$channelId',
+    path: '/channels/sso/$channelId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsAuthIndexRoute =
   AuthenticatedSystemSettingsAuthIndexRouteImport.update({
     id: '/auth/',
@@ -491,6 +498,7 @@ export interface FileRoutesByFullPath {
   '/volc-assets/': typeof AuthenticatedVolcAssetsIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/channels/sso/$channelId': typeof AuthenticatedChannelsSsoChannelIdRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -556,6 +564,7 @@ export interface FileRoutesByTo {
   '/volc-assets': typeof AuthenticatedVolcAssetsIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
+  '/channels/sso/$channelId': typeof AuthenticatedChannelsSsoChannelIdRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -625,6 +634,7 @@ export interface FileRoutesById {
   '/_authenticated/volc-assets/': typeof AuthenticatedVolcAssetsIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/_authenticated/channels/sso/$channelId': typeof AuthenticatedChannelsSsoChannelIdRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/_authenticated/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/_authenticated/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -693,6 +703,7 @@ export interface FileRouteTypes {
     | '/volc-assets/'
     | '/wallet/'
     | '/pricing/$modelId/'
+    | '/channels/sso/$channelId'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -758,6 +769,7 @@ export interface FileRouteTypes {
     | '/volc-assets'
     | '/wallet'
     | '/pricing/$modelId'
+    | '/channels/sso/$channelId'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -826,6 +838,7 @@ export interface FileRouteTypes {
     | '/_authenticated/volc-assets/'
     | '/_authenticated/wallet/'
     | '/pricing/$modelId/'
+    | '/_authenticated/channels/sso/$channelId'
     | '/_authenticated/system-settings/auth/$section'
     | '/_authenticated/system-settings/billing/$section'
     | '/_authenticated/system-settings/content/$section'
@@ -1215,6 +1228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingModelIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/channels/sso/$channelId': {
+      id: '/_authenticated/channels/sso/$channelId'
+      path: '/channels/sso/$channelId'
+      fullPath: '/channels/sso/$channelId'
+      preLoaderRoute: typeof AuthenticatedChannelsSsoChannelIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/system-settings/auth/': {
       id: '/_authenticated/system-settings/auth/'
       path: '/auth'
@@ -1445,6 +1465,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedVolcAssetsIndexRoute: typeof AuthenticatedVolcAssetsIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
+  AuthenticatedChannelsSsoChannelIdRoute: typeof AuthenticatedChannelsSsoChannelIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -1475,6 +1496,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedVolcAssetsIndexRoute: AuthenticatedVolcAssetsIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
+  AuthenticatedChannelsSsoChannelIdRoute:
+    AuthenticatedChannelsSsoChannelIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

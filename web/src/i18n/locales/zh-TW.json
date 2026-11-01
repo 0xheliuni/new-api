@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "正在儲存單一登入設定…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "讓超級管理員無需重新輸入上游憑證即可登入該管道的上游 New API 控制台。",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "透過管道單一登入開啟上游控制台（管道 ID：{{channel_id}}，上游使用者：{{upstream_username}}）",
-    "Single sign-on settings were not saved; edit the channel to set them": "單一登入設定未儲存；請編輯管道以重新設定"
+    "Single sign-on settings were not saved; edit the channel to set them": "單一登入設定未儲存；請編輯管道以重新設定",
+    "Verify to open upstream console": "驗證以開啟上游控制台",
+    "Connecting…": "連線中…",
+    "In progress": "進行中",
+    "Verification cancelled": "驗證已取消",
+    "Reused existing session": "重複使用現有連線",
+    "Signed in again": "重新登入",
+    "Entering…": "正在進入…",
+    "Back to channels": "返回渠道清單",
+    "Edit channel": "編輯渠道",
+    "Confirm the upstream site is reachable and read the upstream account role.": "確認上游站點可存取，並讀取帳號角色。",
+    "Confirm the upstream session is valid.": "確認上游會話有效。",
+    "Enter the upstream console.": "進入上游控制台。"
   }
 }

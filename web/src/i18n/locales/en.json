@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "Saving SSO settings…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})",
-    "Single sign-on settings were not saved; edit the channel to set them": "Single sign-on settings were not saved; edit the channel to set them"
+    "Single sign-on settings were not saved; edit the channel to set them": "Single sign-on settings were not saved; edit the channel to set them",
+    "Verify to open upstream console": "Verify to open upstream console",
+    "Connecting…": "Connecting…",
+    "In progress": "In progress",
+    "Verification cancelled": "Verification cancelled",
+    "Reused existing session": "Reused existing session",
+    "Signed in again": "Signed in again",
+    "Entering…": "Entering…",
+    "Back to channels": "Back to channels",
+    "Edit channel": "Edit channel",
+    "Confirm the upstream site is reachable and read the upstream account role.": "Confirm the upstream site is reachable and read the upstream account role.",
+    "Confirm the upstream session is valid.": "Confirm the upstream session is valid.",
+    "Enter the upstream console.": "Enter the upstream console."
   }
 }

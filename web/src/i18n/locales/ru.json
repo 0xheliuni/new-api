@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "Сохранение настроек единого входа…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Позволяет суперадминистратору входить в вышестоящую консоль New API этого канала без повторного ввода учётных данных.",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Консоль вышестоящего сервера открыта через единый вход канала (ID канала: {{channel_id}}, пользователь: {{upstream_username}})",
-    "Single sign-on settings were not saved; edit the channel to set them": "Настройки единого входа не сохранены; отредактируйте канал, чтобы задать их"
+    "Single sign-on settings were not saved; edit the channel to set them": "Настройки единого входа не сохранены; отредактируйте канал, чтобы задать их",
+    "Verify to open upstream console": "Подтвердите, чтобы открыть консоль вышестоящего сервера",
+    "Connecting…": "Подключение…",
+    "In progress": "Выполняется",
+    "Verification cancelled": "Проверка отменена",
+    "Reused existing session": "Повторно использован существующий сеанс",
+    "Signed in again": "Выполнен повторный вход",
+    "Entering…": "Выполняется вход…",
+    "Back to channels": "Назад к каналам",
+    "Edit channel": "Редактировать канал",
+    "Confirm the upstream site is reachable and read the upstream account role.": "Подтверждает доступность вышестоящего сайта и считывает роль учётной записи.",
+    "Confirm the upstream session is valid.": "Подтверждает действительность сеанса вышестоящего сервера.",
+    "Enter the upstream console.": "Выполняет вход в консоль вышестоящего сервера."
   }
 }

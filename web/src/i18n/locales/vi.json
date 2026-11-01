@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "Đang lưu cài đặt SSO…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Cho phép siêu quản trị viên đăng nhập vào bảng điều khiển New API thượng nguồn của kênh này mà không cần nhập lại thông tin đăng nhập thượng nguồn.",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Đã mở bảng điều khiển thượng nguồn qua SSO của kênh (ID kênh: {{channel_id}}, người dùng thượng nguồn: {{upstream_username}})",
-    "Single sign-on settings were not saved; edit the channel to set them": "Cài đặt SSO chưa được lưu; hãy chỉnh sửa kênh để thiết lập lại"
+    "Single sign-on settings were not saved; edit the channel to set them": "Cài đặt SSO chưa được lưu; hãy chỉnh sửa kênh để thiết lập lại",
+    "Verify to open upstream console": "Xác minh để mở bảng điều khiển upstream",
+    "Connecting…": "Đang kết nối…",
+    "In progress": "Đang xử lý",
+    "Verification cancelled": "Đã hủy xác minh",
+    "Reused existing session": "Đã sử dụng lại phiên đăng nhập hiện có",
+    "Signed in again": "Đã đăng nhập lại",
+    "Entering…": "Đang vào…",
+    "Back to channels": "Quay lại danh sách kênh",
+    "Edit channel": "Sửa kênh",
+    "Confirm the upstream site is reachable and read the upstream account role.": "Xác nhận trang upstream có thể truy cập được và đọc vai trò tài khoản upstream.",
+    "Confirm the upstream session is valid.": "Xác nhận phiên đăng nhập upstream còn hợp lệ.",
+    "Enter the upstream console.": "Vào bảng điều khiển upstream."
   }
 }

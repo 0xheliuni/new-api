@@ -7760,6 +7760,18 @@
     "Saving SSO settings…": "正在保存单点登录设置…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "让超级管理员无需重新输入上游凭据即可登录该渠道的上游 New API 控制台。",
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "通过渠道单点登录打开上游控制台（渠道 ID：{{channel_id}}，上游用户：{{upstream_username}}）",
-    "Single sign-on settings were not saved; edit the channel to set them": "单点登录设置未保存；请编辑渠道以重新设置"
+    "Single sign-on settings were not saved; edit the channel to set them": "单点登录设置未保存；请编辑渠道以重新设置",
+    "Verify to open upstream console": "验证以打开上游控制台",
+    "Connecting…": "连接中…",
+    "In progress": "进行中",
+    "Verification cancelled": "验证已取消",
+    "Reused existing session": "复用已有会话",
+    "Signed in again": "重新登录",
+    "Entering…": "正在进入…",
+    "Back to channels": "返回渠道列表",
+    "Edit channel": "编辑渠道",
+    "Confirm the upstream site is reachable and read the upstream account role.": "确认上游站点可访问，并读取账号角色。",
+    "Confirm the upstream session is valid.": "确认上游会话有效。",
+    "Enter the upstream console.": "进入上游控制台。"
   }
 }
