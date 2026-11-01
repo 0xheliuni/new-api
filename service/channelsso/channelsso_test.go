@@ -535,16 +535,21 @@ func TestUpstreamRejectsPrivateAddress(t *testing.T) {
 // store or a fresh miniredis instance, resets nowFunc to the real clock,
 // and clears the shared memory-store maps, restoring everything on
 // cleanup. Using the same package-level mem/nowFunc across tests is safe
-// because every test resets them before running.
-func resetChannelSSOStore(t *testing.T, useRedis bool) {
+// because every test resets them before running. It returns the
+// miniredis server when useRedis is true (nil otherwise) so a test that
+// needs to simulate real-time Redis key expiry (as opposed to the
+// logical, nowFunc-driven expiry channelsso itself enforces) can call its
+// FastForward.
+func resetChannelSSOStore(t *testing.T, useRedis bool) *miniredis.Miniredis {
 	t.Helper()
 	prevRedisEnabled := common.RedisEnabled
 	prevRDB := common.RDB
 	prevNow := nowFunc
 
 	common.RedisEnabled = useRedis
+	var srv *miniredis.Miniredis
 	if useRedis {
-		srv := miniredis.RunT(t)
+		srv = miniredis.RunT(t)
 		client := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
 		require.NoError(t, client.Ping(context.Background()).Err())
 		common.RDB = client
@@ -564,6 +569,7 @@ func resetChannelSSOStore(t *testing.T, useRedis bool) {
 		common.RDB = prevRDB
 		nowFunc = prevNow
 	})
+	return srv
 }
 
 // advanceClock moves nowFunc forward by d relative to its current value,
@@ -717,4 +723,96 @@ func TestRevokeChannelSessions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, otherActivated.ID, gotOther.ID, "revoking one channel must not affect another channel's sessions")
 	})
+}
+
+// --- Task 4 review fix round 1 ---
+
+func TestActivateSessionRejectsSecondActivation(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		pending := newPendingTestSession(t, 5)
+		first, err := ActivateSession(pending.ID)
+		require.NoError(t, err)
+
+		_, err = ActivateSession(pending.ID)
+		assert.ErrorIs(t, err, ErrSessionAlreadyActive, "a session must not be re-activated once active")
+
+		again, err := GetSession(pending.ID)
+		require.NoError(t, err)
+		assert.Equal(t, first.HostLabel, again.HostLabel, "a rejected re-activation must not assign a new label")
+		assert.Equal(t, first.ExpiresAt, again.ExpiresAt, "a rejected re-activation must not slide the fixed TTL forward")
+
+		got, err := GetSessionByLabel(first.HostLabel)
+		require.NoError(t, err)
+		assert.Equal(t, pending.ID, got.ID, "the original label must still resolve to the session")
+	})
+}
+
+func TestActivateSessionFailsAfterRevoke(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		pending := newPendingTestSession(t, 6)
+		require.NoError(t, RevokeChannelSessions(6))
+
+		_, err := ActivateSession(pending.ID)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "activating a revoked session must fail, not resurrect it")
+	})
+}
+
+// TestChannelIndexSurvivesLongSessionTTL pins the fix for review finding 2:
+// the per-channel Redis index key used to carry a flat 24h TTL regardless
+// of the configured SSO_SESSION_TTL, so a deployment with a longer
+// SessionTTL could have the index key evicted by Redis while the session
+// it points to was still logically alive, making RevokeChannelSessions
+// silently find nothing. channelIndexExpiry now floors the index TTL at
+// SessionTTL+channelIndexMargin, so with a 48h SessionTTL the index must
+// still resolve the session after fast-forwarding Redis's own clock well
+// past the old flat 24h TTL.
+func TestChannelIndexSurvivesLongSessionTTL(t *testing.T) {
+	srv := resetChannelSSOStore(t, true)
+	setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 48 * time.Hour}, true, true)
+
+	pending := newPendingTestSession(t, 77)
+	activated, err := ActivateSession(pending.ID)
+	require.NoError(t, err)
+
+	// Advance both clocks by more than the old flat 24h channel-index
+	// TTL: nowFunc (so the session's own ExpiresAt, checked logically on
+	// every read, is still well within its 48h SessionTTL) and
+	// miniredis's real-time clock (so a channel-index key that had only
+	// the old flat 24h TTL would have been physically evicted by Redis by
+	// this point, even though the session it indexes is still logically
+	// alive).
+	advanceClock(25 * time.Hour)
+	srv.FastForward(25 * time.Hour)
+
+	require.NoError(t, RevokeChannelSessions(activated.ChannelID))
+
+	_, err = GetSession(activated.ID)
+	assert.ErrorIs(t, err, ErrSessionNotFound, "revoke must still find and remove the session once the channel index TTL correctly covers a 48h SessionTTL")
+}
+
+// TestRevokeChannelSessionsFailsClosedOnDecodeError pins the fix for review
+// finding 1: revokeChannelSessionsRedis used to swallow every per-session
+// Get/decode/Del error (`_ = ...Err()`) and unconditionally return nil, so
+// a failure encountered while revoking a security-sensitive control could
+// be reported as success. A corrupted session record (decode failure) must
+// now make RevokeChannelSessions itself return a non-nil error.
+func TestRevokeChannelSessionsFailsClosedOnDecodeError(t *testing.T) {
+	resetChannelSSOStore(t, true)
+	setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+	pending := newPendingTestSession(t, 902)
+	activated, err := ActivateSession(pending.ID)
+	require.NoError(t, err)
+
+	// Simulate a corrupted session record (e.g. a bug or an external
+	// write) so decoding it during revoke fails for this one id, even
+	// though every Redis command involved still succeeds.
+	require.NoError(t, common.RDB.Set(context.Background(), sessionKey(activated.ID), "{not-json", 0).Err())
+
+	err = RevokeChannelSessions(902)
+	assert.Error(t, err, "a decode failure encountered while revoking must be reported, not swallowed as success")
 }

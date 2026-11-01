@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -62,12 +63,18 @@ const (
 	// collides with an existing active session's label.
 	maxHostLabelAttempts = 5
 
-	// channelIndexTTL bounds how long the per-channel session-index set
-	// survives in Redis if it is never revoked or refreshed. It only
-	// needs to outlive any realistic session lifetime; actual session
-	// and ticket expiry is enforced via their own ExpiresAt fields, not
-	// this backstop.
+	// channelIndexTTL is the floor for how long the per-channel
+	// session-index set survives in Redis: see channelIndexExpiry, which
+	// also accounts for the configured SessionTTL. It only needs to
+	// outlive any realistic session lifetime; actual session and ticket
+	// expiry is enforced via their own ExpiresAt fields, not this
+	// backstop.
 	channelIndexTTL = 24 * time.Hour
+
+	// channelIndexMargin is added on top of the configured SessionTTL
+	// (see channelIndexExpiry) so the index cannot expire while a
+	// session using that TTL is still logically alive.
+	channelIndexMargin = time.Hour
 
 	// memCleanupInterval is how often the in-process memory store sweeps
 	// expired sessions and tickets in the background.
@@ -78,6 +85,21 @@ const (
 // ConsumeTicket when the requested session does not exist, has expired, or
 // (for GetSessionByLabel) is not an activated session.
 var ErrSessionNotFound = errors.New("channel sso session not found")
+
+// ErrSessionAlreadyActive is returned by ActivateSession when the session
+// has already been activated. A session's ExpiresAt and HostLabel are
+// fixed at activation and never slide forward on a later call, so callers
+// must not call ActivateSession a second time for the same id and must
+// treat this error as a caller bug, not a reason to retry.
+var ErrSessionAlreadyActive = errors.New("channel sso session is already active")
+
+// errHostLabelTaken is an internal retry signal, never returned to
+// callers. ActivateSession generates a fresh random label per attempt and
+// relies entirely on the atomic backend check (a Redis EVAL, or the
+// memory store's single critical section in activateSessionMemory) to
+// decide whether that label is actually free; on a collision it retries
+// with a new random label, up to maxHostLabelAttempts times.
+var errHostLabelTaken = errors.New("channelsso: host label is taken")
 
 // ErrTicketInvalid is returned by ConsumeTicket when the ticket does not
 // exist, has already been consumed, has expired, or is not bound to the
@@ -117,6 +139,26 @@ func labelKey(label string) string { return redisKeyPrefix + "label:" + label }
 func ticketKey(hash string) string { return redisKeyPrefix + "ticket:" + hash }
 func channelKey(channelID int) string {
 	return redisKeyPrefix + "channel:" + strconv.Itoa(channelID)
+}
+
+// activeMarkerKey is a small sentinel key (not the main session JSON blob)
+// set only once activateSessionScript successfully activates a session.
+// It exists so that script can reject a second activation attempt with a
+// plain EXISTS check instead of having to parse the session JSON in Lua.
+func activeMarkerKey(id string) string { return redisKeyPrefix + "active:" + id }
+
+// channelIndexExpiry returns how long the per-channel session-index Redis
+// set should live: at least channelIndexTTL, but never less than the
+// currently configured SessionTTL plus channelIndexMargin. Without this
+// floor, an operator raising SSO_SESSION_TTL above channelIndexTTL would
+// make the index key expire while an activated session using that TTL is
+// still logically alive, so RevokeChannelSessions would find nothing to
+// revoke for it.
+func channelIndexExpiry() time.Duration {
+	if floor := Current().SessionTTL + channelIndexMargin; floor > channelIndexTTL {
+		return floor
+	}
+	return channelIndexTTL
 }
 
 // memoryStore is the in-process fallback used when common.RedisEnabled is
@@ -230,7 +272,7 @@ func createPendingSessionRedis(s *Session) error {
 func addToChannelIndexRedis(ctx context.Context, channelID int, sessionID string) error {
 	pipe := common.RDB.TxPipeline()
 	pipe.SAdd(ctx, channelKey(channelID), sessionID)
-	pipe.Expire(ctx, channelKey(channelID), channelIndexTTL)
+	pipe.Expire(ctx, channelKey(channelID), channelIndexExpiry())
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -298,50 +340,42 @@ func getSessionMemory(id string) (*Session, error) {
 	return &cp, nil
 }
 
-// ActivateSession turns a pending (or previously activated) session into
-// an activated one: it assigns a unique HostLabel, sets Active=true, and
-// resets ExpiresAt to now + Config.SessionTTL (fixed, does not renew after
-// that). It builds the label->id index entry so GetSessionByLabel can find
-// it.
+// ActivateSession turns a pending session into an activated one: it
+// assigns a unique HostLabel, sets Active=true, and resets ExpiresAt to
+// now + Config.SessionTTL (fixed, does not renew after that). It builds
+// the label->id index entry so GetSessionByLabel can find it.
+//
+// The whole check-and-mutate step is atomic per backend (a single Redis
+// EVAL, or one critical section under the memory store's mutex), so it
+// returns ErrSessionNotFound if the session was deleted or revoked after
+// the caller last observed it, and ErrSessionAlreadyActive if it was
+// already activated (by this call or a concurrent one) — in both cases
+// without mutating anything. ActivateSession must not be called a second
+// time for the same id; doing so is rejected rather than re-extending the
+// session's lifetime or assigning it a second label.
 func ActivateSession(id string) (*Session, error) {
-	s, err := GetSession(id)
-	if err != nil {
-		return nil, err
-	}
-	label, err := assignUniqueHostLabel()
-	if err != nil {
-		return nil, err
-	}
-	now := nowFunc()
-	s.HostLabel = label
-	s.Active = true
-	s.ExpiresAt = now.Add(Current().SessionTTL).Unix()
-
-	if common.RedisEnabled {
-		if err := activateSessionRedis(s); err != nil {
-			return nil, err
-		}
-	} else {
-		activateSessionMemory(s)
-	}
-	cp := *s
-	return &cp, nil
-}
-
-// assignUniqueHostLabel generates an 8-character lowercase-alphanumeric
-// label that does not collide with any existing active session's label,
-// retrying up to maxHostLabelAttempts times.
-func assignUniqueHostLabel() (string, error) {
 	for range maxHostLabelAttempts {
 		label, err := randomHostLabel()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		if _, err := GetSessionByLabel(label); errors.Is(err, ErrSessionNotFound) {
-			return label, nil
+		now := nowFunc()
+		expiresAt := now.Add(Current().SessionTTL).Unix()
+
+		var s *Session
+		if common.RedisEnabled {
+			s, err = activateSessionRedis(id, label, expiresAt)
+		} else {
+			s, err = activateSessionMemory(id, label, expiresAt)
+		}
+		if err == nil {
+			return s, nil
+		}
+		if !errors.Is(err, errHostLabelTaken) {
+			return nil, err
 		}
 	}
-	return "", errors.New("channelsso: could not assign a unique host label after retries")
+	return nil, errors.New("channelsso: could not assign a unique host label after retries")
 }
 
 func randomHostLabel() (string, error) {
@@ -356,31 +390,114 @@ func randomHostLabel() (string, error) {
 	return string(out), nil
 }
 
-func activateSessionRedis(s *Session) error {
-	data, err := common.Marshal(s)
+// activateSessionScript atomically transitions a pending session into an
+// activated one, or fails without any side effect if the session no
+// longer exists (deleted, expired, or revoked between the caller's last
+// read and this call), is already active, or the chosen label is taken.
+// EVAL already guarantees the whole script runs without any other Redis
+// command interleaving, so the EXISTS-then-SET checks below are exact —
+// no separate WATCH/MULTI round trip or optimistic retry is needed. The
+// already-active check reads a dedicated marker key (KEYS[2]) rather than
+// the session JSON blob itself, so the script never needs to parse JSON.
+//
+// KEYS: 1=session key, 2=active-marker key, 3=label key, 4=channel-index key
+// ARGV: 1=new session JSON, 2=TTL seconds for session/marker/label,
+//
+//	3=session id, 4=channel-index TTL seconds
+//
+// Returns: 1 ok, -1 session not found, -2 already active, -3 label taken.
+const activateSessionScript = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return -1
+end
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  return -2
+end
+if redis.call('EXISTS', KEYS[3]) == 1 then
+  return -3
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('SET', KEYS[2], '1', 'EX', ARGV[2])
+redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[2])
+redis.call('SADD', KEYS[4], ARGV[3])
+redis.call('EXPIRE', KEYS[4], ARGV[4])
+return 1`
+
+func activateSessionRedis(id, label string, expiresAt int64) (*Session, error) {
+	current, err := getSessionRedis(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	ttl := time.Until(time.Unix(s.ExpiresAt, 0))
-	if ttl <= 0 {
-		ttl = time.Second
+	candidate := *current
+	candidate.HostLabel = label
+	candidate.Active = true
+	candidate.ExpiresAt = expiresAt
+	data, err := common.Marshal(&candidate)
+	if err != nil {
+		return nil, err
 	}
-	ctx := context.Background()
-	pipe := common.RDB.TxPipeline()
-	pipe.Set(ctx, sessionKey(s.ID), data, ttl)
-	pipe.Set(ctx, labelKey(s.HostLabel), s.ID, ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return err
+	ttlSeconds := int64(time.Until(time.Unix(expiresAt, 0)).Seconds())
+	if ttlSeconds <= 0 {
+		ttlSeconds = 1
 	}
-	return addToChannelIndexRedis(ctx, s.ChannelID, s.ID)
+
+	result, err := common.RDB.Eval(context.Background(), activateSessionScript,
+		[]string{sessionKey(id), activeMarkerKey(id), labelKey(label), channelKey(candidate.ChannelID)},
+		data, ttlSeconds, id, int64(channelIndexExpiry().Seconds()),
+	).Int64()
+	if err != nil {
+		return nil, err
+	}
+	switch result {
+	case 1:
+		return &candidate, nil
+	case -1:
+		return nil, ErrSessionNotFound
+	case -2:
+		return nil, ErrSessionAlreadyActive
+	case -3:
+		return nil, errHostLabelTaken
+	default:
+		return nil, fmt.Errorf("channelsso: unexpected activateSessionScript result %d", result)
+	}
 }
 
-func activateSessionMemory(s *Session) {
+// activateSessionMemory performs the same check-and-mutate step as
+// activateSessionRedis, but as one critical section under mem.mu: the
+// existence/expiry/active checks and the mutation happen without
+// releasing the lock in between, so a concurrent revokeChannelSessionsMemory
+// or another activateSessionMemory call can never interleave with it.
+func activateSessionMemory(id, label string, expiresAt int64) (*Session, error) {
 	startMemCleanup()
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
-	storeSessionLocked(s)
-	mem.labels[s.HostLabel] = s.ID
+
+	s, ok := mem.sessions[id]
+	if ok && s.ExpiresAt <= nowFunc().Unix() {
+		removeSessionLocked(id, s)
+		ok = false
+	}
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	if s.Active {
+		return nil, ErrSessionAlreadyActive
+	}
+	if _, taken := mem.labels[label]; taken {
+		return nil, errHostLabelTaken
+	}
+
+	s.HostLabel = label
+	s.Active = true
+	s.ExpiresAt = expiresAt
+	mem.labels[label] = id
+	if mem.channels[s.ChannelID] == nil {
+		mem.channels[s.ChannelID] = map[string]struct{}{}
+	}
+	mem.channels[s.ChannelID][id] = struct{}{}
+
+	cp := *s
+	return &cp, nil
 }
 
 // GetSessionByLabel returns the activated, unexpired session for the given
@@ -472,9 +589,10 @@ func issueTicketMemory(hash string, rec ticketRecord) {
 // ConsumeTicket atomically retrieves and deletes the ticket (Redis GETDEL,
 // or a mutex-guarded delete in memory) so every ticket is usable at most
 // once, even when validation below fails. It returns ErrTicketInvalid if
-// the ticket does not exist, already was consumed, has expired, or is not
-// bound to label; otherwise it returns the referenced session (which may
-// itself be ErrSessionNotFound if it expired first).
+// the ticket does not exist, already was consumed, has expired, is not
+// bound to label, or no longer resolves to an activated session bound to
+// that same label (for example because the session was revoked or
+// somehow still pending); otherwise it returns the referenced session.
 func ConsumeTicket(ticket, label string) (*Session, error) {
 	hash := ticketHash(ticket)
 	var rec ticketRecord
@@ -491,7 +609,14 @@ func ConsumeTicket(ticket, label string) (*Session, error) {
 	if !found || rec.ExpiresAt <= nowFunc().Unix() || rec.Label != label {
 		return nil, ErrTicketInvalid
 	}
-	return GetSession(rec.SessionID)
+	s, err := GetSession(rec.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.Active || s.HostLabel != label {
+		return nil, ErrTicketInvalid
+	}
+	return s, nil
 }
 
 func consumeTicketRecordRedis(hash string) (ticketRecord, bool, error) {
@@ -532,22 +657,48 @@ func RevokeChannelSessions(channelID int) error {
 	return nil
 }
 
+// revokeChannelSessionsRedis deletes every session, its active marker, and
+// (when known) its label index entry, for every id found in the
+// channel's index set, then removes the index itself. It fails closed:
+// any real error reading a session, decoding it, or executing the delete
+// pipeline is collected and returned (via errors.Join) rather than
+// swallowed, because this is a security control (it must make every
+// session for the channel unreachable) and a caller that ignores a
+// returned error must not be able to mistake partial success for
+// complete revocation.
 func revokeChannelSessionsRedis(channelID int) error {
 	ctx := context.Background()
 	ids, err := common.RDB.SMembers(ctx, channelKey(channelID)).Result()
 	if err != nil {
 		return err
 	}
+
+	var errs []error
+	pipe := common.RDB.TxPipeline()
 	for _, id := range ids {
-		if data, getErr := common.RDB.Get(ctx, sessionKey(id)).Bytes(); getErr == nil {
+		data, getErr := common.RDB.Get(ctx, sessionKey(id)).Bytes()
+		switch {
+		case errors.Is(getErr, goredis.Nil):
+			// Already gone; still delete the id's keys below so a
+			// leftover active-marker or label key cannot survive it.
+		case getErr != nil:
+			errs = append(errs, fmt.Errorf("channelsso: revoke: read session %s: %w", id, getErr))
+		default:
 			var s Session
-			if unmarshalErr := common.Unmarshal(data, &s); unmarshalErr == nil && s.HostLabel != "" {
-				_ = common.RDB.Del(ctx, labelKey(s.HostLabel)).Err()
+			if unmarshalErr := common.Unmarshal(data, &s); unmarshalErr != nil {
+				errs = append(errs, fmt.Errorf("channelsso: revoke: decode session %s: %w", id, unmarshalErr))
+			} else if s.HostLabel != "" {
+				pipe.Del(ctx, labelKey(s.HostLabel))
 			}
 		}
-		_ = common.RDB.Del(ctx, sessionKey(id)).Err()
+		pipe.Del(ctx, sessionKey(id))
+		pipe.Del(ctx, activeMarkerKey(id))
 	}
-	return common.RDB.Del(ctx, channelKey(channelID)).Err()
+	pipe.Del(ctx, channelKey(channelID))
+	if _, err := pipe.Exec(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("channelsso: revoke: delete pipeline: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func revokeChannelSessionsMemory(channelID int) {
