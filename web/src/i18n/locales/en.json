@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "SSO configuration cleared",
     "Saving SSO settings…": "Saving SSO settings…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})",
+    "Single sign-on settings were not saved; edit the channel to set them": "Single sign-on settings were not saved; edit the channel to set them"
   }
 }

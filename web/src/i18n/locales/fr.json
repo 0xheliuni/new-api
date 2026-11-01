@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "Configuration SSO effacée",
     "Saving SSO settings…": "Enregistrement des paramètres SSO…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Permet à un super administrateur de se connecter à la console New API amont de ce canal sans ressaisir les identifiants amont.",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Console amont ouverte via le SSO du canal (ID du canal : {{channel_id}}, utilisateur amont : {{upstream_username}})"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Console amont ouverte via le SSO du canal (ID du canal : {{channel_id}}, utilisateur amont : {{upstream_username}})",
+    "Single sign-on settings were not saved; edit the channel to set them": "Les paramètres de connexion unique n'ont pas été enregistrés ; modifiez le canal pour les définir"
   }
 }

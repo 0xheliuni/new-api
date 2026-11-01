@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "Đã xóa cấu hình SSO",
     "Saving SSO settings…": "Đang lưu cài đặt SSO…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "Cho phép siêu quản trị viên đăng nhập vào bảng điều khiển New API thượng nguồn của kênh này mà không cần nhập lại thông tin đăng nhập thượng nguồn.",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Đã mở bảng điều khiển thượng nguồn qua SSO của kênh (ID kênh: {{channel_id}}, người dùng thượng nguồn: {{upstream_username}})"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Đã mở bảng điều khiển thượng nguồn qua SSO của kênh (ID kênh: {{channel_id}}, người dùng thượng nguồn: {{upstream_username}})",
+    "Single sign-on settings were not saved; edit the channel to set them": "Cài đặt SSO chưa được lưu; hãy chỉnh sửa kênh để thiết lập lại"
   }
 }

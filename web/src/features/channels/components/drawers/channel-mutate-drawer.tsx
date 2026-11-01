@@ -1505,20 +1505,34 @@ export function ChannelMutateDrawer({
   )
 
   // Handle successful submission
-  const handleSuccess = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-    if (channelId) {
-      queryClient.invalidateQueries({
-        queryKey: channelsQueryKeys.detail(channelId),
-      })
-      // The channel row itself just saved successfully. A failure saving the
-      // SSO section only shows an error toast; it never rolls back the
-      // channel save that already succeeded.
-      void channelSSOSectionRef.current?.saveIfChanged(channelId)
-    }
-    onOpenChange(false)
-    setOpen(null)
-  }, [channelId, queryClient, onOpenChange, setOpen])
+  const handleSuccess = useCallback(
+    (createdIds?: number[]) => {
+      queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      if (channelId) {
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.detail(channelId),
+        })
+        // The channel row itself just saved successfully. A failure saving
+        // the SSO section only shows an error toast; it never rolls back the
+        // channel save that already succeeded.
+        void channelSSOSectionRef.current?.saveIfChanged(channelId)
+      } else if (createdIds && createdIds.length > 0) {
+        // Creation can make more than one channel at once (batch/multi-key
+        // mode); the same SSO config entered once is saved to each.
+        for (const id of createdIds) {
+          void channelSSOSectionRef.current?.saveIfChanged(id)
+        }
+      } else {
+        // Older backends (or a response shape we don't recognize) don't
+        // return the new channel's id; the SSO section's own save has
+        // nowhere to go, so just warn if there was anything to lose.
+        channelSSOSectionRef.current?.notifyUnsavable()
+      }
+      onOpenChange(false)
+      setOpen(null)
+    },
+    [channelId, queryClient, onOpenChange, setOpen]
+  )
 
   // Show missing models confirmation dialog
   const confirmMissingModelMappings = useCallback(

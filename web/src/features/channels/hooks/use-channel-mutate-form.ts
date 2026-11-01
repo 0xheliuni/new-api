@@ -42,7 +42,17 @@ type UseChannelMutateFormParams = {
   currentRow?: Channel | null
   isEditing: boolean
   isMultiKeyChannel: boolean
-  onSuccess: () => void
+  /**
+   * `createdIds` carries the newly created channel id(s) (single/multi-key
+   * creation can create more than one channel at once); it is always
+   * undefined for an edit, since the channel's id is already known there.
+   */
+  onSuccess: (createdIds?: number[]) => void
+}
+
+type ChannelMutationResult = {
+  messageKey: string
+  createdIds?: number[]
 }
 
 const SENSITIVE_UPDATE_FIELDS = [
@@ -67,7 +77,9 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   )
 
   return useMutation({
-    mutationFn: async (data: ChannelFormValues): Promise<string> => {
+    mutationFn: async (
+      data: ChannelFormValues
+    ): Promise<ChannelMutationResult> => {
       if (props.isEditing && props.currentRow) {
         const payload = transformFormDataToUpdatePayload(
           data,
@@ -101,7 +113,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
         if (!response.success) {
           throw createServerError(response, t(ERROR_MESSAGES.UPDATE_FAILED))
         }
-        return SUCCESS_MESSAGES.UPDATED
+        return { messageKey: SUCCESS_MESSAGES.UPDATED }
       }
 
       const payload = transformFormDataToCreatePayload(data)
@@ -109,11 +121,14 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       if (!response.success) {
         throw createServerError(response, t(ERROR_MESSAGES.CREATE_FAILED))
       }
-      return SUCCESS_MESSAGES.CREATED
+      return {
+        messageKey: SUCCESS_MESSAGES.CREATED,
+        createdIds: response.data?.ids,
+      }
     },
-    onSuccess: (messageKey) => {
-      toast.success(t(messageKey))
-      props.onSuccess()
+    onSuccess: (result) => {
+      toast.success(t(result.messageKey))
+      props.onSuccess(result.createdIds)
     },
     onError: (error: unknown) => {
       handleServerError(error, t(ERROR_MESSAGES.CREATE_FAILED))

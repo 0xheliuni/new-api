@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { PasswordInput } from '@/components/password-input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -65,6 +66,13 @@ export type ChannelSSOSectionHandle = {
    * error toast — it never rolls back the already-saved channel.
    */
   saveIfChanged: (channelId: number) => Promise<void>
+  /**
+   * Called instead of `saveIfChanged` when a channel was just created but the
+   * server did not return the new channel's id, so this section's own
+   * changes (if any) have nowhere to be saved to. Only toasts when there was
+   * actually something unsaved.
+   */
+  notifyUnsavable: () => void
 }
 
 type ChannelSSOSectionProps = {
@@ -203,6 +211,15 @@ export const ChannelSSOSection = forwardRef<
           setIsSaving(false)
         }
       },
+      notifyUnsavable() {
+        if (!notEnabledMessage && isDirty) {
+          toast.error(
+            t(
+              'Single sign-on settings were not saved; edit the channel to set them'
+            )
+          )
+        }
+      },
     }),
     [
       baseUrl,
@@ -252,9 +269,13 @@ export const ChannelSSOSection = forwardRef<
     }
   }, [props.channelId, props.defaultBaseUrl, t])
 
-  const fieldsDisabled = Boolean(
-    props.disabled || notEnabledMessage || isLoading
-  )
+  // When the server reports the feature disabled, the fields and the clear
+  // button stay visible but inert (readOnly inputs, disabled button) instead
+  // of disappearing — there is nothing useful to edit, but the admin should
+  // still see the section's shape and the reason it cannot be used.
+  const fieldsReadOnly = Boolean(notEnabledMessage)
+  const fieldsDisabled = Boolean(props.disabled || isLoading)
+  const showClearButton = props.isEditing && (configured || fieldsReadOnly)
 
   return (
     <div className='border-border/60 flex flex-col gap-3 border-t pt-4'>
@@ -271,94 +292,95 @@ export const ChannelSSOSection = forwardRef<
         )}
       </div>
 
-      {notEnabledMessage ? (
+      {notEnabledMessage && (
         <Alert>
           <AlertDescription>{notEnabledMessage}</AlertDescription>
         </Alert>
-      ) : (
-        <div className='flex flex-col gap-4'>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.'
-            )}
-          </p>
+      )}
 
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <div className='space-y-1.5'>
-              <Label htmlFor='channel-sso-base-url'>
-                {t('Upstream Console URL')}
-              </Label>
-              <Input
-                id='channel-sso-base-url'
-                value={baseUrl}
-                disabled={fieldsDisabled}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder='https://console.example.com'
-              />
-            </div>
+      <div className='flex flex-col gap-4'>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.'
+          )}
+        </p>
 
-            <div className='space-y-1.5'>
-              <Label htmlFor='channel-sso-username'>{t('Username')}</Label>
-              <Input
-                id='channel-sso-username'
-                value={username}
-                disabled={fieldsDisabled}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete='off'
-              />
-            </div>
-
-            <div className='space-y-1.5'>
-              <Label htmlFor='channel-sso-password'>{t('Password')}</Label>
-              <Input
-                id='channel-sso-password'
-                type='password'
-                value={password}
-                disabled={fieldsDisabled}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete='new-password'
-                placeholder={
-                  hasPassword ? t('Saved — leave blank to keep') : undefined
-                }
-              />
-            </div>
-
-            <div className='space-y-1.5'>
-              <Label htmlFor='channel-sso-entry-path'>{t('Entry Path')}</Label>
-              <Input
-                id='channel-sso-entry-path'
-                value={entryPath}
-                disabled={fieldsDisabled}
-                onChange={(e) => setEntryPath(e.target.value)}
-                placeholder={DEFAULT_ENTRY_PATH}
-              />
-            </div>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <div className='space-y-1.5'>
+            <Label htmlFor='channel-sso-base-url'>
+              {t('Upstream Console URL')}
+            </Label>
+            <Input
+              id='channel-sso-base-url'
+              value={baseUrl}
+              readOnly={fieldsReadOnly}
+              disabled={fieldsDisabled}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder='https://console.example.com'
+            />
           </div>
 
-          {props.isEditing && configured && (
-            <div>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                disabled={fieldsDisabled || isClearing}
-                onClick={() => setClearConfirmOpen(true)}
-              >
-                {isClearing && (
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                )}
-                {t('Clear SSO configuration')}
-              </Button>
-            </div>
-          )}
+          <div className='space-y-1.5'>
+            <Label htmlFor='channel-sso-username'>{t('Username')}</Label>
+            <Input
+              id='channel-sso-username'
+              value={username}
+              readOnly={fieldsReadOnly}
+              disabled={fieldsDisabled}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete='off'
+            />
+          </div>
 
-          {isSaving && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Saving SSO settings…')}
-            </p>
-          )}
+          <div className='space-y-1.5'>
+            <Label htmlFor='channel-sso-password'>{t('Password')}</Label>
+            <PasswordInput
+              id='channel-sso-password'
+              value={password}
+              readOnly={fieldsReadOnly}
+              disabled={fieldsDisabled}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete='new-password'
+              placeholder={
+                hasPassword ? t('Saved — leave blank to keep') : undefined
+              }
+            />
+          </div>
+
+          <div className='space-y-1.5'>
+            <Label htmlFor='channel-sso-entry-path'>{t('Entry Path')}</Label>
+            <Input
+              id='channel-sso-entry-path'
+              value={entryPath}
+              readOnly={fieldsReadOnly}
+              disabled={fieldsDisabled}
+              onChange={(e) => setEntryPath(e.target.value)}
+              placeholder={DEFAULT_ENTRY_PATH}
+            />
+          </div>
         </div>
-      )}
+
+        {showClearButton && (
+          <div>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={fieldsDisabled || fieldsReadOnly || isClearing}
+              onClick={() => setClearConfirmOpen(true)}
+            >
+              {isClearing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+              {t('Clear SSO configuration')}
+            </Button>
+          </div>
+        )}
+
+        {isSaving && (
+          <p className='text-muted-foreground text-xs'>
+            {t('Saving SSO settings…')}
+          </p>
+        )}
+      </div>
 
       <ConfirmDialog
         open={clearConfirmOpen}

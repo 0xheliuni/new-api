@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "单点登录配置已清除",
     "Saving SSO settings…": "正在保存单点登录设置…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "让超级管理员无需重新输入上游凭据即可登录该渠道的上游 New API 控制台。",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "通过渠道单点登录打开上游控制台（渠道 ID：{{channel_id}}，上游用户：{{upstream_username}}）"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "通过渠道单点登录打开上游控制台（渠道 ID：{{channel_id}}，上游用户：{{upstream_username}}）",
+    "Single sign-on settings were not saved; edit the channel to set them": "单点登录设置未保存；请编辑渠道以重新设置"
   }
 }

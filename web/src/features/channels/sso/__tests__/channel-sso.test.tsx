@@ -17,15 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterContextProvider,
+} from '@tanstack/react-router'
 import type { Row } from '@tanstack/react-table'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { ChannelsProvider } from '@/features/channels/components/channels-provider'
 import { DataTableRowActions } from '@/features/channels/components/data-table-row-actions'
+import { ChannelMutateDrawer } from '@/features/channels/components/drawers/channel-mutate-drawer'
 import type { Channel } from '@/features/channels/types'
+import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -157,6 +172,11 @@ it('leaves the password field empty when a password is already saved, and keeps 
 
   const passwordInput = await screen.findByLabelText('Password')
   expect(passwordInput).toHaveValue('')
+  // The password field must be the shared PasswordInput, not a bare
+  // <input type="password">, per the component-reuse rule.
+  expect(
+    screen.getByRole('button', { name: 'Toggle password visibility' })
+  ).toBeInTheDocument()
 
   const usernameInput = screen.getByLabelText('Username')
   await userEvent.clear(usernameInput)
@@ -171,5 +191,209 @@ it('leaves the password field empty when a password is already saved, and keeps 
       password: '',
       entry_path: '/dashboard',
     })
+  )
+})
+
+it('shows the "not enabled" message together with read-only fields and a disabled clear button', async () => {
+  vi.mocked(getChannelSSOConfig).mockResolvedValue({
+    success: false,
+    message: 'Channel SSO is not enabled on this server',
+    message_key: 'Channel SSO is not enabled on this server',
+  })
+
+  render(<SSOSectionHarness channelId={7} />)
+
+  expect(
+    await screen.findByText('Channel SSO is not enabled on this server')
+  ).toBeInTheDocument()
+
+  const baseUrlInput = screen.getByLabelText('Upstream Console URL')
+  const usernameInput = screen.getByLabelText('Username')
+  const passwordInput = screen.getByLabelText('Password')
+  const entryPathInput = screen.getByLabelText('Entry Path')
+  for (const field of [
+    baseUrlInput,
+    usernameInput,
+    passwordInput,
+    entryPathInput,
+  ]) {
+    expect(field).toBeVisible()
+    expect(field).toHaveAttribute('readonly')
+  }
+
+  expect(
+    screen.getByRole('button', { name: 'Clear SSO configuration' })
+  ).toBeDisabled()
+})
+
+function MultiIdSaveHarness(props: { ids: number[] }) {
+  const ref = useRef<ChannelSSOSectionHandle>(null)
+  return (
+    <>
+      <ChannelSSOSection
+        ref={ref}
+        channelId={null}
+        isEditing={false}
+        open
+        defaultBaseUrl='https://upstream.example.com/v1'
+      />
+      <button
+        type='button'
+        onClick={() => {
+          for (const id of props.ids) {
+            void ref.current?.saveIfChanged(id)
+          }
+        }}
+      >
+        Save all
+      </button>
+    </>
+  )
+}
+
+it('saves the same SSO config to every id when a creation makes more than one channel', async () => {
+  vi.mocked(saveChannelSSOConfig).mockResolvedValue({ success: true })
+  render(<MultiIdSaveHarness ids={[501, 502]} />)
+
+  const usernameInput = await screen.findByLabelText('Username')
+  await userEvent.type(usernameInput, 'upstream-admin')
+
+  await userEvent.click(screen.getByRole('button', { name: 'Save all' }))
+
+  await waitFor(() => {
+    expect(saveChannelSSOConfig).toHaveBeenCalledWith(
+      501,
+      expect.objectContaining({ username: 'upstream-admin' })
+    )
+    expect(saveChannelSSOConfig).toHaveBeenCalledWith(
+      502,
+      expect.objectContaining({ username: 'upstream-admin' })
+    )
+  })
+})
+
+function NotifyUnsavableHarness() {
+  const ref = useRef<ChannelSSOSectionHandle>(null)
+  return (
+    <>
+      <ChannelSSOSection
+        ref={ref}
+        channelId={null}
+        isEditing={false}
+        open
+        defaultBaseUrl=''
+      />
+      <button type='button' onClick={() => ref.current?.notifyUnsavable()}>
+        Notify
+      </button>
+    </>
+  )
+}
+
+it('does not warn about unsaved SSO settings when nothing in the section changed', async () => {
+  const errorToast = vi.spyOn(toast, 'error')
+  render(<NotifyUnsavableHarness />)
+  await userEvent.click(screen.getByRole('button', { name: 'Notify' }))
+  expect(errorToast).not.toHaveBeenCalled()
+})
+
+it('warns that SSO settings were not saved when the created channel got no id back', async () => {
+  const errorToast = vi.spyOn(toast, 'error')
+  render(<NotifyUnsavableHarness />)
+  const usernameInput = await screen.findByLabelText('Username')
+  await userEvent.type(usernameInput, 'admin')
+  await userEvent.click(screen.getByRole('button', { name: 'Notify' }))
+  expect(errorToast).toHaveBeenCalledWith(
+    'Single sign-on settings were not saved; edit the channel to set them'
+  )
+})
+
+function CreateDrawerHarness() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      })
+  )
+  const [router] = useState(() =>
+    createRouter({
+      routeTree: createRootRoute(),
+      history: createMemoryHistory({ initialEntries: ['/'] }),
+    })
+  )
+  return (
+    <QueryClientProvider client={client}>
+      <RouterContextProvider router={router}>
+        <ChannelsProvider>
+          <ChannelMutateDrawer open onOpenChange={() => {}} currentRow={null} />
+        </ChannelsProvider>
+      </RouterContextProvider>
+    </QueryClientProvider>
+  )
+}
+
+it('saves the SSO fields entered while creating a channel once the server returns the new id', async () => {
+  setRole(ROLE.SUPER_ADMIN)
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/channel/default_base_urls') {
+      return { data: { success: true, data: {} } }
+    }
+    if (url === '/api/task_plugin_options') {
+      return { data: { success: true, data: [] } }
+    }
+    if (url === '/api/channel/models') {
+      return { data: { success: true, data: [{ id: 'deepseek-chat' }] } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/prefill_group') {
+      return { data: { success: true, data: [] } }
+    }
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, message: '', data: { ids: [501] } },
+  })
+  vi.mocked(saveChannelSSOConfig).mockResolvedValue({ success: true })
+
+  render(<CreateDrawerHarness />)
+
+  // DeepSeek is a built-in provider that does not require Base URL at
+  // creation time, keeping this test focused on the SSO wiring.
+  await userEvent.click(screen.getByRole('option', { name: /^DeepSeek / }))
+  fireEvent.change(screen.getByLabelText('API Key *'), {
+    target: { value: 'sk-test-key' },
+  })
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Fill Related Models' })
+  )
+  fireEvent.change(screen.getByLabelText('Upstream Console URL'), {
+    target: { value: 'https://upstream.example.com' },
+  })
+  fireEvent.change(screen.getByLabelText('Username'), {
+    target: { value: 'upstream-admin' },
+  })
+
+  await userEvent.click(screen.getByRole('button', { name: 'Create Channel' }))
+
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel',
+      expect.anything(),
+      expect.anything()
+    )
+  )
+  await waitFor(() =>
+    expect(saveChannelSSOConfig).toHaveBeenCalledWith(
+      501,
+      expect.objectContaining({
+        base_url: 'https://upstream.example.com',
+        username: 'upstream-admin',
+      })
+    )
   )
 })

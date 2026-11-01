@@ -168,6 +168,11 @@ func setupChannelSSOTest(t *testing.T) *ssoTestEnv {
 		middleware.SecureVerificationRequiredFor(service.VerificationScopeChannelSSOOpen), CheckChannelSSO)
 	channelRoute.POST("/sso/:sid/validate", middleware.RootAuth(), middleware.DisableCache(), ValidateChannelSSO)
 	channelRoute.POST("/sso/:sid/open", middleware.RootAuth(), middleware.DisableCache(), OpenChannelSSO)
+	// Registered here (without the Casbin permission middleware the real
+	// router applies) only so TestAddChannelReturnsCreatedChannelIds can
+	// assert on AddChannel's response shape; it is not otherwise exercised by
+	// the SSO flow tests in this file.
+	channelRoute.POST("/", AddChannel)
 
 	return &ssoTestEnv{
 		engine:    engine,
@@ -208,6 +213,7 @@ type ssoResponse struct {
 		Role        int    `json:"role"`
 		Reused      bool   `json:"reused"`
 		EnterURL    string `json:"enter_url"`
+		IDs         []int  `json:"ids"`
 	} `json:"data"`
 }
 
@@ -515,4 +521,25 @@ func TestOpenWritesAuditWithoutSecrets(t *testing.T) {
 
 	_, reopened := env.request(t, env.rootA, http.MethodPost, "/api/channel/sso/"+sid+"/open", "", "")
 	assert.False(t, reopened.Success, "a session opens at most once")
+}
+
+// TestAddChannelReturnsCreatedChannelIds pins AddChannel's response shape: the
+// frontend channel editor needs the newly created channel's id back (added
+// additively in "data") so it can save a Channel SSO configuration entered
+// while creating the channel, which GORM only backfills onto the in-memory
+// Channel struct, never into the JSON response, unless the handler puts it
+// there itself.
+func TestAddChannelReturnsCreatedChannelIds(t *testing.T) {
+	env := setupChannelSSOTest(t)
+
+	body := `{"mode":"single","channel":{"type":1,"name":"sso-created-channel","key":"sk-test-key","models":"gpt-4","group":"default"}}`
+	recorder, response := env.request(t, env.rootA, http.MethodPost, "/api/channel/", body, "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.True(t, response.Success, recorder.Body.String())
+	require.Len(t, response.Data.IDs, 1, recorder.Body.String())
+	assert.Greater(t, response.Data.IDs[0], 0)
+
+	var created model.Channel
+	require.NoError(t, model.DB.Where("id = ?", response.Data.IDs[0]).First(&created).Error)
+	assert.Equal(t, "sso-created-channel", created.Name)
 }

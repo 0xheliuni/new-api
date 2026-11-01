@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "單一登入設定已清除",
     "Saving SSO settings…": "正在儲存單一登入設定…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "讓超級管理員無需重新輸入上游憑證即可登入該管道的上游 New API 控制台。",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "透過管道單一登入開啟上游控制台（管道 ID：{{channel_id}}，上游使用者：{{upstream_username}}）"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "透過管道單一登入開啟上游控制台（管道 ID：{{channel_id}}，上游使用者：{{upstream_username}}）",
+    "Single sign-on settings were not saved; edit the channel to set them": "單一登入設定未儲存；請編輯管道以重新設定"
   }
 }

@@ -7759,6 +7759,7 @@
     "SSO configuration cleared": "SSO設定をクリアしました",
     "Saving SSO settings…": "SSO設定を保存しています…",
     "Lets a super admin sign in to this channel’s upstream New API console without re-entering upstream credentials.": "上流の認証情報を再入力せずに、このチャンネルの上流 New API コンソールにスーパー管理者がサインインできるようにします。",
-    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "チャンネルSSO経由でアップストリームコンソールを開きました（チャンネルID: {{channel_id}}、アップストリームユーザー: {{upstream_username}}）"
+    "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "チャンネルSSO経由でアップストリームコンソールを開きました（チャンネルID: {{channel_id}}、アップストリームユーザー: {{upstream_username}}）",
+    "Single sign-on settings were not saved; edit the channel to set them": "SSO設定は保存されませんでした。チャンネルを編集して再設定してください"
   }
 }
