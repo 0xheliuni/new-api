@@ -68,6 +68,13 @@ func channelSSOChannelID(c *gin.Context) (int, bool) {
 	return id, true
 }
 
+// GetChannelSSOStatus tells the console whether channel SSO is enabled on
+// this server, so the channel editor can show the feature as unavailable
+// before anything is typed (including when creating a channel).
+func GetChannelSSOStatus(c *gin.Context) {
+	common.ApiSuccess(c, gin.H{"enabled": channelsso.Enabled() == nil})
+}
+
 func GetChannelSSOConfig(c *gin.Context) {
 	id, ok := channelSSOChannelID(c)
 	if !ok {

@@ -50,6 +50,7 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 	)
 
 	// Channel SSO (super admin only); see controller/channel_sso.go.
+	channelRoute.GET("/sso/status", middleware.RootAuth(), middleware.DisableCache(), controller.GetChannelSSOStatus)
 	channelRoute.GET("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), controller.GetChannelSSOConfig)
 	channelRoute.PUT("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), controller.SaveChannelSSOConfig)
 	channelRoute.POST("/:id/sso/check",

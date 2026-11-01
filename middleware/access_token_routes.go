@@ -213,6 +213,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// router/channel-router.go: the key route is RootAuth, not Casbin-guarded.
 	"POST /api/channel/:id/key": accessTokenScopeRule(service.AccessTokenScopeOf(authz.ChannelSecretView)),
 	// Channel SSO hands out upstream back-office access; browser sessions only.
+	"GET /api/channel/sso/status":         accessTokenSessionRule,
 	"GET /api/channel/:id/sso":            accessTokenSessionRule,
 	"PUT /api/channel/:id/sso":            accessTokenSessionRule,
 	"POST /api/channel/:id/sso/check":     accessTokenSessionRule,

@@ -37,7 +37,11 @@ import { Label } from '@/components/ui/label'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 
-import { getChannelSSOConfig, saveChannelSSOConfig } from '../../../sso/api'
+import {
+  getChannelSSOConfig,
+  getChannelSSOStatus,
+  saveChannelSSOConfig,
+} from '../../../sso/api'
 
 const DEFAULT_ENTRY_PATH = '/dashboard'
 const NOT_ENABLED_MESSAGE_KEY = 'Channel SSO is not enabled on this server'
@@ -156,6 +160,9 @@ export const ChannelSSOSection = forwardRef<
         })
       return () => {
         cancelled = true
+        // Let the next run (React StrictMode's re-mount, or reopening)
+        // load again instead of skipping a load that was just cancelled.
+        loadedForRef.current = null
       }
     }
     if (!props.isEditing && loadedForRef.current !== 'create') {
@@ -173,6 +180,22 @@ export const ChannelSSOSection = forwardRef<
       setConfigured(false)
       setNotEnabledMessage(null)
       initialRef.current = next
+      // Edit mode learns this from the config request; when creating there
+      // is no channel yet, so ask the server directly. Best-effort: on any
+      // failure the fields stay editable and the save reports the error.
+      let cancelled = false
+      void getChannelSSOStatus()
+        .then((res) => {
+          if (cancelled || !res.success || res.data?.enabled !== false) return
+          setNotEnabledMessage(t(NOT_ENABLED_MESSAGE_KEY))
+        })
+        .catch(() => {})
+      return () => {
+        cancelled = true
+        // Let the next run (React StrictMode's re-mount, or reopening)
+        // load again instead of skipping a load that was just cancelled.
+        loadedForRef.current = null
+      }
     }
     return undefined
     // eslint-disable-next-line react-hooks/exhaustive-deps

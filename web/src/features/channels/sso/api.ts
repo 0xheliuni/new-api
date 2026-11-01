@@ -49,6 +49,19 @@ const channelActionConfig = (
 })
 
 /**
+ * Whether Channel SSO is enabled on this server (requires super admin).
+ */
+export async function getChannelSSOStatus(
+  signal?: AbortSignal
+): Promise<ChannelSSOApiResponse<{ enabled: boolean }>> {
+  const res = await api.get(
+    '/api/channel/sso/status',
+    channelActionConfig({ signal })
+  )
+  return res.data
+}
+
+/**
  * Get the saved Channel SSO configuration (requires super admin).
  */
 export async function getChannelSSOConfig(

@@ -51,6 +51,7 @@ import {
 import {
   checkChannelSSO,
   getChannelSSOConfig,
+  getChannelSSOStatus,
   openChannelSSO,
   saveChannelSSOConfig,
   validateChannelSSO,
@@ -58,6 +59,7 @@ import {
 import { SSOTransitionPage } from '../sso-transition-page'
 
 vi.mock('../api', () => ({
+  getChannelSSOStatus: vi.fn(),
   getChannelSSOConfig: vi.fn(),
   saveChannelSSOConfig: vi.fn(),
   checkChannelSSO: vi.fn(),
@@ -190,6 +192,11 @@ function SSOSectionHarness(props: { channelId: number }) {
 
 beforeEach(() => {
   vi.mocked(getChannelSSOConfig).mockReset()
+  vi.mocked(getChannelSSOStatus).mockReset()
+  vi.mocked(getChannelSSOStatus).mockResolvedValue({
+    success: true,
+    data: { enabled: true },
+  })
   vi.mocked(saveChannelSSOConfig).mockReset()
   vi.mocked(checkChannelSSO).mockReset()
   vi.mocked(validateChannelSSO).mockReset()
@@ -268,6 +275,81 @@ it('shows the "not enabled" message together with read-only fields and a disable
   expect(
     screen.getByRole('button', { name: 'Clear SSO configuration' })
   ).toBeDisabled()
+})
+
+it('loads the saved settings into the editor under React StrictMode', async () => {
+  vi.mocked(getChannelSSOConfig).mockResolvedValue({
+    success: true,
+    data: {
+      configured: true,
+      base_url: 'https://upstream.example.com',
+      username: 'admin',
+      entry_path: '/console',
+      has_password: true,
+    },
+  })
+
+  render(
+    <StrictMode>
+      <SSOSectionHarness channelId={7} />
+    </StrictMode>
+  )
+
+  await waitFor(() =>
+    expect(screen.getByLabelText('Username')).toHaveValue('admin')
+  )
+  expect(screen.getByLabelText('Entry Path')).toHaveValue('/console')
+  expect(screen.getByLabelText('Username')).not.toHaveAttribute('readonly')
+})
+
+it('shows the "not enabled" message while creating a channel under React StrictMode', async () => {
+  vi.mocked(getChannelSSOStatus).mockResolvedValue({
+    success: true,
+    data: { enabled: false },
+  })
+
+  render(
+    <StrictMode>
+      <ChannelSSOSection
+        channelId={null}
+        isEditing={false}
+        open
+        defaultBaseUrl='https://upstream.example.com/v1'
+      />
+    </StrictMode>
+  )
+
+  expect(
+    await screen.findByText('Channel SSO is not enabled on this server')
+  ).toBeInTheDocument()
+})
+
+it('shows the "not enabled" message with read-only fields while creating a channel', async () => {
+  vi.mocked(getChannelSSOStatus).mockResolvedValue({
+    success: true,
+    data: { enabled: false },
+  })
+
+  render(
+    <ChannelSSOSection
+      channelId={null}
+      isEditing={false}
+      open
+      defaultBaseUrl='https://upstream.example.com/v1'
+    />
+  )
+
+  expect(
+    await screen.findByText('Channel SSO is not enabled on this server')
+  ).toBeInTheDocument()
+  for (const label of [
+    'Upstream Console URL',
+    'Username',
+    'Password',
+    'Entry Path',
+  ]) {
+    expect(screen.getByLabelText(label)).toHaveAttribute('readonly')
+  }
 })
 
 function MultiIdSaveHarness(props: { ids: number[] }) {

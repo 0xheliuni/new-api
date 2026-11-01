@@ -160,6 +160,7 @@ func setupChannelSSOTest(t *testing.T) *ssoTestEnv {
 	engine := gin.New()
 	channelRoute := engine.Group("/api/channel")
 	channelRoute.Use(middleware.AdminAuth())
+	channelRoute.GET("/sso/status", middleware.RootAuth(), middleware.DisableCache(), GetChannelSSOStatus)
 	channelRoute.GET("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), GetChannelSSOConfig)
 	channelRoute.PUT("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), SaveChannelSSOConfig)
 	channelRoute.POST("/:id/sso/check", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), CheckChannelSSO)
@@ -208,6 +209,7 @@ type ssoResponse struct {
 		EntryPath   string `json:"entry_path"`
 		HasPassword bool   `json:"has_password"`
 		SessionID   string `json:"session_id"`
+		Enabled     bool   `json:"enabled"`
 		SiteName    string `json:"site_name"`
 		Role        int    `json:"role"`
 		Reused      bool   `json:"reused"`
@@ -254,6 +256,7 @@ func (env *ssoTestEnv) check(t *testing.T, as ssoTestUser) ssoResponse {
 func TestSSORoutesRequireRoot(t *testing.T) {
 	env := setupChannelSSOTest(t)
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/channel/sso/status"},
 		{http.MethodGet, env.configPath()},
 		{http.MethodPut, env.configPath()},
 		{http.MethodPost, env.configPath() + "/check"},
@@ -267,11 +270,18 @@ func TestSSORoutesRequireRoot(t *testing.T) {
 
 func TestSSODisabledReturnsNotEnabled(t *testing.T) {
 	env := setupChannelSSOTest(t)
+	_, status := env.request(t, env.rootA, http.MethodGet, "/api/channel/sso/status", "", "")
+	require.True(t, status.Success)
+	assert.True(t, status.Data.Enabled)
+
 	t.Setenv("SSO_PROXY_DOMAIN", "")
 	channelsso.LoadConfig()
 	_, response := env.request(t, env.rootA, http.MethodGet, env.configPath(), "", "")
 	assert.False(t, response.Success)
 	assert.Equal(t, channelsso.ErrDisabled.Error(), response.MessageKey)
+	_, status = env.request(t, env.rootA, http.MethodGet, "/api/channel/sso/status", "", "")
+	require.True(t, status.Success, "the status probe itself must not fail when the feature is off")
+	assert.False(t, status.Data.Enabled)
 }
 
 func TestGetConfigNeverReturnsPassword(t *testing.T) {
