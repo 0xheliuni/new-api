@@ -17,8 +17,10 @@ import (
 	"github.com/QuantumNous/new-api/service/channelsso"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const (
@@ -33,6 +35,8 @@ type ssoFakeUpstream struct {
 	mu          sync.Mutex
 	loginCalls  int
 	logoutCalls int
+	// logoutCookies holds the refresh cookie value each logout carried.
+	logoutCookies []string
 }
 
 func (f *ssoFakeUpstream) counts() (login, logout int) {
@@ -90,6 +94,9 @@ func newSSOFakeUpstream(t *testing.T, password string) *ssoFakeUpstream {
 		if r.Method == http.MethodPost {
 			fake.mu.Lock()
 			fake.logoutCalls++
+			if cookie, err := r.Cookie("new_api_refresh"); err == nil {
+				fake.logoutCookies = append(fake.logoutCookies, cookie.Value)
+			}
 			fake.mu.Unlock()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"success": true})
@@ -300,13 +307,43 @@ func TestSavePreservesPasswordWhenBlank(t *testing.T) {
 	_, logoutCalls := env.upstream.counts()
 	assert.Equal(t, 1, logoutCalls)
 
-	for name, body := range map[string]string{
-		"bad entry path": fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"//evil.example"}`, env.upstream.URL),
-		"bad base url":   `{"base_url":"ftp://example.com","username":"u"}`,
+	for _, test := range []struct {
+		name, body string
+		want       error
+	}{
+		{"protocol-relative entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"//evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"backslash entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"/\\\\evil.example"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"relative entry path", fmt.Sprintf(`{"base_url":%q,"username":"u","entry_path":"console"}`, env.upstream.URL), channelsso.ErrInvalidEntryPath},
+		{"non-http base url", `{"base_url":"ftp://example.com","username":"u"}`, channelsso.ErrInvalidBaseURL},
+		{"missing username", fmt.Sprintf(`{"base_url":%q,"username":" "}`, env.upstream.URL), channelsso.ErrConfigIncomplete},
 	} {
-		_, response := env.request(t, env.rootA, http.MethodPut, env.configPath(), body, "")
-		assert.False(t, response.Success, name)
+		_, response := env.request(t, env.rootA, http.MethodPut, env.configPath(), test.body, "")
+		assert.False(t, response.Success, test.name)
+		assert.Equal(t, test.want.Error(), response.MessageKey, test.name)
 	}
+	after, err = model.GetChannelSSOCredential(env.channelID)
+	require.NoError(t, err)
+	assert.Equal(t, "/dashboard", after.EntryPath, "rejected input leaves the stored configuration unchanged")
+}
+
+func TestSaveClearRemovesConfiguration(t *testing.T) {
+	env := setupChannelSSOTest(t)
+	env.saveConfig(t, "secret")
+	sid := env.check(t, env.rootA).Data.SessionID
+
+	_, response := env.request(t, env.rootA, http.MethodPut, env.configPath(), `{"clear":true}`, "")
+	require.True(t, response.Success, response.Message)
+
+	_, err := model.GetChannelSSOCredential(env.channelID)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, err = model.GetChannelSSOUpstreamSession(env.channelID)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, logoutCalls := env.upstream.counts()
+	assert.Equal(t, 1, logoutCalls)
+	_, response = env.request(t, env.rootA, http.MethodGet, env.configPath(), "", "")
+	assert.False(t, response.Data.Configured)
+	_, response = env.request(t, env.rootA, http.MethodPost, "/api/channel/sso/"+sid+"/open", "", "")
+	assert.Equal(t, "SSO session expired; please start again", response.MessageKey)
 }
 
 func TestCheckRequiresProof(t *testing.T) {
@@ -317,6 +354,65 @@ func TestCheckRequiresProof(t *testing.T) {
 	assert.Equal(t, "SECURITY_PROOF_REQUIRED", response.Code)
 	loginCalls, _ := env.upstream.counts()
 	assert.Equal(t, 0, loginCalls)
+}
+
+// TestCheckProofBypassIsRejected pins that a check proof is bound to its
+// scope and channel, and that only root can ever obtain one.
+func TestCheckProofBypassIsRejected(t *testing.T) {
+	env := setupChannelSSOTest(t)
+	env.saveConfig(t, "secret")
+	for _, test := range []struct {
+		name      string
+		operation service.VerificationOperation
+		code      string
+	}{
+		{"proof for another channel", service.VerificationOperation{Scope: service.VerificationScopeChannelSSOOpen, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID+1))}, "SECURITY_PROOF_CONTEXT_MISMATCH"},
+		{"channel key proof", service.VerificationOperation{Scope: service.VerificationScopeChannelKeyRead, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID))}, "SECURITY_PROOF_SCOPE_MISMATCH"},
+	} {
+		proof := issueSecurityEnrollmentProof(t, env.rootA.identity, test.operation, service.VerificationMethodTwoFA)
+		recorder, response := env.request(t, env.rootA, http.MethodPost, env.configPath()+"/check", "", proof)
+		assert.Equal(t, http.StatusForbidden, recorder.Code, test.name)
+		assert.Equal(t, test.code, response.Code, test.name)
+	}
+	loginCalls, _ := env.upstream.counts()
+	assert.Equal(t, 0, loginCalls)
+
+	operation := service.VerificationOperation{Scope: service.VerificationScopeChannelSSOOpen, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID))}
+	_, err := service.GetVerificationRequirements(env.admin.identity, operation.Scope)
+	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot start the verification")
+	code, err := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
+	require.NoError(t, err)
+	_, err = service.VerifySecurityInput(env.admin.identity, service.VerificationInput{Method: service.VerificationMethodTwoFA, Scope: operation.Scope, Context: operation.Context, Code: code})
+	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot complete the verification")
+	forged := issueSecurityEnrollmentProof(t, env.admin.identity, operation, service.VerificationMethodTwoFA)
+	_, err = service.ConsumeOperationProof(forged, env.admin.identity, operation)
+	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot consume a proof")
+}
+
+// TestCheckLogsOutRejectedStoredSession pins that a stored upstream login
+// the upstream no longer accepts is logged out before it is replaced, so
+// upstream sessions do not accumulate.
+func TestCheckLogsOutRejectedStoredSession(t *testing.T) {
+	env := setupChannelSSOTest(t)
+	env.saveConfig(t, "secret")
+	env.check(t, env.rootA)
+
+	stored, err := model.GetChannelSSOUpstreamSession(env.channelID)
+	require.NoError(t, err)
+	staleJar := &channelsso.Jar{Cookies: []channelsso.StoredCookie{{Name: "new_api_refresh", Value: "stale-refresh-value", Path: "/api/user/auth", HttpOnly: true}}}
+	plaintext, err := staleJar.Marshal()
+	require.NoError(t, err)
+	stored.CookieJarCipher, err = channelsso.Seal(plaintext)
+	require.NoError(t, err)
+	require.NoError(t, model.SaveChannelSSOUpstreamSession(stored))
+
+	result := env.check(t, env.rootA)
+	assert.False(t, result.Data.Reused)
+	loginCalls, _ := env.upstream.counts()
+	assert.Equal(t, 2, loginCalls)
+	env.upstream.mu.Lock()
+	assert.Equal(t, []string{"stale-refresh-value"}, env.upstream.logoutCookies)
+	env.upstream.mu.Unlock()
 }
 
 func TestCheckReusesStoredSession(t *testing.T) {
@@ -357,10 +453,9 @@ func TestOpenRejectsStaleCredential(t *testing.T) {
 	// A credential that changes underneath a session (for example while a
 	// check was in flight) is caught by the credential version binding.
 	sid := env.check(t, env.rootA).Data.SessionID
-	time.Sleep(2 * time.Millisecond)
 	stored, err := model.GetChannelSSOCredential(env.channelID)
 	require.NoError(t, err)
-	require.NoError(t, model.SaveChannelSSOCredential(stored))
+	require.NoError(t, model.DB.Model(&model.ChannelSSOCredential{}).Where("channel_id = ?", env.channelID).Update("updated_at", stored.UpdatedAt+1).Error)
 	_, response := env.request(t, env.rootA, http.MethodPost, "/api/channel/sso/"+sid+"/open", "", "")
 	assert.False(t, response.Success)
 	assert.Equal(t, channelsso.ErrCredentialChanged.Error(), response.MessageKey)

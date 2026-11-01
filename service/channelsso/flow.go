@@ -205,10 +205,27 @@ func Check(ctx context.Context, channelID, adminUserID int) (*CheckResult, error
 	var jar *Jar
 	var kind string
 	var user *UpstreamUser
-	if stored, err := model.GetChannelSSOUpstreamSession(channelID); err == nil {
-		jar, user, err = resumeUpstreamSession(ctx, up, stored)
-		reused = err == nil
+	stored, err := model.GetChannelSSOUpstreamSession(channelID)
+	switch {
+	case err == nil:
+		var resumeErr error
+		jar, user, resumeErr = resumeUpstreamSession(ctx, up, stored)
+		reused = resumeErr == nil
 		kind = stored.UpstreamKind
+		// The stale login is about to be replaced by a fresh one; end it
+		// upstream (best-effort) so upstream sessions do not accumulate.
+		// An unreachable upstream would not answer the logout either.
+		if !reused && !errors.Is(resumeErr, ErrSiteUnreachable) {
+			staleJar, logoutErr := openStoredJar(stored)
+			if logoutErr == nil {
+				logoutErr = up.Logout(ctx, staleJar, stored.UpstreamKind)
+			}
+			if logoutErr != nil {
+				common.SysError(common.LogText("channel sso: logout of stale upstream login for channel %d failed: %v", channelID, logoutErr))
+			}
+		}
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, err
 	}
 	if !reused {
 		password, err := Open(cred.PasswordCipher)
