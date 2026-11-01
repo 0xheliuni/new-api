@@ -115,12 +115,14 @@ type Session struct {
 	ID                  string
 	ChannelID           int
 	AdminUserID         int
+	AdminAuthVersion    int64
 	BaseURL             string
 	EntryPath           string
 	CredentialUpdatedAt int64
 	UpstreamKind        string
 	User                UpstreamUser
 	HostLabel           string
+	ProxyTokenHash      string
 	Active              bool
 	CreatedAt           int64
 	ExpiresAt           int64
@@ -714,4 +716,80 @@ func revokeChannelSessionsMemory(channelID int) {
 		}
 	}
 	delete(mem.channels, channelID)
+}
+
+// bindProxyToken mints the proxy session cookie value for an activated
+// session: 32 random bytes, base64url encoded. Only its SHA-256 is stored
+// on the session (as ProxyTokenHash), replacing any earlier one, so the
+// session ID alone never grants proxy access. It returns ErrSessionNotFound,
+// without changing anything, unless the session exists, is unexpired,
+// activated, and bound to label. The update is atomic per backend and
+// keeps the session's fixed lifetime.
+func bindProxyToken(id, label string) (string, error) {
+	buf := make([]byte, ticketRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+	hash := ticketHash(token)
+	var err error
+	if common.RedisEnabled {
+		err = bindProxyTokenRedis(id, label, hash)
+	} else {
+		err = bindProxyTokenMemory(id, label, hash)
+	}
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// bindProxyTokenRedis updates the session under WATCH, so a revoke or
+// expiry that lands between the read and the write aborts the update
+// instead of resurrecting the session.
+func bindProxyTokenRedis(id, label, hash string) error {
+	ctx := context.Background()
+	key := sessionKey(id)
+	err := common.RDB.Watch(ctx, func(tx *goredis.Tx) error {
+		data, err := tx.Get(ctx, key).Bytes()
+		if errors.Is(err, goredis.Nil) {
+			return ErrSessionNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var s Session
+		if err := common.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		ttl := time.Unix(s.ExpiresAt, 0).Sub(nowFunc())
+		if !s.Active || s.HostLabel != label || ttl <= 0 {
+			return ErrSessionNotFound
+		}
+		s.ProxyTokenHash = hash
+		updated, err := common.Marshal(&s)
+		if err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+			pipe.Set(ctx, key, updated, ttl)
+			return nil
+		})
+		return err
+	}, key)
+	if errors.Is(err, goredis.TxFailedErr) {
+		return ErrSessionNotFound
+	}
+	return err
+}
+
+func bindProxyTokenMemory(id, label, hash string) error {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+	s, ok := mem.sessions[id]
+	if !ok || s.ExpiresAt <= nowFunc().Unix() || !s.Active || s.HostLabel != label {
+		return ErrSessionNotFound
+	}
+	s.ProxyTokenHash = hash
+	return nil
 }

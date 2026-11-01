@@ -27,7 +27,8 @@ var ErrDisabled = errors.New("Channel SSO is not enabled on this server")
 // process startup.
 type Config struct {
 	// ProxyDomain is the parent domain under which per-session subdomains
-	// are minted (SSO_PROXY_DOMAIN). An empty value disables the feature.
+	// are minted (SSO_PROXY_DOMAIN), as host[:port]; without a port the
+	// scheme's default port is used. An empty value disables the feature.
 	ProxyDomain string
 	// Scheme is the scheme used for proxy subdomain origins
 	// (SSO_PROXY_SCHEME). Defaults to "https"; "http" is for local
@@ -122,7 +123,7 @@ func Enabled() error {
 }
 
 // ProxyOrigin builds the full origin for a proxy subdomain label, using the
-// currently installed Scheme and ProxyDomain (scheme://label.domain).
+// currently installed Scheme and ProxyDomain (scheme://label.domain[:port]).
 // Callers MUST check Enabled() before relying on the result.
 func ProxyOrigin(label string) string {
 	mu.RLock()

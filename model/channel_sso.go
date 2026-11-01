@@ -12,6 +12,7 @@ package model
 import (
 	"time"
 
+	"github.com/samber/lo"
 	"gorm.io/gorm/clause"
 )
 
@@ -101,4 +102,25 @@ func SaveChannelSSOUpstreamSession(s *ChannelSSOUpstreamSession) error {
 // channelId, if any.
 func DeleteChannelSSOUpstreamSession(channelId int) error {
 	return DB.Where("channel_id = ?", channelId).Delete(&ChannelSSOUpstreamSession{}).Error
+}
+
+// GetChannelSSOStates returns the stored Channel SSO credentials and
+// upstream sessions of the given channels, querying each table in chunks
+// that stay within every supported database's bound-parameter limit.
+func GetChannelSSOStates(channelIds []int) ([]ChannelSSOCredential, []ChannelSSOUpstreamSession, error) {
+	var credentials []ChannelSSOCredential
+	var sessions []ChannelSSOUpstreamSession
+	for _, chunk := range lo.Chunk(channelIds, 500) {
+		var chunkCredentials []ChannelSSOCredential
+		if err := DB.Where("channel_id IN ?", chunk).Find(&chunkCredentials).Error; err != nil {
+			return nil, nil, err
+		}
+		credentials = append(credentials, chunkCredentials...)
+		var chunkSessions []ChannelSSOUpstreamSession
+		if err := DB.Where("channel_id IN ?", chunk).Find(&chunkSessions).Error; err != nil {
+			return nil, nil, err
+		}
+		sessions = append(sessions, chunkSessions...)
+	}
+	return credentials, sessions, nil
 }

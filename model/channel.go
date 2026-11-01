@@ -996,8 +996,24 @@ func DeleteChannelByStatus(status int64) (int64, error) {
 }
 
 func DeleteDisabledChannel() (int64, error) {
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
 	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	if result.Error != nil {
+		return result.RowsAffected, result.Error
+	}
+	// Best-effort cleanup of Channel SSO secrets, as in DeleteChannelByStatus.
+	for _, chunk := range lo.Chunk(ids, 500) {
+		if err := DB.Where("channel_id in (?)", chunk).Delete(&ChannelSSOCredential{}).Error; err != nil {
+			common.SysLog(common.LogText("failed to delete channel sso credentials: channel_ids=%v, error=%v", chunk, err))
+		}
+		if err := DB.Where("channel_id in (?)", chunk).Delete(&ChannelSSOUpstreamSession{}).Error; err != nil {
+			common.SysLog(common.LogText("failed to delete channel sso upstream sessions: channel_ids=%v, error=%v", chunk, err))
+		}
+	}
+	return result.RowsAffected, nil
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {

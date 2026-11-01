@@ -173,6 +173,8 @@ func setupChannelSSOTest(t *testing.T) *ssoTestEnv {
 	// assert on AddChannel's response shape; it is not otherwise exercised by
 	// the SSO flow tests in this file.
 	channelRoute.POST("/", AddChannel)
+	channelRoute.DELETE("/:id", DeleteChannel)
+	channelRoute.POST("/batch", DeleteChannelBatch)
 
 	return &ssoTestEnv{
 		engine:    engine,
@@ -521,6 +523,69 @@ func TestOpenWritesAuditWithoutSecrets(t *testing.T) {
 
 	_, reopened := env.request(t, env.rootA, http.MethodPost, "/api/channel/sso/"+sid+"/open", "", "")
 	assert.False(t, reopened.Success, "a session opens at most once")
+	_, foreign := env.request(t, env.rootB, http.MethodPost, "/api/channel/sso/"+sid+"/validate", "", "")
+	assert.False(t, foreign.Success)
+
+	// The session ID is in the request path; no audit row may carry it.
+	require.NoError(t, model.LOG_DB.Find(&all).Error)
+	serialized, err = common.Marshal(all)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), sid)
+	var validateAudits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("action = ?", "channel.sso_validate").Find(&validateAudits).Error)
+	assert.Len(t, validateAudits, 2, "validate is audited explicitly, on success and on failure")
+}
+
+// TestDeleteChannelSSOCleanupOrdering pins when channel deletion contacts the
+// upstream: never while Channel SSO is disabled, never when the deletion
+// itself fails, and once (with the stored login state) after it succeeds.
+func TestDeleteChannelSSOCleanupOrdering(t *testing.T) {
+	env := setupChannelSSOTest(t)
+	env.saveConfig(t, "secret")
+	env.check(t, env.rootA)
+	deletePath := fmt.Sprintf("/api/channel/%d", env.channelID)
+
+	const failDelete = "test:fail_channel_delete"
+	require.NoError(t, model.DB.Callback().Delete().Before("gorm:delete").Register(failDelete, func(db *gorm.DB) {
+		if db.Statement.Schema != nil && db.Statement.Schema.Table == "channels" {
+			_ = db.AddError(fmt.Errorf("forced channel delete failure"))
+		}
+	}))
+	_, response := env.request(t, env.rootA, http.MethodDelete, deletePath, "", "")
+	assert.False(t, response.Success)
+	_, response = env.request(t, env.rootA, http.MethodPost, "/api/channel/batch", fmt.Sprintf(`{"ids":[%d]}`, env.channelID), "")
+	assert.False(t, response.Success)
+	require.NoError(t, model.DB.Callback().Delete().Remove(failDelete))
+	_, logoutCalls := env.upstream.counts()
+	assert.Zero(t, logoutCalls, "a failed deletion must not log the upstream out")
+	_, err := model.GetChannelSSOUpstreamSession(env.channelID)
+	require.NoError(t, err, "a failed deletion keeps the stored login state")
+
+	_, response = env.request(t, env.rootA, http.MethodDelete, deletePath, "", "")
+	require.True(t, response.Success, response.Message)
+	_, logoutCalls = env.upstream.counts()
+	assert.Equal(t, 1, logoutCalls)
+	env.upstream.mu.Lock()
+	assert.Equal(t, []string{ssoTestRefreshCookie}, env.upstream.logoutCookies)
+	env.upstream.mu.Unlock()
+
+	// With the feature disabled, deletion never contacts the upstream; the
+	// model still removes the channel's SSO rows.
+	channel := &model.Channel{Name: "sso-channel-2", Status: common.ChannelStatusEnabled, Models: "gpt-4", Group: "default"}
+	require.NoError(t, channel.Insert())
+	env.channelID = channel.Id
+	env.saveConfig(t, "secret")
+	env.check(t, env.rootA)
+	t.Setenv("SSO_PROXY_DOMAIN", "")
+	channelsso.LoadConfig()
+	_, response = env.request(t, env.rootA, http.MethodDelete, fmt.Sprintf("/api/channel/%d", channel.Id), "", "")
+	require.True(t, response.Success, response.Message)
+	_, logoutCalls = env.upstream.counts()
+	assert.Equal(t, 1, logoutCalls, "no upstream logout while Channel SSO is disabled")
+	_, err = model.GetChannelSSOUpstreamSession(channel.Id)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, err = model.GetChannelSSOCredential(channel.Id)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
 // TestAddChannelReturnsCreatedChannelIds pins AddChannel's response shape: the

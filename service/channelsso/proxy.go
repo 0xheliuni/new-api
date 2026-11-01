@@ -11,6 +11,7 @@ package channelsso
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -62,7 +63,8 @@ func WrapHandler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		label, ok := proxyHostLabel(r.Host, Current().ProxyDomain)
+		cfg := Current()
+		label, ok := proxyHostLabel(r.Host, cfg.ProxyDomain, cfg.Scheme)
 		if !ok {
 			next.ServeHTTP(w, r)
 			return
@@ -75,14 +77,28 @@ func WrapHandler(next http.Handler) http.Handler {
 	})
 }
 
-// proxyHostLabel reports whether host (port stripped, case-folded) is
-// exactly <label>.<domain> with an 8-character [a-z0-9] label.
-func proxyHostLabel(host, domain string) (string, bool) {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+// proxyHostLabel reports whether host is exactly <label>.<domain> with an
+// 8-character [a-z0-9] label. domain is SSO_PROXY_DOMAIN, which may carry a
+// port: hostnames are compared case-insensitively without ports, and the
+// request's port must equal the configured one, or the scheme's default
+// port when none is configured.
+func proxyHostLabel(host, domain, scheme string) (string, bool) {
+	host, port := splitHostPort(host)
+	domain, wantPort := splitHostPort(domain)
+	defaultPort := "443"
+	if scheme == "http" {
+		defaultPort = "80"
 	}
-	host = strings.ToLower(host)
-	label, rest, ok := strings.Cut(host, ".")
+	if port == "" {
+		port = defaultPort
+	}
+	if wantPort == "" {
+		wantPort = defaultPort
+	}
+	if port != wantPort {
+		return "", false
+	}
+	label, rest, ok := strings.Cut(strings.ToLower(host), ".")
 	if !ok || rest != strings.ToLower(domain) || len(label) != hostLabelLength {
 		return "", false
 	}
@@ -92,6 +108,15 @@ func proxyHostLabel(host, domain string) (string, bool) {
 		}
 	}
 	return label, true
+}
+
+// splitHostPort splits an optional ":port" off hostport, returning an empty
+// port when there is none.
+func splitHostPort(hostport string) (string, string) {
+	if host, port, err := net.SplitHostPort(hostport); err == nil {
+		return host, port
+	}
+	return hostport, ""
 }
 
 // sessionCookieName is the proxy session cookie's name. The __Host- prefix
@@ -104,8 +129,8 @@ func sessionCookieName() string {
 	return "__Host-sso"
 }
 
-// serveEnter consumes the one-time ticket, sets the proxy session cookie,
-// and sends the browser to the session's entry path. The response drops
+// serveEnter consumes the one-time ticket, mints the proxy session token
+// (see bindProxyToken) and sets it as the proxy session cookie, and sends the browser to the session's entry path. The response drops
 // the ticket from the URL and is sent with no-referrer so the ticket never
 // leaks to the upstream or any third party.
 func serveEnter(w http.ResponseWriter, r *http.Request, label string) {
@@ -127,10 +152,18 @@ func serveEnter(w http.ResponseWriter, r *http.Request, label string) {
 		http.Error(w, msgEnterInvalid, http.StatusBadRequest)
 		return
 	}
+	token, err := bindProxyToken(s.ID, label)
+	if err != nil {
+		if !errors.Is(err, ErrSessionNotFound) {
+			common.SysError(common.LogText("channel sso: bind proxy token for label %s failed: %v", label, err))
+		}
+		http.Error(w, msgEnterInvalid, http.StatusBadRequest)
+		return
+	}
 	secure := Current().Scheme == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName(),
-		Value:    s.ID,
+		Value:    token,
 		Path:     "/",
 		MaxAge:   maxAge,
 		Secure:   secure,
@@ -173,8 +206,10 @@ func serveEnter(w http.ResponseWriter, r *http.Request, label string) {
 		html.EscapeString(nonce) + `">try{localStorage.setItem('user',` + userScript + `)}catch(e){}location.replace(` + entryScript + `);</script></body></html>`))
 }
 
-// serveProxy authenticates the proxy session cookie against the Host label
-// and reverse-proxies the request to the session's upstream.
+// serveProxy authenticates the proxy session cookie against the Host
+// label's session, re-checks the owning administrator and the channel's
+// SSO credential, and reverse-proxies the request to the session's
+// upstream.
 func serveProxy(w http.ResponseWriter, r *http.Request, label string) {
 	s, ok := proxySession(r, label)
 	if !ok {
@@ -186,13 +221,30 @@ func serveProxy(w http.ResponseWriter, r *http.Request, label string) {
 		return
 	}
 
-	target, err := url.Parse(s.BaseURL)
+	// The credential is loaded for every request: a changed or removed
+	// configuration ends the session, and the upstream address comes from
+	// the current credential, never from the session alone.
+	cred, err := model.GetChannelSSOCredential(s.ChannelID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeSessionExpired(w)
+		return
+	}
+	if err != nil {
+		common.SysError(common.LogText("channel sso: load credential for channel %d failed: %v", s.ChannelID, err))
+		http.Error(w, msgBadGateway, http.StatusBadGateway)
+		return
+	}
+	upstreamOrigin, err := normalizeUpstreamBaseURL(cred.BaseURL)
+	if err != nil || cred.UpdatedAt != s.CredentialUpdatedAt || upstreamOrigin != s.BaseURL {
+		writeSessionExpired(w)
+		return
+	}
+	target, err := url.Parse(upstreamOrigin)
 	if err != nil || target.Host == "" {
 		http.Error(w, msgBadGateway, http.StatusBadGateway)
 		return
 	}
-	upstreamOrigin := target.Scheme + "://" + target.Host
-	proxyOrigin := Current().Scheme + "://" + strings.ToLower(r.Host)
+	proxyOrigin := ProxyOrigin(label)
 
 	// The jar is loaded fresh for every request so concurrent tabs of the
 	// same channel always send the newest upstream cookies.
@@ -229,8 +281,9 @@ func serveProxy(w http.ResponseWriter, r *http.Request, label string) {
 					h.Del(name)
 				}
 			}
-			h.Del("X-Real-Ip")
-			h.Del("Forwarded")
+			for _, name := range []string{"X-Real-Ip", "Forwarded", "Cf-Connecting-Ip", "True-Client-Ip", "X-Client-Ip", "Fastly-Client-Ip", "X-Cluster-Client-Ip"} {
+				h.Del(name)
+			}
 			h.Del("Cookie")
 			if cookieHeader := jar.Header(pr.Out.URL.Path); cookieHeader != "" {
 				h.Set("Cookie", cookieHeader)
@@ -277,21 +330,33 @@ func serveProxy(w http.ResponseWriter, r *http.Request, label string) {
 	proxy.ServeHTTP(w, r)
 }
 
-// proxySession returns the activated, unexpired session named by the proxy
-// session cookie, provided it is bound to this Host's label.
+// proxySession returns the activated, unexpired session of this Host's
+// label, provided the proxy session cookie carries its proxy token and the
+// administrator who opened it is still an enabled root user with an
+// unchanged auth version.
 func proxySession(r *http.Request, label string) (*Session, bool) {
 	cookie, err := r.Cookie(sessionCookieName())
 	if err != nil || cookie.Value == "" {
 		return nil, false
 	}
-	s, err := GetSession(cookie.Value)
+	s, err := GetSessionByLabel(label)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
 			common.SysError(common.LogText("channel sso: load proxy session for label %s failed: %v", label, err))
 		}
 		return nil, false
 	}
-	if !s.Active || s.HostLabel != label {
+	if s.ProxyTokenHash == "" || subtle.ConstantTimeCompare([]byte(ticketHash(cookie.Value)), []byte(s.ProxyTokenHash)) != 1 {
+		return nil, false
+	}
+	admin, err := model.GetUserCache(s.AdminUserID)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("channel sso: load administrator for proxy label %s failed: %v", label, err))
+		}
+		return nil, false
+	}
+	if admin.Status != common.UserStatusEnabled || admin.Role != common.RoleRootUser || s.AdminAuthVersion <= 0 || admin.AuthVersion != s.AdminAuthVersion {
 		return nil, false
 	}
 	return s, true

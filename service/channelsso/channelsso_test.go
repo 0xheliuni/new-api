@@ -902,9 +902,14 @@ func startProxyTestSession(t *testing.T, kind string, rawUser string, handler ht
 	jar := &Jar{Cookies: []StoredCookie{{Name: "new_api_refresh", Value: "r1", Path: "/", HttpOnly: true}}}
 	require.NoError(t, saveUpstreamSession(channel.Id, jar, kind, &user))
 
+	require.NoError(t, model.DB.AutoMigrate(&model.User{}))
+	admin := &model.User{Username: "sso-proxy-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "sso-proxy-root"}
+	require.NoError(t, model.DB.Create(admin).Error)
+
 	pending := &Session{
 		ChannelID:           channel.Id,
-		AdminUserID:         7,
+		AdminUserID:         admin.Id,
+		AdminAuthVersion:    admin.AuthVersion,
 		BaseURL:             srv.URL,
 		EntryPath:           "/dashboard",
 		CredentialUpdatedAt: cred.UpdatedAt,
@@ -914,8 +919,16 @@ func startProxyTestSession(t *testing.T, kind string, rawUser string, handler ht
 	require.NoError(t, CreatePendingSession(pending))
 	active, err := ActivateSession(pending.ID)
 	require.NoError(t, err)
+	token, err := bindProxyToken(active.ID, active.HostLabel)
+	require.NoError(t, err)
+	proxyTokens[active.ID] = token
+	t.Cleanup(func() { delete(proxyTokens, active.ID) })
 	return active, srv, capture
 }
+
+// proxyTokens holds the raw proxy session cookie value minted for each
+// session startProxyTestSession prepared, keyed by session ID.
+var proxyTokens = map[string]string{}
 
 func newProxyTestEngine() http.Handler {
 	engine := gin.New()
@@ -937,7 +950,7 @@ func proxyRequest(engine http.Handler, s *Session, method, target string, header
 }
 
 func sessionCookieHeader(s *Session) http.Header {
-	return http.Header{"Cookie": {"__Host-sso=" + s.ID + "; main=1"}}
+	return http.Header{"Cookie": {"__Host-sso=" + proxyTokens[s.ID] + "; main=1"}}
 }
 
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
@@ -963,7 +976,8 @@ func TestEnterConsumesTicketAndSetsCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	ssoCookie := findCookie(cookies, "__Host-sso")
 	require.NotNil(t, ssoCookie)
-	assert.Equal(t, s.ID, ssoCookie.Value)
+	assert.NotEqual(t, s.ID, ssoCookie.Value, "the proxy cookie must not be the session ID")
+	assert.Len(t, ssoCookie.Value, 43, "the proxy cookie is a fresh 32-byte random token")
 	assert.True(t, ssoCookie.HttpOnly)
 	assert.True(t, ssoCookie.Secure)
 	assert.Equal(t, http.SameSiteLaxMode, ssoCookie.SameSite)
@@ -982,6 +996,13 @@ func TestEnterConsumesTicketAndSetsCookie(t *testing.T) {
 
 	requests, _ := capture.snapshot()
 	assert.Zero(t, requests, "entering must not touch the upstream")
+
+	// The minted token is what grants proxy access; the session ID does not.
+	proxied := proxyRequest(engine, s, http.MethodGet, "/dashboard", http.Header{"Cookie": {"__Host-sso=" + ssoCookie.Value}})
+	assert.NotEqual(t, http.StatusUnauthorized, proxied.Code)
+	bySessionID := proxyRequest(engine, s, http.MethodGet, "/dashboard", http.Header{"Cookie": {"__Host-sso=" + s.ID}})
+	assert.Equal(t, http.StatusUnauthorized, bySessionID.Code)
+	assert.Contains(t, bySessionID.Body.String(), msgSessionExpired)
 }
 
 func TestEnterLegacySeedsLocalStorageSafely(t *testing.T) {
@@ -1017,6 +1038,10 @@ func TestProxyStripsBrowserCookiesAndUsesJar(t *testing.T) {
 	header.Set("X-Forwarded-For", "1.2.3.4")
 	header.Set("X-Real-IP", "1.2.3.4")
 	header.Set("Forwarded", "for=1.2.3.4")
+	clientIPHeaders := []string{"CF-Connecting-IP", "True-Client-IP", "X-Client-IP", "Fastly-Client-IP", "X-Cluster-Client-IP"}
+	for _, name := range clientIPHeaders {
+		header.Set(name, "1.2.3.4")
+	}
 
 	rec := proxyRequest(engine, s, http.MethodGet, "/api/user/self", header)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -1031,6 +1056,9 @@ func TestProxyStripsBrowserCookiesAndUsesJar(t *testing.T) {
 	assert.Empty(t, got.Values("X-Forwarded-For"))
 	assert.Empty(t, got.Values("X-Real-IP"))
 	assert.Empty(t, got.Values("Forwarded"))
+	for _, name := range clientIPHeaders {
+		assert.Empty(t, got.Values(name), name)
+	}
 }
 
 func TestProxyCapturesSetCookie(t *testing.T) {
@@ -1094,7 +1122,7 @@ func TestProxyExpiredSessionReturns401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Host = "zzzz9999.modex-ai.cloud"
-	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	req.Header.Set("Cookie", "__Host-sso="+proxyTokens[s.ID])
 	other := httptest.NewRecorder()
 	engine.ServeHTTP(other, req)
 	assert.Equal(t, http.StatusUnauthorized, other.Code)
@@ -1123,7 +1151,7 @@ func TestWrapHandlerIgnoresOtherHosts(t *testing.T) {
 	for _, host := range []string{"modex-ai.cloud", "api.modex-ai.cloud", s.HostLabel + ".evil.com", "x" + s.HostLabel + ".modex-ai.cloud"} {
 		req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 		req.Host = host
-		req.Header.Set("Cookie", "__Host-sso="+s.ID)
+		req.Header.Set("Cookie", "__Host-sso="+proxyTokens[s.ID])
 		rec := httptest.NewRecorder()
 		engine.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code, host)
@@ -1155,7 +1183,7 @@ func TestProxyStreamsSSE(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/api/stream", nil)
 	require.NoError(t, err)
 	req.Host = s.HostLabel + ".modex-ai.cloud"
-	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	req.Header.Set("Cookie", "__Host-sso="+proxyTokens[s.ID])
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -1192,7 +1220,7 @@ func TestProxyAbortsTruncatedStream(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/api/stream", nil)
 	require.NoError(t, err)
 	req.Host = s.HostLabel + ".modex-ai.cloud"
-	req.Header.Set("Cookie", "__Host-sso="+s.ID)
+	req.Header.Set("Cookie", "__Host-sso="+proxyTokens[s.ID])
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -1234,4 +1262,126 @@ func TestProxyWriteBackKeepsConcurrentRotation(t *testing.T) {
 	assert.True(t, jarHasCookie(jar, "new_api_refresh", "r2"), "the concurrently rotated refresh cookie must survive")
 	assert.False(t, jarHasCookie(jar, "new_api_refresh", "r1"))
 	assert.True(t, jarHasCookie(jar, "x", "1"))
+}
+
+func TestProxyHostLabel(t *testing.T) {
+	for _, test := range []struct {
+		domain, scheme, host string
+		label                string
+		ok                   bool
+	}{
+		{"modex-ai.cloud", "https", "ow1ff033.modex-ai.cloud", "ow1ff033", true},
+		{"modex-ai.cloud", "https", "OW1FF033.Modex-AI.cloud:443", "ow1ff033", true},
+		{"modex-ai.cloud", "https", "ow1ff033.modex-ai.cloud:8443", "", false},
+		{"modex-ai.cloud", "http", "ow1ff033.modex-ai.cloud:80", "ow1ff033", true},
+		{"localhost:3300", "http", "ow1ff033.localhost:3300", "ow1ff033", true},
+		{"localhost:3300", "http", "ow1ff033.localhost", "", false},
+		{"localhost:3300", "http", "ow1ff033.localhost:3301", "", false},
+		{"localhost:3300", "http", "ow1ff033.localhost:3300.evil", "", false},
+		{"modex-ai.cloud", "https", "ow1ff03.modex-ai.cloud", "", false},
+		{"modex-ai.cloud", "https", "ow1ff03_.modex-ai.cloud", "", false},
+	} {
+		label, ok := proxyHostLabel(test.host, test.domain, test.scheme)
+		assert.Equal(t, test.ok, ok, "%s on %s", test.host, test.domain)
+		assert.Equal(t, test.label, label, "%s on %s", test.host, test.domain)
+	}
+
+	setTestConfig(t, Config{ProxyDomain: "localhost:3300", Scheme: "http", SessionTTL: 2 * time.Hour}, true, false)
+	assert.Equal(t, "http://ow1ff033.localhost:3300", ProxyOrigin("ow1ff033"))
+}
+
+func TestBindProxyTokenStoresOnlyHash(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		pending := newPendingTestSession(t, 31)
+		_, err := bindProxyToken(pending.ID, "")
+		assert.ErrorIs(t, err, ErrSessionNotFound, "a pending session cannot get a proxy token")
+
+		activated, err := ActivateSession(pending.ID)
+		require.NoError(t, err)
+		token, err := bindProxyToken(activated.ID, activated.HostLabel)
+		require.NoError(t, err)
+		assert.Len(t, token, 43)
+
+		got, err := GetSessionByLabel(activated.HostLabel)
+		require.NoError(t, err)
+		assert.Equal(t, ticketHash(token), got.ProxyTokenHash)
+		assert.NotContains(t, got.ProxyTokenHash, token)
+		assert.Equal(t, activated.ExpiresAt, got.ExpiresAt, "binding a token must not change the session lifetime")
+
+		_, err = bindProxyToken(activated.ID, "zzzz9999")
+		assert.ErrorIs(t, err, ErrSessionNotFound, "the token is bound to the session's own label")
+
+		require.NoError(t, RevokeChannelSessions(31))
+		_, err = bindProxyToken(activated.ID, activated.HostLabel)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "binding must not resurrect a revoked session")
+		_, err = GetSession(activated.ID)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+	})
+}
+
+// TestProxyFollowsCredentialChanges pins that every proxied request
+// re-checks the channel's SSO credential: a changed, removed, or
+// re-pointed credential ends the proxy session.
+func TestProxyFollowsCredentialChanges(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(t *testing.T, channelID int)
+	}{
+		{"credential updated", func(t *testing.T, channelID int) {
+			require.NoError(t, model.DB.Model(&model.ChannelSSOCredential{}).Where("channel_id = ?", channelID).Update("updated_at", gorm.Expr("updated_at + 1")).Error)
+		}},
+		{"credential removed", func(t *testing.T, channelID int) {
+			require.NoError(t, model.DeleteChannelSSOCredential(channelID))
+		}},
+		{"base url re-pointed", func(t *testing.T, channelID int) {
+			require.NoError(t, model.DB.Model(&model.ChannelSSOCredential{}).Where("channel_id = ?", channelID).Update("base_url", "http://127.0.0.2:1").Error)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("ok"))
+			})
+			engine := newProxyTestEngine()
+			require.Equal(t, http.StatusOK, proxyRequest(engine, s, http.MethodGet, "/", sessionCookieHeader(s)).Code)
+
+			test.change(t, s.ChannelID)
+			rec := proxyRequest(engine, s, http.MethodGet, "/", sessionCookieHeader(s))
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Contains(t, rec.Body.String(), msgSessionExpired)
+			requests, _ := capture.snapshot()
+			assert.Equal(t, 1, requests)
+		})
+	}
+}
+
+// TestProxyEndsWhenAdminLosesAccess pins that the proxy session belongs to
+// the root administrator who opened it: disabling, demoting, or bumping the
+// auth version of that account ends the session.
+func TestProxyEndsWhenAdminLosesAccess(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		column string
+		value  any
+	}{
+		{"disabled", "status", common.UserStatusDisabled},
+		{"demoted", "role", common.RoleAdminUser},
+		{"auth version changed", "auth_version", 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, _, capture := startProxyTestSession(t, "modern", `{"id":1}`, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("ok"))
+			})
+			engine := newProxyTestEngine()
+			require.Equal(t, http.StatusOK, proxyRequest(engine, s, http.MethodGet, "/", sessionCookieHeader(s)).Code)
+
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", s.AdminUserID).Update(test.column, test.value).Error)
+			rec := proxyRequest(engine, s, http.MethodGet, "/", sessionCookieHeader(s))
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Contains(t, rec.Body.String(), msgSessionExpired)
+			requests, _ := capture.snapshot()
+			assert.Equal(t, 1, requests)
+		})
+	}
 }

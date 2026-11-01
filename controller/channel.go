@@ -881,13 +881,16 @@ func DeleteChannel(c *gin.Context) {
 	} else {
 		channelLookupFailed = true
 	}
-	channelsso.ForgetChannel(c.Request.Context(), id)
+	// The SSO state is loaded before the deletion removes it, and discarded
+	// (upstream logout, session revoke) only once the deletion succeeded.
+	ssoDeletion := channelsso.CaptureChannelDeletion([]int{id})
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	ssoDeletion.Forget(c.Request.Context())
 	model.InitChannelCache()
 	if channelLookupFailed {
 		service.ResetProxyClientCache()
@@ -906,17 +909,6 @@ func DeleteChannel(c *gin.Context) {
 	return
 }
 
-// forgetChannelsSSO discards Channel SSO state for channels about to be
-// deleted, sharing one bounded budget so a slow upstream cannot stall a
-// bulk deletion.
-func forgetChannelsSSO(c *gin.Context, ids []int) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	for _, id := range ids {
-		channelsso.ForgetChannel(ctx, id)
-	}
-}
-
 func DeleteDisabledChannel(c *gin.Context) {
 	var ids []int
 	if err := model.DB.Model(&model.Channel{}).
@@ -925,12 +917,13 @@ func DeleteDisabledChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	forgetChannelsSSO(c, ids)
+	ssoDeletion := channelsso.CaptureChannelDeletion(ids)
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	ssoDeletion.Forget(c.Request.Context())
 	model.InitChannelCache()
 	if rows > 0 {
 		service.ResetProxyClientCache()
@@ -1072,12 +1065,13 @@ func DeleteChannelBatch(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	forgetChannelsSSO(c, channelBatch.Ids)
+	ssoDeletion := channelsso.CaptureChannelDeletion(channelBatch.Ids)
 	deletedCount, err := model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	ssoDeletion.Forget(c.Request.Context())
 	model.InitChannelCache()
 	if deletedCount > 0 {
 		service.ResetProxyClientCache()

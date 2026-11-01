@@ -545,6 +545,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Applied upstream model changes to {{count}} channels',
   'channel.sso_open':
     'Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})',
+  'channel.sso_validate':
+    'Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})',
   // Redemption codes
   'redemption.create':
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',

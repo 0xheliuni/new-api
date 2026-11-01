@@ -168,10 +168,82 @@ func SaveConfig(ctx context.Context, channelID int, in SaveConfigInput) error {
 	return RevokeChannelSessions(channelID)
 }
 
-// ForgetChannel discards everything Channel SSO holds for a channel that is
-// about to be deleted: it logs the stored upstream login state out, deletes
-// it, and revokes the channel's SSO sessions. It is best-effort and bounded
-// by forgetChannelTimeout; failures are logged and never block deletion.
+// ChannelDeletion is the Channel SSO state captured from channels about to
+// be deleted, so it can be discarded after the deletion succeeded even
+// though the deletion itself removes the stored rows. A nil
+// *ChannelDeletion holds nothing to discard.
+type ChannelDeletion struct {
+	channelIDs  []int
+	credentials map[int]*model.ChannelSSOCredential
+	sessions    map[int]*model.ChannelSSOUpstreamSession
+}
+
+// CaptureChannelDeletion loads, in one query per table, the Channel SSO
+// state of the channels about to be deleted. It returns nil while Channel
+// SSO is disabled (the channel deletion alone removes the rows) or when
+// none of the channels has any state. Call it before deleting the
+// channels, and call Forget only once the deletion succeeded.
+func CaptureChannelDeletion(channelIDs []int) *ChannelDeletion {
+	if Enabled() != nil || len(channelIDs) == 0 {
+		return nil
+	}
+	credentials, sessions, err := model.GetChannelSSOStates(channelIDs)
+	if err != nil {
+		// Without the stored state no upstream logout is possible, but the
+		// channels' SSO sessions must still be revoked.
+		common.SysError(common.LogText("channel sso: load state of channels being deleted failed: %v", err))
+		return &ChannelDeletion{channelIDs: channelIDs}
+	}
+	d := &ChannelDeletion{
+		credentials: make(map[int]*model.ChannelSSOCredential, len(credentials)),
+		sessions:    make(map[int]*model.ChannelSSOUpstreamSession, len(sessions)),
+	}
+	for i := range credentials {
+		d.credentials[credentials[i].ChannelId] = &credentials[i]
+	}
+	for i := range sessions {
+		d.sessions[sessions[i].ChannelId] = &sessions[i]
+	}
+	for _, id := range channelIDs {
+		if d.credentials[id] != nil || d.sessions[id] != nil {
+			d.channelIDs = append(d.channelIDs, id)
+		}
+	}
+	if len(d.channelIDs) == 0 {
+		return nil
+	}
+	return d
+}
+
+// Forget discards the captured state of channels that have been deleted:
+// it logs each stored upstream login state out (best-effort, sharing one
+// forgetChannelTimeout budget), deletes any row the deletion left behind,
+// and revokes the channels' SSO sessions. Failures are only logged.
+func (d *ChannelDeletion) Forget(ctx context.Context) {
+	if d == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, forgetChannelTimeout)
+	defer cancel()
+	for _, channelID := range d.channelIDs {
+		if stored, cred := d.sessions[channelID], d.credentials[channelID]; stored != nil && cred != nil {
+			if err := logoutStoredSession(ctx, cred, stored); err != nil {
+				common.SysError(common.LogText("channel sso: upstream logout for channel %d failed: %v", channelID, err))
+			}
+		}
+		if err := model.DeleteChannelSSOUpstreamSession(channelID); err != nil {
+			common.SysError(common.LogText("channel sso: delete upstream login state for channel %d failed: %v", channelID, err))
+		}
+		if err := RevokeChannelSessions(channelID); err != nil {
+			common.SysError(common.LogText("channel sso: revoke sessions for channel %d failed: %v", channelID, err))
+		}
+	}
+}
+
+// ForgetChannel discards everything Channel SSO holds for a channel whose
+// login state must not be reused: it logs the stored upstream login state
+// out, deletes it, and revokes the channel's SSO sessions. It is
+// best-effort and bounded by forgetChannelTimeout; failures are logged.
 func ForgetChannel(ctx context.Context, channelID int) {
 	ctx, cancel := context.WithTimeout(ctx, forgetChannelTimeout)
 	defer cancel()
@@ -190,8 +262,9 @@ func ForgetChannel(ctx context.Context, channelID int) {
 // reuses the channel's stored upstream login state when it is still valid
 // (or logs in with the stored credential otherwise and stores the new
 // state), and creates a pending SSO session bound to adminUserID and to the
-// credential version it used.
-func Check(ctx context.Context, channelID, adminUserID int) (*CheckResult, error) {
+// credential version it used. adminAuthVersion is the administrator's
+// current auth version; the proxy ends the session once it changes.
+func Check(ctx context.Context, channelID, adminUserID int, adminAuthVersion int64) (*CheckResult, error) {
 	cred, err := loadCredential(channelID)
 	if err != nil {
 		return nil, err
@@ -256,6 +329,7 @@ func Check(ctx context.Context, channelID, adminUserID int) (*CheckResult, error
 	s := &Session{
 		ChannelID:           channelID,
 		AdminUserID:         adminUserID,
+		AdminAuthVersion:    adminAuthVersion,
 		BaseURL:             up.BaseURL,
 		EntryPath:           cred.EntryPath,
 		CredentialUpdatedAt: cred.UpdatedAt,
@@ -270,34 +344,36 @@ func Check(ctx context.Context, channelID, adminUserID int) (*CheckResult, error
 
 // Validate runs step ②: it confirms the session belongs to adminUserID and
 // was made with the current credential, then proves the stored upstream
-// login state still works by calling the upstream /api/user/self.
-func Validate(ctx context.Context, sessionID string, adminUserID int) (*UpstreamUser, error) {
+// login state still works by calling the upstream /api/user/self. The
+// session is returned whenever it passed the ownership check, so callers
+// can attribute a failure to its channel.
+func Validate(ctx context.Context, sessionID string, adminUserID int) (*UpstreamUser, *Session, error) {
 	s, err := authorizeSession(sessionID, adminUserID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	up, err := newChannelUpstream(s.BaseURL)
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	stored, err := model.GetChannelSSOUpstreamSession(s.ChannelID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrSessionInvalid
+		return nil, s, ErrSessionInvalid
 	}
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	jar, user, err := resumeUpstreamSession(ctx, up, stored)
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	if user.Id != s.User.Id {
-		return nil, ErrSessionInvalid
+		return nil, s, ErrSessionInvalid
 	}
 	if err := saveUpstreamSession(s.ChannelID, jar, stored.UpstreamKind, user); err != nil {
-		return nil, err
+		return nil, s, err
 	}
-	return user, nil
+	return user, s, nil
 }
 
 // OpenSession runs step ③: after the same ownership and credential checks
@@ -427,6 +503,12 @@ func logoutUpstreamSession(ctx context.Context, channelID int) error {
 	if err != nil {
 		return err
 	}
+	return logoutStoredSession(ctx, cred, stored)
+}
+
+// logoutStoredSession ends a stored upstream login state at the upstream
+// the credential points to.
+func logoutStoredSession(ctx context.Context, cred *model.ChannelSSOCredential, stored *model.ChannelSSOUpstreamSession) error {
 	up, err := newChannelUpstream(cred.BaseURL)
 	if err != nil {
 		return err
