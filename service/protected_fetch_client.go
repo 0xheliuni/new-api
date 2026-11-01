@@ -97,6 +97,35 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 	return client
 }
 
+// NewProtectedFetchClient builds an SSRF-protected HTTP client with the same
+// dial-time behavior as GetSSRFProtectedHTTPClient (one *http.Transport per
+// proxy target, bounded by common.RelayMaxIdleConns/RelayMaxIdleConnsPerHost/
+// RelayIdleConnTimeout, common.TLSInsecureSkipVerify respected, and every
+// resolved IP re-validated against the current fetch_setting immediately
+// before it is dialed), but lets the caller choose the proxy selector and
+// redirect policy instead of always using http.ProxyFromEnvironment and
+// checkProtectedFetchRedirect.
+//
+// Callers outside this package that need an SSRF-protected outbound client
+// with different proxy/redirect behavior (for example, channelsso's upstream
+// client, which must never use an environment proxy and must never follow a
+// redirect) should use this instead of reimplementing the SSRF dialer.
+//
+// Pass proxy=nil to disable environment-proxy lookup entirely (every
+// request dials directly through the protected dialer). Pass
+// checkRedirect=nil to keep the default (allow a redirect whose target
+// itself passes SSRF validation).
+func NewProtectedFetchClient(proxy func(*http.Request) (*url.URL, error), checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
+	if proxy == nil {
+		proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	}
+	client := newProtectedFetchHTTPClientWithProxy(nil, nil, nil, proxy)
+	if checkRedirect != nil {
+		client.CheckRedirect = checkRedirect
+	}
+	return client
+}
+
 func (t *ssrfProtectedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req == nil || req.URL == nil {
 		return nil, fmt.Errorf("invalid request")

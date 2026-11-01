@@ -82,7 +82,7 @@ func (c *CloudPasteClient) StreamUpload(ctx context.Context, filename, contentTy
 		respBody, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("cloudpaste upload failed with status %d: %s", resp.StatusCode, string(respBody))
 		logger.LogError(ctx, errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	var result UploadResult

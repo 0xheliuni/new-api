@@ -21,15 +21,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/service"
 )
 
 // upstreamUserAgent identifies our outbound requests to the upstream site;
@@ -95,8 +95,10 @@ type Upstream struct {
 // Config scheme is "https" (production must not downgrade to cleartext),
 // and validates the origin against the SSRF protection built from the
 // current fetch_setting. The returned Client never follows redirects
-// (CheckRedirect returns http.ErrUseLastResponse) and re-validates every
-// resolved IP immediately before dialing it.
+// (CheckRedirect returns http.ErrUseLastResponse), never uses an
+// environment proxy, and re-validates every resolved IP immediately before
+// dialing it (service.NewProtectedFetchClient; see upstreamHTTPClient
+// below).
 func NewUpstream(baseURL string) (*Upstream, error) {
 	normalized, err := normalizeUpstreamBaseURL(baseURL)
 	if err != nil {
@@ -106,16 +108,10 @@ func NewUpstream(baseURL string) (*Upstream, error) {
 	if Current().Scheme == "https" && u.Scheme != "https" {
 		return nil, errors.New("Upstream URL must use https")
 	}
-	protection, enabled, err := currentUpstreamSSRFProtection()
-	if err != nil {
+	if err := service.ValidateSSRFProtectedFetchURL(normalized); err != nil {
 		return nil, err
 	}
-	if enabled {
-		if err := protection.ValidateURL(normalized); err != nil {
-			return nil, err
-		}
-	}
-	return &Upstream{BaseURL: normalized, Client: newUpstreamHTTPClient()}, nil
+	return &Upstream{BaseURL: normalized, Client: upstreamHTTPClient()}, nil
 }
 
 // normalizeUpstreamBaseURL validates raw and strips it down to
@@ -128,102 +124,22 @@ func normalizeUpstreamBaseURL(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// currentUpstreamSSRFProtection builds a common.SSRFProtection from the
-// currently persisted fetch_setting, mirroring
-// service.currentFetchProtection. It is reimplemented locally (rather than
-// imported) because service/channelsso must not import the service
-// package, which this feature's later tasks are expected to depend on.
-func currentUpstreamSSRFProtection() (*common.SSRFProtection, bool, error) {
-	fetchSetting := system_setting.GetFetchSetting()
-	if !fetchSetting.EnableSSRFProtection {
-		return nil, false, nil
-	}
-	protection, err := common.NewSSRFProtectionFromFetchSetting(
-		fetchSetting.AllowPrivateIp,
-		fetchSetting.DomainFilterMode,
-		fetchSetting.IpFilterMode,
-		fetchSetting.DomainList,
-		fetchSetting.IpList,
-		fetchSetting.AllowedPorts,
-		fetchSetting.ApplyIPFilterForDomain,
-	)
-	if err != nil {
-		return nil, true, err
-	}
-	return protection, true, nil
-}
-
-func newUpstreamHTTPClient() *http.Client {
-	dialer := &net.Dialer{Timeout: upstreamRequestTimeout}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialUpstreamAddr(ctx, dialer, network, addr)
-		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   upstreamRequestTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
-// dialUpstreamAddr re-validates the SSRF protection immediately before
-// dialing, using the IP actually about to be connected to rather than the
-// one checked when the Upstream was constructed, so a domain that resolves
-// differently between those two moments (DNS rebinding) cannot bypass the
-// check.
-func dialUpstreamAddr(ctx context.Context, dialer *net.Dialer, network, addr string) (net.Conn, error) {
-	protection, enabled, err := currentUpstreamSSRFProtection()
-	if err != nil {
-		return nil, err
-	}
-	host, portText, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid dial address %s: %w", addr, err)
-	}
-	if enabled {
-		port, err := strconv.Atoi(portText)
-		if err != nil {
-			return nil, fmt.Errorf("invalid port: %s", portText)
-		}
-		if err := protection.ValidateNetworkTarget(host, port); err != nil {
-			return nil, err
-		}
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if enabled {
-			if err := protection.ValidateResolvedIP(host, ip); err != nil {
-				return nil, err
-			}
-		}
-		return dialer.DialContext(ctx, network, addr)
-	}
-
-	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
-	}
-	var lastErr error
-	for _, ipAddr := range resolved {
-		if enabled {
-			if err := protection.ValidateResolvedIP(host, ipAddr.IP); err != nil {
-				lastErr = err
-				continue
-			}
-		}
-		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), portText))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("DNS resolution for %s returned no usable IP addresses", host)
-	}
-	return nil, lastErr
-}
+// upstreamHTTPClient returns the single shared SSRF-protected client every
+// Upstream uses. It is built once (sync.OnceValue) rather than per
+// NewUpstream call, so the connection pool it holds is actually reused
+// instead of leaking a fresh, unbounded *http.Transport (and the goroutines
+// and sockets that come with it) on every call. The underlying transport
+// and dialer are service.NewProtectedFetchClient's — see its doc comment —
+// which re-checks the current fetch_setting and re-validates the resolved
+// IP immediately before every dial, so a shared client does not weaken the
+// per-request SSRF guarantee.
+var upstreamHTTPClient = sync.OnceValue(func() *http.Client {
+	client := service.NewProtectedFetchClient(nil, func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+	client.Timeout = upstreamRequestTimeout
+	return client
+})
 
 // newRequest builds a request with the Origin/Referer/User-Agent headers
 // every outbound call MUST carry, so the upstream's own origin checks (and
@@ -308,7 +224,8 @@ func (u *Upstream) Status(ctx context.Context) (string, error) {
 // encryptionKeyResponse is the GET /api/user/login/encryption-key shape
 // (controller.GetPasswordEncryptionKey).
 type encryptionKeyResponse struct {
-	Success bool `json:"success"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 	Data    struct {
 		Enabled   bool   `json:"enabled"`
 		Kid       string `json:"kid"`
@@ -319,25 +236,44 @@ type encryptionKeyResponse struct {
 // passwordLoginPayload fetches the upstream's password-encryption key and
 // returns the request-body fields Login should send: either a plaintext
 // "password", or an encrypted "password_encrypted"/"encryption_key_id" pair
-// when the upstream has encryption enabled. A 404 or any non-2xx/malformed
-// response is treated the same as "disabled": upstream releases before
-// password-login encryption existed don't have this endpoint at all.
+// when the upstream has encryption enabled.
+//
+// Falling back to a plaintext password is safe only when we are certain the
+// upstream itself does not support encrypted login: a 404 (the endpoint
+// does not exist at all, as on every upstream release before password-login
+// encryption existed) or a well-formed {success:true, data:{enabled:false}}
+// response. Any other failure — a non-2xx/non-404 status, a malformed body,
+// or {success:false} — must not silently send the password in the clear, so
+// it returns an error instead without building a payload at all.
 func (u *Upstream) passwordLoginPayload(ctx context.Context, password string) (map[string]any, error) {
 	resp, err := u.send(ctx, nil, http.MethodGet, "/api/user/login/encryption-key", nil, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusNotFound {
 		return map[string]any{"password": password}, nil
 	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: encryption-key check returned HTTP %d", ErrSiteUnreachable, resp.StatusCode)
+	}
 	var body encryptionKeyResponse
-	if err := common.DecodeJson(resp.Body, &body); err != nil || !body.Success || !body.Data.Enabled {
+	if err := common.DecodeJson(resp.Body, &body); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotNewAPI, err)
+	}
+	if !body.Success {
+		if body.Message != "" {
+			return nil, &UpstreamError{Message: body.Message}
+		}
+		return nil, ErrNotNewAPI
+	}
+	if !body.Data.Enabled {
 		return map[string]any{"password": password}, nil
 	}
 	encrypted, err := encryptUpstreamPasswordV2(body.Data.PublicKey, body.Data.Kid, password)
 	if err != nil {
 		return nil, err
+
 	}
 	return map[string]any{"password_encrypted": encrypted, "encryption_key_id": body.Data.Kid}, nil
 }

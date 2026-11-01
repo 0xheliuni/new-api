@@ -236,7 +236,12 @@ type fakeOpts struct {
 	// WrongPassword makes /api/user/login answer {success:false} with a
 	// wrong-password message, regardless of what password was sent.
 	WrongPassword bool
-	Capture       *fakeCapture
+	// EncryptionKeyFailStatus, when non-zero, makes
+	// /api/user/login/encryption-key answer with this HTTP status and an
+	// empty body instead of its normal response, to simulate the endpoint
+	// itself failing (as opposed to reporting encryption disabled).
+	EncryptionKeyFailStatus int
+	Capture                 *fakeCapture
 }
 
 // newFakeUpstream starts an httptest server that mimics the real upstream
@@ -257,6 +262,10 @@ func newFakeUpstream(t *testing.T, kind string, opts fakeOpts) *httptest.Server 
 		writeFakeJSON(w, map[string]any{"success": true, "data": map[string]any{"system_name": "Fake Upstream"}})
 	})
 	mux.HandleFunc("/api/user/login/encryption-key", func(w http.ResponseWriter, r *http.Request) {
+		if opts.EncryptionKeyFailStatus != 0 {
+			w.WriteHeader(opts.EncryptionKeyFailStatus)
+			return
+		}
 		if !opts.Encryption {
 			http.NotFound(w, r)
 			return
@@ -461,6 +470,27 @@ func TestLoginWrongPasswordPassesMessage(t *testing.T) {
 	assert.Equal(t, "用户名或密码错误", upstreamErr.Message)
 }
 
+// TestLoginEncryptionKeyServerErrorAbortsLogin pins that a failure of the
+// encryption-key check itself (as opposed to the key being absent/disabled)
+// must never fall back to sending the password in the clear: Login must
+// return an error and never reach /api/user/login at all.
+func TestLoginEncryptionKeyServerErrorAbortsLogin(t *testing.T) {
+	allowPrivateUpstreamAccess(t)
+	setTestConfig(t, Config{Scheme: "http"}, true, true)
+
+	capture := &fakeCapture{}
+	srv := newFakeUpstream(t, "modern", fakeOpts{EncryptionKeyFailStatus: http.StatusInternalServerError, Capture: capture})
+	up, err := NewUpstream(srv.URL)
+	require.NoError(t, err)
+
+	_, err = up.Login(context.Background(), &Jar{}, "u", "secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSiteUnreachable)
+
+	_, _, loginCalls := capture.get()
+	assert.Equal(t, 0, loginCalls, "Login must not call /api/user/login when the encryption-key check fails")
+}
+
 func TestRefreshReusesJar(t *testing.T) {
 	allowPrivateUpstreamAccess(t)
 	setTestConfig(t, Config{Scheme: "http"}, true, true)
@@ -486,8 +516,13 @@ func TestUpstreamRejectsPrivateAddress(t *testing.T) {
 	original := *system_setting.GetFetchSetting()
 	system_setting.GetFetchSetting().EnableSSRFProtection = true
 	system_setting.GetFetchSetting().AllowPrivateIp = false
+	// Use an allowed port so the only possible rejection reason is the
+	// private-IP check itself; port 1 (outside the default allowlist) would
+	// make this test pass even if the private-IP check were broken.
+	system_setting.GetFetchSetting().AllowedPorts = []string{"1-65535"}
 	t.Cleanup(func() { *system_setting.GetFetchSetting() = original })
 
-	_, err := NewUpstream("http://127.0.0.1:1")
+	_, err := NewUpstream("http://127.0.0.1:80")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "private IP address not allowed")
 }
