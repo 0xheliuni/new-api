@@ -92,7 +92,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Sheet,
   SheetClose,
@@ -105,6 +104,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -246,6 +246,8 @@ import {
   ChannelBasicSection,
   ChannelEditorLoadingState,
   ChannelModelsSection,
+  ChannelSSOSection,
+  type ChannelSSOSectionHandle,
 } from './sections'
 
 type ChannelMutateDrawerProps = {
@@ -425,6 +427,8 @@ export function ChannelMutateDrawer({
     ADMIN_PERMISSION_ACTIONS.BIND
   )
   const canRevealChannelKey = currentUser?.role === ROLE.SUPER_ADMIN
+  const canManageChannelSSO = currentUser?.role === ROLE.SUPER_ADMIN
+  const channelSSOSectionRef = useRef<ChannelSSOSectionHandle>(null)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
   const initialModelsRef = useRef<string[]>([])
@@ -1507,6 +1511,10 @@ export function ChannelMutateDrawer({
       queryClient.invalidateQueries({
         queryKey: channelsQueryKeys.detail(channelId),
       })
+      // The channel row itself just saved successfully. A failure saving the
+      // SSO section only shows an error toast; it never rolls back the
+      // channel save that already succeeded.
+      void channelSSOSectionRef.current?.saveIfChanged(channelId)
     }
     onOpenChange(false)
     setOpen(null)
@@ -4606,6 +4614,17 @@ export function ChannelMutateDrawer({
                 />
               )}
             </ChannelAuthSection>
+
+            {canManageChannelSSO && (
+              <ChannelSSOSection
+                ref={channelSSOSectionRef}
+                channelId={channelId}
+                isEditing={isEditing}
+                open={open}
+                defaultBaseUrl={currentBaseUrl}
+                disabled={sensitiveLocked}
+              />
+            )}
           </fieldset>
         </div>
       </ChannelApiAccessSection>

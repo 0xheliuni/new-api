@@ -21,6 +21,7 @@ import type { Row } from '@tanstack/react-table'
 import {
   MoreHorizontal,
   Boxes,
+  ExternalLink,
   Pencil,
   PlugZap,
   Gauge,
@@ -57,6 +58,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { MODEL_FETCHABLE_TYPES } from '../constants'
@@ -89,6 +91,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const isSuperAdmin = currentUser?.role === ROLE.SUPER_ADMIN
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -140,6 +143,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleManageKeys = () => {
     setCurrentRow(channel)
     setOpen('multi-key-manage')
+  }
+
+  // Opens the Channel SSO transition page in a new tab. Must stay a direct,
+  // synchronous call so browsers do not block it as an unrelated popup.
+  const handleOpenSSO = () => {
+    window.open(`/channels/sso/${channel.id}`, '_blank', 'noopener')
   }
 
   const handleToggleStatus = async (
@@ -342,6 +351,17 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               {t('Manage Keys')}
               <DropdownMenuShortcut>
                 <Key size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+
+          {/* Single sign-on (super admins only; no per-row SSO status is
+              fetched, so this is always enabled for them) */}
+          {isSuperAdmin && (
+            <DropdownMenuItem onClick={handleOpenSSO}>
+              {t('Single sign-on')}
+              <DropdownMenuShortcut>
+                <ExternalLink size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
