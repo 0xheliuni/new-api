@@ -11,7 +11,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/glebarez/sqlite"
+	goredis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -525,4 +527,194 @@ func TestUpstreamRejectsPrivateAddress(t *testing.T) {
 	_, err := NewUpstream("http://127.0.0.1:80")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "private IP address not allowed")
+}
+
+// --- Task 4: session, ticket, and host-label store ---
+
+// resetChannelSSOStore points the package at either the in-process memory
+// store or a fresh miniredis instance, resets nowFunc to the real clock,
+// and clears the shared memory-store maps, restoring everything on
+// cleanup. Using the same package-level mem/nowFunc across tests is safe
+// because every test resets them before running.
+func resetChannelSSOStore(t *testing.T, useRedis bool) {
+	t.Helper()
+	prevRedisEnabled := common.RedisEnabled
+	prevRDB := common.RDB
+	prevNow := nowFunc
+
+	common.RedisEnabled = useRedis
+	if useRedis {
+		srv := miniredis.RunT(t)
+		client := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
+		require.NoError(t, client.Ping(context.Background()).Err())
+		common.RDB = client
+		t.Cleanup(func() { _ = client.Close() })
+	}
+	nowFunc = time.Now
+
+	mem.mu.Lock()
+	mem.sessions = map[string]*Session{}
+	mem.labels = map[string]string{}
+	mem.tickets = map[string]ticketRecord{}
+	mem.channels = map[int]map[string]struct{}{}
+	mem.mu.Unlock()
+
+	t.Cleanup(func() {
+		common.RedisEnabled = prevRedisEnabled
+		common.RDB = prevRDB
+		nowFunc = prevNow
+	})
+}
+
+// advanceClock moves nowFunc forward by d relative to its current value,
+// so tests can drive expiry deterministically without sleeping.
+func advanceClock(d time.Duration) {
+	cur := nowFunc()
+	nowFunc = func() time.Time { return cur.Add(d) }
+}
+
+// withEachBackend runs run once against the in-process memory store and
+// once against a real (miniredis-backed) Redis store, per task-4-brief.md:
+// "内存实现与 Redis 实现跑同一组用例". The Redis subtest still honors the
+// ambient common.RedisEnabled gate (skipping if some earlier state left
+// Redis unavailable) even though miniredis itself needs no external
+// service.
+func withEachBackend(t *testing.T, run func(t *testing.T)) {
+	t.Helper()
+	ambientRedisEnabled := common.RedisEnabled
+
+	t.Run("memory", func(t *testing.T) {
+		resetChannelSSOStore(t, false)
+		run(t)
+	})
+	t.Run("redis", func(t *testing.T) {
+		if !ambientRedisEnabled {
+			t.Skip("redis disabled in this environment")
+		}
+		resetChannelSSOStore(t, true)
+		run(t)
+	})
+}
+
+func newPendingTestSession(t *testing.T, channelID int) *Session {
+	t.Helper()
+	s := &Session{
+		ChannelID:           channelID,
+		AdminUserID:         7,
+		BaseURL:             "https://upstream.example.com",
+		EntryPath:           "/console",
+		CredentialUpdatedAt: 1234,
+		UpstreamKind:        "modern",
+		User:                UpstreamUser{Id: 1, Username: "admin", Role: 100, Raw: []byte(`{"id":1,"username":"admin","role":100}`)},
+	}
+	require.NoError(t, CreatePendingSession(s))
+	return s
+}
+
+func TestTicketSingleUseAndBoundToLabel(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		pending := newPendingTestSession(t, 1)
+		activated, err := ActivateSession(pending.ID)
+		require.NoError(t, err)
+
+		ticket, err := IssueTicket(activated.ID, activated.HostLabel)
+		require.NoError(t, err)
+		assert.NotEmpty(t, ticket)
+
+		got, err := ConsumeTicket(ticket, activated.HostLabel)
+		require.NoError(t, err)
+		assert.Equal(t, activated.ID, got.ID)
+		assert.Equal(t, activated.User, got.User, "UpstreamUser, including Raw, must round-trip intact")
+
+		_, err = ConsumeTicket(ticket, activated.HostLabel)
+		assert.ErrorIs(t, err, ErrTicketInvalid, "a ticket must be usable at most once")
+
+		ticket2, err := IssueTicket(activated.ID, activated.HostLabel)
+		require.NoError(t, err)
+		_, err = ConsumeTicket(ticket2, "wrong-label-000")
+		assert.ErrorIs(t, err, ErrTicketInvalid, "a ticket must be bound to the label it was issued for")
+
+		// Consuming with the wrong label still burns the ticket.
+		_, err = ConsumeTicket(ticket2, activated.HostLabel)
+		assert.ErrorIs(t, err, ErrTicketInvalid, "a ticket is single-use even when a prior consume used the wrong label")
+	})
+}
+
+func TestTicketExpires(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		pending := newPendingTestSession(t, 1)
+		activated, err := ActivateSession(pending.ID)
+		require.NoError(t, err)
+
+		ticket, err := IssueTicket(activated.ID, activated.HostLabel)
+		require.NoError(t, err)
+
+		advanceClock(61 * time.Second)
+
+		_, err = ConsumeTicket(ticket, activated.HostLabel)
+		assert.ErrorIs(t, err, ErrTicketInvalid)
+	})
+}
+
+func TestActivateAssignsUniqueLabel(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		s1 := newPendingTestSession(t, 1)
+		a1, err := ActivateSession(s1.ID)
+		require.NoError(t, err)
+		assert.Regexp(t, `^[a-z0-9]{8}$`, a1.HostLabel)
+		assert.True(t, a1.Active)
+
+		s2 := newPendingTestSession(t, 2)
+		a2, err := ActivateSession(s2.ID)
+		require.NoError(t, err)
+		assert.Regexp(t, `^[a-z0-9]{8}$`, a2.HostLabel)
+		assert.NotEqual(t, a1.HostLabel, a2.HostLabel, "two sessions must not share a host label")
+
+		got, err := GetSessionByLabel(a1.HostLabel)
+		require.NoError(t, err)
+		assert.Equal(t, a1.ID, got.ID)
+
+		advanceClock(2*time.Hour + time.Second)
+		_, err = GetSessionByLabel(a1.HostLabel)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "an activated session must expire after its SessionTTL")
+	})
+}
+
+func TestRevokeChannelSessions(t *testing.T) {
+	withEachBackend(t, func(t *testing.T) {
+		setTestConfig(t, Config{ProxyDomain: "modex-ai.cloud", Scheme: "https", SessionTTL: 2 * time.Hour}, true, true)
+
+		s1 := newPendingTestSession(t, 42)
+		a1, err := ActivateSession(s1.ID)
+		require.NoError(t, err)
+
+		s2 := newPendingTestSession(t, 42)
+		a2, err := ActivateSession(s2.ID)
+		require.NoError(t, err)
+
+		other := newPendingTestSession(t, 99)
+		otherActivated, err := ActivateSession(other.ID)
+		require.NoError(t, err)
+
+		require.NoError(t, RevokeChannelSessions(42))
+
+		_, err = GetSession(a1.ID)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+		_, err = GetSession(a2.ID)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+		_, err = GetSessionByLabel(a1.HostLabel)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "revoked sessions must not remain reachable by label")
+		_, err = GetSessionByLabel(a2.HostLabel)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+
+		gotOther, err := GetSession(otherActivated.ID)
+		require.NoError(t, err)
+		assert.Equal(t, otherActivated.ID, gotOther.ID, "revoking one channel must not affect another channel's sessions")
+	})
 }
