@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "チャンネルSSO経由でアップストリームコンソールを開きました（チャンネルID: {{channel_id}}、アップストリームユーザー: {{upstream_username}}）",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "チャンネルSSO経由でアップストリームのログインを検証しました（チャンネルID: {{channel_id}}、アップストリームユーザー: {{upstream_username}}）",
     "Single sign-on settings were not saved; edit the channel to set them": "SSO設定は保存されませんでした。チャンネルを編集して再設定してください",
-    "Verify to open upstream console": "アップストリームコンソールを開くために認証",
     "Connecting…": "接続中…",
     "In progress": "進行中",
     "Verification cancelled": "認証がキャンセルされました",

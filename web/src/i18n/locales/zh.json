@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "通过渠道单点登录打开上游控制台（渠道 ID：{{channel_id}}，上游用户：{{upstream_username}}）",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "通过渠道单点登录验证上游登录（渠道 ID：{{channel_id}}，上游用户：{{upstream_username}}）",
     "Single sign-on settings were not saved; edit the channel to set them": "单点登录设置未保存；请编辑渠道以重新设置",
-    "Verify to open upstream console": "验证以打开上游控制台",
     "Connecting…": "连接中…",
     "In progress": "进行中",
     "Verification cancelled": "验证已取消",

@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})",
     "Single sign-on settings were not saved; edit the channel to set them": "Single sign-on settings were not saved; edit the channel to set them",
-    "Verify to open upstream console": "Verify to open upstream console",
     "Connecting…": "Connecting…",
     "In progress": "In progress",
     "Verification cancelled": "Verification cancelled",

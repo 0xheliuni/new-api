@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
@@ -17,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/service/channelsso"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -164,8 +162,7 @@ func setupChannelSSOTest(t *testing.T) *ssoTestEnv {
 	channelRoute.Use(middleware.AdminAuth())
 	channelRoute.GET("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), GetChannelSSOConfig)
 	channelRoute.PUT("/:id/sso", middleware.RootAuth(), middleware.DisableCache(), SaveChannelSSOConfig)
-	channelRoute.POST("/:id/sso/check", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(),
-		middleware.SecureVerificationRequiredFor(service.VerificationScopeChannelSSOOpen), CheckChannelSSO)
+	channelRoute.POST("/:id/sso/check", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), CheckChannelSSO)
 	channelRoute.POST("/sso/:sid/validate", middleware.RootAuth(), middleware.DisableCache(), ValidateChannelSSO)
 	channelRoute.POST("/sso/:sid/open", middleware.RootAuth(), middleware.DisableCache(), OpenChannelSSO)
 	// Registered here (without the Casbin permission middleware the real
@@ -248,9 +245,7 @@ func (env *ssoTestEnv) saveConfig(t *testing.T, password string) {
 
 func (env *ssoTestEnv) check(t *testing.T, as ssoTestUser) ssoResponse {
 	t.Helper()
-	operation := service.VerificationOperation{Scope: service.VerificationScopeChannelSSOOpen, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID))}
-	proof := issueSecurityEnrollmentProof(t, as.identity, operation, service.VerificationMethodTwoFA)
-	recorder, response := env.request(t, as, http.MethodPost, env.configPath()+"/check", "", proof)
+	recorder, response := env.request(t, as, http.MethodPost, env.configPath()+"/check", "", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	require.True(t, response.Success, recorder.Body.String())
 	return response
@@ -357,47 +352,22 @@ func TestSaveClearRemovesConfiguration(t *testing.T) {
 	assert.Equal(t, "SSO session expired; please start again", response.MessageKey)
 }
 
-func TestCheckRequiresProof(t *testing.T) {
+// TestCheckNeedsRootButNoStepUp pins the access rule for starting single
+// sign-on: a super admin starts it without any extra verification, while a
+// non-root admin is refused before the upstream is contacted.
+func TestCheckNeedsRootButNoStepUp(t *testing.T) {
 	env := setupChannelSSOTest(t)
 	env.saveConfig(t, "secret")
-	recorder, response := env.request(t, env.rootA, http.MethodPost, env.configPath()+"/check", "", "")
+
+	recorder, _ := env.request(t, env.admin, http.MethodPost, env.configPath()+"/check", "", "")
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
-	assert.Equal(t, "SECURITY_PROOF_REQUIRED", response.Code)
-	loginCalls, _ := env.upstream.counts()
-	assert.Equal(t, 0, loginCalls)
-}
-
-// TestCheckProofBypassIsRejected pins that a check proof is bound to its
-// scope and channel, and that only root can ever obtain one.
-func TestCheckProofBypassIsRejected(t *testing.T) {
-	env := setupChannelSSOTest(t)
-	env.saveConfig(t, "secret")
-	for _, test := range []struct {
-		name      string
-		operation service.VerificationOperation
-		code      string
-	}{
-		{"proof for another channel", service.VerificationOperation{Scope: service.VerificationScopeChannelSSOOpen, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID+1))}, "SECURITY_PROOF_CONTEXT_MISMATCH"},
-		{"channel key proof", service.VerificationOperation{Scope: service.VerificationScopeChannelKeyRead, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID))}, "SECURITY_PROOF_SCOPE_MISMATCH"},
-	} {
-		proof := issueSecurityEnrollmentProof(t, env.rootA.identity, test.operation, service.VerificationMethodTwoFA)
-		recorder, response := env.request(t, env.rootA, http.MethodPost, env.configPath()+"/check", "", proof)
-		assert.Equal(t, http.StatusForbidden, recorder.Code, test.name)
-		assert.Equal(t, test.code, response.Code, test.name)
-	}
 	loginCalls, _ := env.upstream.counts()
 	assert.Equal(t, 0, loginCalls)
 
-	operation := service.VerificationOperation{Scope: service.VerificationScopeChannelSSOOpen, Context: []byte(fmt.Sprintf(`{"channel_id":%d}`, env.channelID))}
-	_, err := service.GetVerificationRequirements(env.admin.identity, operation.Scope)
-	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot start the verification")
-	code, err := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
-	require.NoError(t, err)
-	_, err = service.VerifySecurityInput(env.admin.identity, service.VerificationInput{Method: service.VerificationMethodTwoFA, Scope: operation.Scope, Context: operation.Context, Code: code})
-	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot complete the verification")
-	forged := issueSecurityEnrollmentProof(t, env.admin.identity, operation, service.VerificationMethodTwoFA)
-	_, err = service.ConsumeOperationProof(forged, env.admin.identity, operation)
-	assert.ErrorIs(t, err, service.ErrVerificationForbidden, "a non-root admin cannot consume a proof")
+	response := env.check(t, env.rootA)
+	assert.NotEmpty(t, response.Data.SessionID)
+	loginCalls, _ = env.upstream.counts()
+	assert.Equal(t, 1, loginCalls)
 }
 
 // TestCheckLogsOutRejectedStoredSession pins that a stored upstream login

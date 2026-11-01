@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Console amont ouverte via le SSO du canal (ID du canal : {{channel_id}}, utilisateur amont : {{upstream_username}})",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Connexion amont validée via le SSO du canal (ID du canal : {{channel_id}}, utilisateur amont : {{upstream_username}})",
     "Single sign-on settings were not saved; edit the channel to set them": "Les paramètres de connexion unique n'ont pas été enregistrés ; modifiez le canal pour les définir",
-    "Verify to open upstream console": "Vérifier pour ouvrir la console amont",
     "Connecting…": "Connexion en cours…",
     "In progress": "En cours",
     "Verification cancelled": "Vérification annulée",

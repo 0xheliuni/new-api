@@ -19,9 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useSecureVerification } from '@/features/auth/secure-verification'
 import { getRoleLabel, ROLE, type RoleValue } from '@/lib/roles'
-import { AuthOperationError } from '@/lib/secure-verification'
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
 import {
@@ -66,9 +64,6 @@ function resolveRoleBucket(role: number): RoleValue {
 
 export function useChannelSSOFlow(channelId: number) {
   const { t } = useTranslation()
-  const verification = useSecureVerification()
-  const requestVerification = verification.requestVerification
-
   const [steps, setSteps] = useState<ChannelSSOStep[]>(INITIAL_STEPS)
   const [header, setHeader] = useState<ChannelSSOHeader>({
     siteName: null,
@@ -77,7 +72,7 @@ export function useChannelSSOFlow(channelId: number) {
   const [isNotConfigured, setIsNotConfigured] = useState(false)
 
   // Guards the mount effect against React StrictMode's double-invoke so the
-  // verification proof is requested exactly once per run; retry() bypasses
+  // flow starts exactly once per run; retry() bypasses
   // this guard by calling runFlow directly.
   const hasStartedRef = useRef(false)
   const isMountedRef = useRef(true)
@@ -107,7 +102,7 @@ export function useChannelSSOFlow(channelId: number) {
       setIsNotConfigured(false)
 
       // Display-only lookup of the configured upstream URL; independent of
-      // the verification proof and never fatal to the flow.
+      // the steps below and never fatal to the flow.
       void (async () => {
         try {
           const res = await getChannelSSOConfig(channelId, controller.signal)
@@ -122,33 +117,6 @@ export function useChannelSSOFlow(channelId: number) {
 
       updateStep('verify', { status: 'running' })
 
-      let proof
-      try {
-        proof = await requestVerification({
-          scope: 'channel.sso.open',
-          context: { channel_id: channelId },
-          title: t('Verify to open upstream console'),
-        })
-      } catch (error) {
-        if (!isCurrent()) return
-        updateStep('verify', {
-          status: 'error',
-          detail: getServerErrorMessage(
-            AuthOperationError.from(error),
-            t('Verification failed. Please try again.')
-          ),
-        })
-        return
-      }
-      if (!isCurrent()) return
-      if (!proof) {
-        updateStep('verify', {
-          status: 'error',
-          detail: t('Verification cancelled'),
-        })
-        return
-      }
-
       let checkRes: ChannelSSOApiResponse<{
         session_id: string
         site_name: string
@@ -157,11 +125,7 @@ export function useChannelSSOFlow(channelId: number) {
         reused: boolean
       }>
       try {
-        checkRes = await checkChannelSSO(
-          channelId,
-          proof.proof_token,
-          controller.signal
-        )
+        checkRes = await checkChannelSSO(channelId, controller.signal)
       } catch (error) {
         if (!isCurrent()) return
         updateStep('verify', {
@@ -248,7 +212,7 @@ export function useChannelSSOFlow(channelId: number) {
         if (runIdRef.current === runId) window.location.replace(enterUrl)
       }, ENTER_DELAY_MS)
     },
-    [channelId, requestVerification, t, updateStep]
+    [channelId, t, updateStep]
   )
 
   const retry = useCallback(() => {
@@ -287,5 +251,5 @@ export function useChannelSSOFlow(channelId: number) {
     []
   )
 
-  return { steps, retry, verification, header, isNotConfigured }
+  return { steps, retry, header, isNotConfigured }
 }

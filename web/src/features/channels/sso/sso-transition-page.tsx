@@ -30,7 +30,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { SecureVerificationDialog } from '@/features/auth/secure-verification'
 import { cn } from '@/lib/utils'
 
 import {
@@ -110,8 +109,9 @@ type SSOTransitionPageProps = {
 
 export function SSOTransitionPage(props: SSOTransitionPageProps) {
   const { t } = useTranslation()
-  const { steps, retry, verification, header, isNotConfigured } =
-    useChannelSSOFlow(props.channelId)
+  const { steps, retry, header, isNotConfigured } = useChannelSSOFlow(
+    props.channelId
+  )
   const actionsRef = useRef<HTMLDivElement>(null)
 
   const stepMeta: Record<
@@ -211,7 +211,6 @@ export function SSOTransitionPage(props: SSOTransitionPageProps) {
           </CardFooter>
         )}
       </Card>
-      <SecureVerificationDialog {...verification.dialogProps} />
     </div>
   )
 }

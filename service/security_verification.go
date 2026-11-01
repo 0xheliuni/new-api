@@ -22,7 +22,6 @@ const (
 	VerificationMethodOAuth              = "oauth"
 	VerificationMethodSession            = "session"
 	VerificationScopeChannelKeyRead      = "channel.key.read"
-	VerificationScopeChannelSSOOpen      = "channel.sso.open"
 	VerificationScopePasskeyRegister     = "passkey.register"
 	VerificationScopePasskeyDelete       = "passkey.delete"
 	VerificationScopeTwoFASetup          = "2fa.setup"
@@ -70,11 +69,6 @@ type VerificationOperation struct {
 }
 
 type ChannelKeyReadContext struct {
-	ChannelID int `json:"channel_id"`
-}
-
-// ChannelSSOOpenContext binds a Channel SSO check proof to one channel.
-type ChannelSSOOpenContext struct {
 	ChannelID int `json:"channel_id"`
 }
 
@@ -169,15 +163,12 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
-	case VerificationScopeChannelKeyRead, VerificationScopeChannelSSOOpen:
+	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
-		if operation.Scope == VerificationScopeChannelSSOOpen {
-			normalized = ChannelSSOOpenContext(context)
-		}
 	case VerificationScopeAccountBind:
 		var context AccountBindingContext
 		if common.Unmarshal(operation.Context, &context) != nil {
@@ -328,7 +319,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		methods = append(methods, VerificationMethodPasskey)
 	}
 	switch scope {
-	case VerificationScopeChannelKeyRead, VerificationScopeChannelSSOOpen, VerificationScopePasskeyDelete, VerificationScopeLogin:
+	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin:
 	case VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes:
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
@@ -384,7 +375,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if state.Status != common.UserStatusEnabled || state.AuthVersion != identity.UserAuthVersion {
 		return nil, ErrAuthTokenInvalid
 	}
-	if (scope == VerificationScopeChannelKeyRead || scope == VerificationScopeChannelSSOOpen) && state.Role != common.RoleRootUser {
+	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
 	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {

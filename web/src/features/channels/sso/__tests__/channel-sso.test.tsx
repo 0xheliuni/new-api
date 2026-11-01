@@ -503,13 +503,6 @@ describe('channel SSO transition page', () => {
   })
 
   it('completes verify, login, and open in order and replaces location with enter_url', async () => {
-    const proof = {
-      proof_token: 'proof-1',
-      expires_at: Date.now() + 60_000,
-      method: 'password' as const,
-      scope: 'channel.sso.open' as const,
-    }
-    defaultSecureVerification.requestVerification.mockResolvedValue(proof)
     vi.mocked(getChannelSSOConfig).mockResolvedValue({
       success: true,
       data: {
@@ -528,11 +521,7 @@ describe('channel SSO transition page', () => {
     renderTransitionPage()
 
     await waitFor(() =>
-      expect(checkChannelSSO).toHaveBeenCalledWith(
-        7,
-        'proof-1',
-        expect.anything()
-      )
+      expect(checkChannelSSO).toHaveBeenCalledWith(7, expect.anything())
     )
     await waitFor(() =>
       expect(validateChannelSSO).toHaveBeenCalledWith(
@@ -546,6 +535,7 @@ describe('channel SSO transition page', () => {
     expect(screen.getByText('Super Admin · admin')).toBeInTheDocument()
     expect(screen.getByText('Signed in again')).toBeInTheDocument()
     expect(screen.getByText('Entering…')).toBeInTheDocument()
+    expect(defaultSecureVerification.requestVerification).not.toHaveBeenCalled()
 
     await waitFor(
       () =>
@@ -557,12 +547,6 @@ describe('channel SSO transition page', () => {
   })
 
   it('shows the upstream message, pending later steps, and Retry when the check reports a required step-up', async () => {
-    defaultSecureVerification.requestVerification.mockResolvedValue({
-      proof_token: 'proof-1',
-      expires_at: Date.now() + 60_000,
-      method: 'password',
-      scope: 'channel.sso.open',
-    })
     vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
     vi.mocked(checkChannelSSO).mockResolvedValue({
       success: false,
@@ -588,12 +572,6 @@ describe('channel SSO transition page', () => {
   })
 
   it('shows an Edit channel link when the check reports the channel has no SSO configuration', async () => {
-    defaultSecureVerification.requestVerification.mockResolvedValue({
-      proof_token: 'proof-1',
-      expires_at: Date.now() + 60_000,
-      method: 'password',
-      scope: 'channel.sso.open',
-    })
     vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
     vi.mocked(checkChannelSSO).mockResolvedValue({
       success: false,
@@ -611,20 +589,7 @@ describe('channel SSO transition page', () => {
     ).toBeInTheDocument()
   })
 
-  it('restarts from verify and requests a new proof when Retry is clicked', async () => {
-    defaultSecureVerification.requestVerification
-      .mockResolvedValueOnce({
-        proof_token: 'proof-1',
-        expires_at: Date.now() + 60_000,
-        method: 'password',
-        scope: 'channel.sso.open',
-      })
-      .mockResolvedValueOnce({
-        proof_token: 'proof-2',
-        expires_at: Date.now() + 60_000,
-        method: 'password',
-        scope: 'channel.sso.open',
-      })
+  it('restarts from verify when Retry is clicked', async () => {
     vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
     vi.mocked(checkChannelSSO)
       .mockResolvedValueOnce({
@@ -643,22 +608,11 @@ describe('channel SSO transition page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
     await waitFor(() => expect(checkChannelSSO).toHaveBeenCalledTimes(2))
-    expect(checkChannelSSO).toHaveBeenNthCalledWith(
-      2,
-      7,
-      'proof-2',
-      expect.anything()
-    )
+    expect(checkChannelSSO).toHaveBeenNthCalledWith(2, 7, expect.anything())
     await screen.findByText('Super Admin · admin')
   })
 
   it('shows "Reused existing session" as the login detail when the check result reports reused=true', async () => {
-    defaultSecureVerification.requestVerification.mockResolvedValue({
-      proof_token: 'proof-1',
-      expires_at: Date.now() + 60_000,
-      method: 'password',
-      scope: 'channel.sso.open',
-    })
     vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
     vi.mocked(checkChannelSSO).mockResolvedValue({
       success: true,
@@ -675,25 +629,7 @@ describe('channel SSO transition page', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows "Verification cancelled" when the user cancels the security verification dialog', async () => {
-    defaultSecureVerification.requestVerification.mockResolvedValue(null)
-    vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
-
-    renderTransitionPage()
-
-    expect(
-      await screen.findByText('Verification cancelled')
-    ).toBeInTheDocument()
-    expect(checkChannelSSO).not.toHaveBeenCalled()
-  })
-
-  it('requests the security verification proof exactly once even under React StrictMode', async () => {
-    defaultSecureVerification.requestVerification.mockResolvedValue({
-      proof_token: 'proof-1',
-      expires_at: Date.now() + 60_000,
-      method: 'password',
-      scope: 'channel.sso.open',
-    })
+  it('starts the flow exactly once even under React StrictMode', async () => {
     vi.mocked(getChannelSSOConfig).mockResolvedValue({ success: false })
     vi.mocked(checkChannelSSO).mockResolvedValue(checkSuccess)
     vi.mocked(validateChannelSSO).mockResolvedValue(validateSuccess)
@@ -703,8 +639,6 @@ describe('channel SSO transition page', () => {
     renderTransitionPage(7, true)
 
     await screen.findByText('Super Admin · admin')
-    expect(defaultSecureVerification.requestVerification).toHaveBeenCalledTimes(
-      1
-    )
+    expect(checkChannelSSO).toHaveBeenCalledTimes(1)
   })
 })

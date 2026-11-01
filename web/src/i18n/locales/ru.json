@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Консоль вышестоящего сервера открыта через единый вход канала (ID канала: {{channel_id}}, пользователь: {{upstream_username}})",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Вход на вышестоящий сервер проверен через единый вход канала (ID канала: {{channel_id}}, пользователь: {{upstream_username}})",
     "Single sign-on settings were not saved; edit the channel to set them": "Настройки единого входа не сохранены; отредактируйте канал, чтобы задать их",
-    "Verify to open upstream console": "Подтвердите, чтобы открыть консоль вышестоящего сервера",
     "Connecting…": "Подключение…",
     "In progress": "Выполняется",
     "Verification cancelled": "Проверка отменена",

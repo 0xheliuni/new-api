@@ -78,21 +78,16 @@ export async function saveChannelSSOConfig(
 }
 
 /**
- * Start (or resume) an upstream SSO session for the channel. Requires a
- * `channel.sso.open` security proof.
+ * Start (or resume) an upstream SSO session for the channel (super admin only).
  */
 export async function checkChannelSSO(
   id: number,
-  proofToken: string,
   signal?: AbortSignal
 ): Promise<ChannelSSOApiResponse<ChannelSSOCheckResult>> {
   const res = await api.post(
     `/api/channel/${id}/sso/check`,
     undefined,
-    channelActionConfig({
-      headers: { 'X-Security-Proof': proofToken },
-      signal,
-    })
+    channelActionConfig({ signal })
   )
   return res.data
 }

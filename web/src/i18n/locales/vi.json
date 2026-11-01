@@ -7762,7 +7762,6 @@
     "Opened upstream console via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Đã mở bảng điều khiển thượng nguồn qua SSO của kênh (ID kênh: {{channel_id}}, người dùng thượng nguồn: {{upstream_username}})",
     "Validated upstream login via channel SSO (channel ID: {{channel_id}}, upstream user: {{upstream_username}})": "Đã xác minh đăng nhập thượng nguồn qua SSO của kênh (ID kênh: {{channel_id}}, người dùng thượng nguồn: {{upstream_username}})",
     "Single sign-on settings were not saved; edit the channel to set them": "Cài đặt SSO chưa được lưu; hãy chỉnh sửa kênh để thiết lập lại",
-    "Verify to open upstream console": "Xác minh để mở bảng điều khiển upstream",
     "Connecting…": "Đang kết nối…",
     "In progress": "Đang xử lý",
     "Verification cancelled": "Đã hủy xác minh",
