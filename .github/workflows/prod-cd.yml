@@ -38,6 +38,10 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest
 
+      # Dockerfile 从 VERSION 文件读取版本号编进程序，仓库里的 VERSION 是空文件，构建前写入当前 tag
+      - name: Write VERSION
+        run: echo "$GITHUB_REF_NAME" > VERSION
+
       - name: Build and push Production Docker image
         uses: docker/build-push-action@v5
         with:
