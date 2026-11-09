@@ -110,4 +110,45 @@ describe('JsonCodeEditor component', () => {
       '{\n  "model": {\n    "ratio": 2\n  }\n}'
     )
   })
+
+  test('a read-only editor stays reachable by keyboard and copies its value', async () => {
+    const user = userEvent.setup()
+    render(
+      <JsonCodeEditor
+        value='{"model":"gpt"}'
+        onChange={() => undefined}
+        readOnly
+        ariaLabel='Generated request'
+      />
+    )
+    const textarea = screen.getByRole('textbox', { name: 'Generated request' })
+
+    await user.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(await navigator.clipboard.readText()).toBe('{"model":"gpt"}')
+    await user.tab()
+
+    expect(textarea).toHaveFocus()
+    expect(textarea).toHaveAttribute('readonly')
+  })
+
+  test('a read-only editor never reports edits and offers no formatting', () => {
+    const onChange = vi.fn()
+    render(
+      <JsonCodeEditor
+        value='{"model":{"ratio":2}}'
+        onChange={onChange}
+        readOnly
+        ariaLabel='Generated request'
+      />
+    )
+    const textarea = screen.getByRole('textbox', { name: 'Generated request' })
+
+    fireEvent.input(textarea, { target: { value: '{}' } })
+
+    expect(onChange).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('{"model":{"ratio":2}}')
+    expect(
+      screen.queryByRole('button', { name: 'Format JSON' })
+    ).not.toBeInTheDocument()
+  })
 })

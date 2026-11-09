@@ -34,6 +34,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -43,8 +44,10 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
 import {
+  CHANNEL_TYPE_ALI,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
@@ -89,6 +92,8 @@ const soraPlugin: TaskPluginOption = {
   baseUrl: 'https://video.example',
   models: ['sora-2'],
 }
+
+const relayConfig = { relay: { submit: { path: '/v1/aigc/video/generate' } } }
 
 function deferredResponse<T>() {
   let resolve!: (value: T) => void
@@ -2811,4 +2816,175 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(setting).toMatchObject({ task_extend_plugin_keys: ['video-b'] })
   expect(setting).not.toHaveProperty('task_plugin_key')
   expect(payload.models?.split(',').sort()).toEqual(['gpt-5', 'video-b-1'])
+})
+
+test.each([
+  { kind: 'an Ali channel', type: CHANNEL_TYPE_ALI, offered: true },
+  {
+    kind: 'a task plugin channel bound to alibaba',
+    type: CHANNEL_TYPE_TASK_PLUGIN,
+    setting: '{"task_plugin_key":"alibaba"}',
+    offered: true,
+  },
+  {
+    kind: 'a task plugin channel bound to another plugin',
+    type: CHANNEL_TYPE_TASK_PLUGIN,
+    setting: '{"task_plugin_key":"video-a"}',
+    offered: false,
+  },
+  { kind: 'an OpenAI channel', type: 1, offered: false },
+])(
+  'the relay configuration editor on $kind is offered: $offered',
+  async ({ type, setting, offered }) => {
+    editingChannel = { ...editingChannel, type, setting }
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+    expect(screen.getByRole('group', { name: 'Override Rules' })).toBeVisible()
+    expect(
+      screen.queryAllByRole('textbox', { name: 'Relay configuration' })
+    ).toHaveLength(offered ? 1 : 0)
+  }
+)
+
+test('saving an Ali channel sends its relay configuration as an object in the setting', async () => {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_ALI }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  fireEvent.input(
+    screen.getByRole('textbox', { name: 'Relay configuration' }),
+    { target: { value: JSON.stringify(relayConfig) } }
+  )
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { setting: string }
+  expect(JSON.parse(payload.setting).task_plugin_config).toEqual(relayConfig)
+})
+
+test('a relay configuration rejected by the server is reported on the relay field and keeps the draft', async () => {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_ALI }
+  const reason = 'relay.submit.taskId must be a dot-separated response path'
+  const message = `Invalid task plugin configuration: ${reason}`
+  vi.spyOn(api, 'put').mockResolvedValue({
+    data: {
+      success: false,
+      message,
+      message_key: 'Invalid task plugin configuration: {{error}}',
+      message_params: { error: reason },
+    },
+  })
+  const errorToast = vi.spyOn(toast, 'error')
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const editor = screen.getByRole('textbox', { name: 'Relay configuration' })
+  fireEvent.input(editor, { target: { value: JSON.stringify(relayConfig) } })
+  await user.click(screen.getByRole('tab', { name: /Connection & Models/ }))
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(editor).toHaveFocus())
+  expect(errorToast).toHaveBeenCalledWith(message)
+  expect(
+    screen.getByRole('tab', { name: /Request & Response/ })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(editor).toHaveAttribute('aria-invalid', 'true')
+  expect(editor).toHaveAccessibleDescription(expect.stringContaining(message))
+  expect(screen.getByRole('button', { name: 'Update Channel' })).toBeEnabled()
+  expect(editor).toHaveValue(JSON.stringify(relayConfig))
+})
+
+test('switching to a provider without the relay editor clears a server-rejected relay error from Request & Response', async () => {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_ALI }
+  vi.spyOn(api, 'put').mockResolvedValue({
+    data: {
+      success: false,
+      message: 'Task plugin configuration must not exceed 64 KiB',
+      message_key: 'Task plugin configuration must not exceed {{size}} KiB',
+      message_params: { size: 64 },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const editor = screen.getByRole('textbox', { name: 'Relay configuration' })
+  fireEvent.input(editor, { target: { value: JSON.stringify(relayConfig) } })
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(editor).toHaveAttribute('aria-invalid', 'true'))
+  expect(
+    screen.getByRole('tab', { name: /Request & Response/ })
+  ).toHaveAccessibleName(/Error/)
+
+  await user.click(screen.getByRole('button', { name: 'Change provider' }))
+  await user.click(screen.getByRole('option', { name: 'OpenAI Built-in #1' }))
+
+  expect(
+    screen.queryByRole('textbox', { name: 'Relay configuration' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('tab', { name: /Request & Response/ })
+  ).not.toHaveAccessibleName(/Error/)
+})
+
+test('a corrected relay configuration saves after the server rejected it', async () => {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_ALI }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValueOnce({
+      data: {
+        success: false,
+        message: 'Task plugin configuration must not exceed 64 KiB',
+        message_key: 'Task plugin configuration must not exceed {{size}} KiB',
+        message_params: { size: 64 },
+      },
+    })
+    .mockResolvedValueOnce({ data: { success: true } })
+  const corrected = { relay: { submit: { path: '/v1/video/generate' } } }
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const editor = screen.getByRole('textbox', { name: 'Relay configuration' })
+  fireEvent.input(editor, { target: { value: JSON.stringify(relayConfig) } })
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(editor).toHaveAttribute('aria-invalid', 'true'))
+
+  fireEvent.input(editor, { target: { value: JSON.stringify(corrected) } })
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+  const payload = put.mock.calls[1]?.[1] as { setting: string }
+  expect(JSON.parse(payload.setting).task_plugin_config).toEqual(corrected)
+})
+
+test('invalid relay JSON is revealed in Request & Response on submission without marking the connection', async () => {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_ALI }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const editor = screen.getByRole('textbox', { name: 'Relay configuration' })
+  fireEvent.input(editor, { target: { value: '{"relay":' } })
+  await user.click(screen.getByRole('tab', { name: /Connection & Models/ }))
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(editor).toHaveFocus())
+  expect(
+    screen.getByRole('tab', { name: /Request & Response/ })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(editor).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByText('Invalid JSON format')).toBeVisible()
+  expect(
+    screen.getByRole('tab', { name: /Connection & Models/ })
+  ).not.toHaveAccessibleName(/Error/)
+  expect(put).not.toHaveBeenCalled()
 })

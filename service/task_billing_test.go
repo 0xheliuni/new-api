@@ -1177,7 +1177,7 @@ func TestRecalculate_SetsRequestIdAndStage(t *testing.T) {
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.PrivateData.RequestId = "req-abc-123"
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "token重算")
+	RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("token重算"))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)

@@ -27,7 +27,7 @@ func TestResolveSelectGroups(t *testing.T) {
 
 	t.Run("single context group is not multi", func(t *testing.T) {
 		c := newTestCtx()
-		c.Set(string(constant.ContextKeyTokenGroups), []string{"claude"})
+		c.Set(string(constant.ContextKeyTokenAutoGroups), []string{"claude"})
 		groups, isMulti := resolveSelectGroups(c, "claude")
 		assert.False(t, isMulti)
 		assert.Nil(t, groups)

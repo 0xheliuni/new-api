@@ -625,6 +625,9 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if channel.Type == constant.ChannelTypeSGLang && strings.TrimSpace(channel.GetBaseURL()) == "" {
 		return fmt.Errorf("SGLang channel base URL cannot be empty")
 	}
+	if _, _, err := validateChannelTaskPluginConfig(context.Background(), channel.Type, setting); err != nil {
+		return err
+	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {

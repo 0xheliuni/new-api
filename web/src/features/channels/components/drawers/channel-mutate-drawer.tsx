@@ -124,6 +124,8 @@ import {
   requireServerSuccess,
   createServerError,
   getServerErrorMessage,
+  getServerErrorSources,
+  getServerMessage,
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -154,6 +156,7 @@ import {
   FIELD_PLACEHOLDERS,
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
+  TASK_PLUGIN_CONFIG_ERROR_KEYS,
 } from '../../constants'
 import { useChannelKeyDisclosure } from '../../hooks/use-channel-key-disclosure'
 import {
@@ -196,6 +199,7 @@ import {
   getChannelPluginExtensions,
   supportsChannelPluginExtensions,
   supportsNewAPIUpstream,
+  supportsTaskPluginConfig,
 } from '../../lib/channel-plugin-extensions'
 import { getChannelTypeConfig } from '../../lib/channel-type-config'
 import {
@@ -246,6 +250,7 @@ import {
   ChannelBasicSection,
   ChannelEditorLoadingState,
   ChannelModelsSection,
+  ChannelRelayConfigSection,
   ChannelSSOSection,
   type ChannelSSOSectionHandle,
 } from './sections'
@@ -857,6 +862,8 @@ export function ChannelMutateDrawer({
           form.setValue('name', label ? t(label) : `#${target.type}`)
         }
       }
+      // A rejected relay configuration belongs to the previous provider.
+      form.clearErrors('task_plugin_config')
       setProviderTarget(target)
       setChoosingProvider(false)
     },
@@ -1742,8 +1749,23 @@ export function ChannelMutateDrawer({
 
       try {
         await channelMutation.mutateAsync(data)
-      } catch {
-        // The mutation reports the server error; keep the draft open for correction.
+      } catch (error) {
+        // The mutation toasts the server error and the draft stays open for
+        // correction; a rejected relay configuration is also shown on its field.
+        const relayConfigError = getServerErrorSources(error).find((source) => {
+          const key = source.message_key
+          return (
+            typeof key === 'string' && TASK_PLUGIN_CONFIG_ERROR_KEYS.has(key)
+          )
+        })
+        if (relayConfigError) {
+          form.setError('task_plugin_config', {
+            type: 'manual',
+            message: getServerMessage(relayConfigError),
+          })
+          setConfigurationSection('request')
+          setPendingErrorFocus('task_plugin_config')
+        }
       }
     },
     [
@@ -2675,6 +2697,31 @@ export function ChannelMutateDrawer({
         )}
       </ChannelBasicSection>
     </div>
+  )
+
+  const relayConfigModel =
+    formValues.models
+      ?.split(',')
+      .map((model) => model.trim())
+      .find(Boolean) ?? ''
+  const relayConfigFields = supportsTaskPluginConfig(
+    currentType,
+    currentTaskPluginKey
+  ) && (
+    <FormField
+      control={form.control}
+      name='task_plugin_config'
+      render={({ field }) => (
+        <ChannelRelayConfigSection
+          field={field}
+          disabled={sensitiveLocked || isSubmitting}
+          channelType={currentType}
+          taskPluginKey={currentTaskPluginKey}
+          baseUrl={currentBaseUrl}
+          model={relayConfigModel}
+        />
+      )}
+    />
   )
 
   const overrideFields = (
@@ -4701,6 +4748,7 @@ export function ChannelMutateDrawer({
         request={
           <>
             {overrideFields}
+            {relayConfigFields}
             <div
               role='group'
               aria-label={t('Request processing')}

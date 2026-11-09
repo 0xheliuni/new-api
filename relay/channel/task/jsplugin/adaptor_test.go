@@ -2254,3 +2254,75 @@ func TestTaskAdaptorChainsSunoBatchFetchThroughNewAPIUpstream(t *testing.T) {
 	assert.Equal(t, "SUCCESS", results["task_up_public"].TaskInfo.Status)
 	assert.Equal(t, []string{"POST /suno/submit/MUSIC", "POST /suno/fetch"}, seen)
 }
+
+const channelConfigPlugin = `
+export const meta = {apiVersion:1,key:"channel-config",name:"Channel Config",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task"};
+export function buildSubmitRequest(ctx){return {url:ctx.baseUrl+"/submit"}}
+export function parseSubmitResponse(){return {taskId:"1"}}
+export function buildQueryRequest(ctx){return {url:ctx.baseUrl+"/query"}}
+export function parseTaskResult(){return {status:"IN_PROGRESS"}}
+export function listArtifacts(){return [{key:"video",type:"video"}]}
+export function buildContentRequest(ctx){return {url:"https://cdn.example/"+(ctx.channelConfig ? ctx.channelConfig.marker : "none")+".mp4",credentialless:true}}
+`
+
+func TestTaskAdaptorExposesChannelConfigToDriverHooks(t *testing.T) {
+	plugin, err := pluginruntime.NewRegistry().Register(channelConfigPlugin, pluginruntime.Options{})
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+
+	configured := New(plugin)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelBaseUrl: "https://provider.example",
+		ApiKey:         "secret",
+		ChannelSetting: dto.ChannelSettings{TaskPluginConfig: json.RawMessage(`{"marker":"relay-a"}`)},
+	}}
+	configured.Init(info)
+	want := map[string]any{"marker": "relay-a"}
+
+	assert.Equal(t, want, configured.submitContext(c, info)["channelConfig"])
+	query, err := configured.queryContext(&model.Task{}, "secret", "https://provider.example", "")
+	require.NoError(t, err)
+	assert.Equal(t, want, query["channelConfig"])
+	batch, err := configured.batchQueryContext("secret", "https://provider.example", "", nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, batch["channelConfig"])
+	content, err := configured.BuildContentRequest(&model.Task{Status: model.TaskStatusSuccess}, "video", channel.TaskArtifactClientRequest{Method: http.MethodGet})
+	require.NoError(t, err)
+	assert.Equal(t, "https://cdn.example/relay-a.mp4", content.URL)
+
+	bare := New(plugin)
+	bareInfo := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", ApiKey: "secret"}}
+	bare.Init(bareInfo)
+	submit := bare.submitContext(c, bareInfo)
+	require.Contains(t, submit, "channelConfig")
+	assert.Nil(t, submit["channelConfig"])
+}
+
+func TestTaskAdaptorPersistsAndSettlesFromReturnedTaskData(t *testing.T) {
+	source := `
+export const meta = {apiVersion:1,key:"task-data",name:"Task Data",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second"}}};
+export function buildSubmitRequest(ctx){return {url:ctx.baseUrl+"/submit"}}
+export function parseSubmitResponse(){return {taskId:"1"}}
+export function buildQueryRequest(ctx){return {url:ctx.baseUrl+"/query"}}
+export function parseTaskResult(ctx, body){
+  if (body.raw) return {status:"SUCCESS", url:"https://cdn.example/v.mp4", data:{output:{task_status:"SUCCEEDED"}, usage:{seconds: body.seconds}}};
+  return {status:"IN_PROGRESS"};
+}
+export function extractUsageOnComplete(task, result, data){return {seconds: data.usage ? data.usage.seconds : 0}}
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", ApiKey: "secret"}})
+	response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+
+	result, err := adaptor.ParseTaskResult(&model.Task{}, response, []byte(`{"raw":true,"seconds":7,"envelope":"x"}`))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"output":{"task_status":"SUCCEEDED"},"usage":{"seconds":7}}`, string(result.Data))
+	assert.EqualValues(t, 7, result.UsageFacts["seconds"], "settlement reads the returned data, not the upstream body")
+
+	result, err = adaptor.ParseTaskResult(&model.Task{}, response, []byte(`{"pending":true}`))
+	require.NoError(t, err)
+	assert.Empty(t, result.Data, "without data the host keeps the upstream body")
+}

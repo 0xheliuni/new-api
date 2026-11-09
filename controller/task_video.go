@@ -108,6 +108,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(task, resp, responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+	} else if len(taskResult.Data) > 0 {
+		task.Data = taskResult.Data
 	} else {
 		task.Data = redactVideoResponseBody(responseBody)
 	}

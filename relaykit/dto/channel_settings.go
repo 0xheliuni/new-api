@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -26,6 +27,11 @@ type ChannelSettings struct {
 	// the executing plugin. TaskPluginKey remains the single type-61 binding
 	// and stays valid on a New API channel as well.
 	TaskExtendPluginKeys []string `json:"task_extend_plugin_keys,omitempty"`
+	// TaskPluginConfig is the executing task plugin's per-channel
+	// configuration, a JSON object. The host validates it on save through the
+	// plugin's validateChannelConfig hook and passes it to driver hooks as
+	// ctx.channelConfig.
+	TaskPluginConfig json.RawMessage `json:"task_plugin_config,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`

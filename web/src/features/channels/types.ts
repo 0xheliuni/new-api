@@ -84,6 +84,7 @@ export type Channel = z.infer<typeof channelSchema>
 export interface ChannelSettings {
   task_plugin_key?: string
   task_extend_plugin_keys?: string[]
+  task_plugin_config?: Record<string, unknown>
   force_format?: boolean
   thinking_to_content?: boolean
   proxy?: string

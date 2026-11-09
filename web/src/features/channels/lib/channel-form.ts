@@ -40,7 +40,10 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
-import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import {
+  readTaskExtendPluginKeys,
+  supportsTaskPluginConfig,
+} from './channel-plugin-extensions'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
@@ -210,6 +213,7 @@ export const channelFormSchema = z
     base_url: z.string().optional(),
     task_plugin_key: z.string().optional(),
     task_extend_plugin_keys: z.array(z.string()).optional(),
+    task_plugin_config: z.string().optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
     models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
@@ -351,6 +355,14 @@ export const channelFormSchema = z
       !data.task_plugin_key?.trim()
     ) {
       addRequiredIssue(ctx, 'task_plugin_key', 'Task plugin is required')
+    }
+    // Only a channel that shows the relay editor validates it; the hidden
+    // draft of any other channel is left out of the setting on save.
+    if (
+      supportsTaskPluginConfig(data.type, data.task_plugin_key) &&
+      !isOptionalJsonObject(data.task_plugin_config)
+    ) {
+      addRequiredIssue(ctx, 'task_plugin_config', ERROR_MESSAGES.INVALID_JSON)
     }
 
     if (data.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
@@ -496,6 +508,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   base_url: '',
   task_plugin_key: '',
   task_extend_plugin_keys: [],
+  task_plugin_config: '',
   key: '',
   openai_organization: '',
   models: '',
@@ -584,6 +597,7 @@ export function transformChannelToFormDefaults(
   let extraSettings = {
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
+    task_plugin_config: '',
     force_format: false,
     thinking_to_content: false,
     proxy: '',
@@ -610,6 +624,9 @@ export function transformChannelToFormDefaults(
       extraSettings = {
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
+        task_plugin_config: isJsonObjectValue(parsed.task_plugin_config)
+          ? JSON.stringify(parsed.task_plugin_config, null, 2)
+          : '',
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
@@ -809,6 +826,11 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       formData.type === CHANNEL_TYPE_NEW_API &&
       formData.task_extend_plugin_keys?.length
         ? formData.task_extend_plugin_keys
+        : undefined,
+    task_plugin_config:
+      supportsTaskPluginConfig(formData.type, formData.task_plugin_key) &&
+      formData.task_plugin_config?.trim()
+        ? parseOptionalJson(formData.task_plugin_config)
         : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,

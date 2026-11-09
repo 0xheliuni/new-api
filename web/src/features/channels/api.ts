@@ -85,6 +85,48 @@ export async function getTaskPluginOptions(): Promise<TaskPluginOption[]> {
   return requireServerSuccess(response.data).data
 }
 
+export type TaskPluginConfigPreviewRequest = {
+  type: number
+  task_plugin_key?: string
+  base_url?: string
+  // The parsed editor text, sent as written; the server validates its shape.
+  config?: unknown
+  model: string
+  entry: string
+  request?: unknown
+  submit_response?: unknown
+  query_response?: unknown
+}
+
+export type TaskPluginConfigPreview = {
+  submit?: Record<string, unknown>
+  reservation?: Record<string, unknown> | null
+  submit_result?: { task_id: string }
+  query?: Record<string, unknown>
+  query_result?: {
+    status?: string
+    url?: string
+    reason?: string
+    snapshot?: unknown
+  }
+  settlement?: Record<string, unknown> | null
+  errors?: Partial<Record<'submit' | 'submit_result' | 'query_result', string>>
+}
+
+/**
+ * Run a task_plugin_config through the executing plugin offline.
+ */
+export async function previewTaskPluginConfig(
+  payload: TaskPluginConfigPreviewRequest
+): Promise<TaskPluginConfigPreview> {
+  const response = await api.post<{
+    success: boolean
+    message?: string
+    data: TaskPluginConfigPreview
+  }>('/api/channel/task_plugin_config/preview', payload, channelActionConfig())
+  return requireServerSuccess(response.data).data
+}
+
 export type CodexUsageResponse = {
   success: boolean
   message?: string

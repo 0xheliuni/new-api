@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TaskPluginOption } from '../api'
 import {
+  ALIBABA_TASK_PLUGIN_KEY,
+  CHANNEL_TYPE_ALI,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_TASK_PLUGIN,
@@ -41,6 +43,19 @@ export function supportsChannelPluginExtensions(channelType: number): boolean {
     channelType !== CHANNEL_TYPE_TASK_PLUGIN &&
     !LEGACY_TASK_PLUGIN_KEYS[channelType] &&
     CHANNEL_TYPE_OPTIONS.some((option) => option.value === channelType)
+  )
+}
+
+// The Alibaba Bailian plugin accepts a task_plugin_config (relay mode). It
+// executes Task Plugin channels bound to it and Ali channels by channel type.
+export function supportsTaskPluginConfig(
+  channelType: number,
+  taskPluginKey?: string
+): boolean {
+  if (channelType === CHANNEL_TYPE_ALI) return true
+  return (
+    channelType === CHANNEL_TYPE_TASK_PLUGIN &&
+    taskPluginKey?.trim() === ALIBABA_TASK_PLUGIN_KEY
   )
 }
 

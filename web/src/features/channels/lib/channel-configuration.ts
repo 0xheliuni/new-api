@@ -26,6 +26,7 @@ import {
 } from '../constants'
 import { CHANNEL_TYPE_ADVANCED_CUSTOM } from './advanced-custom'
 import { channelFormSchema, type ChannelFormValues } from './channel-form'
+import { supportsTaskPluginConfig } from './channel-plugin-extensions'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 export type ChannelProviderTarget =
@@ -54,6 +55,7 @@ const CONFIGURATION_BLOCKS = {
     section: 'request',
     fields: ['status_code_mapping', 'param_override', 'header_override'],
   },
+  relayConfig: { section: 'request', fields: ['task_plugin_config'] },
   requestProcessing: {
     section: 'request',
     fields: [
@@ -149,6 +151,9 @@ export function getChannelConfigurationState(
       hasConfiguredJson(values.status_code_mapping) ||
       hasConfiguredJson(values.param_override) ||
       hasConfiguredJson(values.header_override),
+    relayConfig:
+      supportsTaskPluginConfig(values.type, values.task_plugin_key) &&
+      hasConfiguredJson(values.task_plugin_config),
     requestProcessing: Boolean(
       (values.type === 1 && values.force_format) ||
       values.thinking_to_content ||

@@ -31,6 +31,10 @@ export const CHANNEL_TYPE_NEW_API = 60
 
 export const CHANNEL_TYPE_TASK_PLUGIN = 61
 
+export const CHANNEL_TYPE_ALI = 17
+
+export const ALIBABA_TASK_PLUGIN_KEY = 'alibaba'
+
 export const CHANNEL_TYPE_VLLM = 62
 
 export const CHANNEL_TYPE_SGLANG = 63
@@ -599,3 +603,67 @@ export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
   8: 'If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing',
   37: 'Dify channels only support chatflow and agent, and agent does not support images',
 }
+
+// ============================================================================
+// Task Plugin Configuration
+// ============================================================================
+
+// The TokenPony relay example, a starting point for any relay.
+export const RELAY_CONFIG_EXAMPLE = {
+  relay: {
+    submit: {
+      path: '/v1/aigc/video/generate',
+      body: {
+        model: '$.model',
+        prompt: '$.input.prompt',
+        media: '$.input.media',
+        resolution: '$.parameters.resolution',
+        ratio: '$.parameters.ratio',
+        duration: '$.parameters.duration',
+        generate_audio: '$.parameters.audio',
+        watermark: '$.parameters.watermark',
+        seed: '$.parameters.seed',
+      },
+      values: {
+        'media[].type': {
+          first_frame: 'first_image',
+          last_frame: 'last_image',
+        },
+        seed: { '-1': null },
+      },
+      ok: { path: 'code', equals: 200 },
+      taskId: 'data.id',
+      error: 'message',
+    },
+    query: {
+      path: '/v1/aigc/tasks/{task_id}',
+      ok: { path: 'code', equals: 200 },
+      status: 'data.task_status',
+      statusMap: {
+        PENDING: 'PENDING',
+        RUNNING: 'RUNNING',
+        COMPLETED: 'SUCCEEDED',
+        FAILED: 'FAILED',
+        CANCELED: 'CANCELED',
+      },
+      videoUrl: ['data.result.output', 'data.result.result'],
+      reason: 'data.task_status_msg',
+      usage: {
+        seconds: 'data.usage.duration',
+        resolution: 'data.usage.resolution',
+      },
+    },
+  },
+}
+
+// Message keys the server rejects a channel's task plugin configuration with
+// on save; the drawer shows these messages on the relay configuration field.
+export const TASK_PLUGIN_CONFIG_ERROR_KEYS: ReadonlySet<string> = new Set([
+  'Task plugin configuration must not exceed {{size}} KiB',
+  'Task plugin configuration must be a JSON object',
+  'Task plugin configuration is not supported on New API channels',
+  'Channel type {{type}} does not run a task plugin, so a task plugin configuration is not supported',
+  'Task plugin {{key}} does not accept a channel configuration',
+  'Invalid task plugin configuration: {{error}}',
+  'Task plugin {{key}} could not validate the configuration, please try again later',
+])

@@ -279,7 +279,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	// The channel type tells plugin adaptors whether the upstream is another
 	// New API gateway, the same signal submission derives from the request.
 	info := &relaycommon.RelayInfo{}
-	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelType: ch.Type, ChannelId: ch.Id, ChannelBaseUrl: baseURL}
+	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelType: ch.Type, ChannelId: ch.Id, ChannelBaseUrl: baseURL, ChannelSetting: ch.GetSetting()}
 	info.ApiKey = ch.Key
 	adaptor.Init(info)
 	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, proxy)
@@ -436,7 +436,10 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 func BuildVideoPollingRelayInfo(ch *model.Channel) *relaycommon.RelayInfo {
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelType:          ch.Type,
+		ChannelId:            ch.Id,
 		ChannelBaseUrl:       ch.GetBaseURL(),
+		ChannelSetting:       ch.GetSetting(),
 		ChannelOtherSettings: ch.GetOtherSettings(),
 		ApiKey:               ch.Key,
 	}
@@ -582,7 +585,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
 	}
 
-	task.Data = redactVideoResponseBody(responseBody)
+	if len(taskResult.Data) > 0 {
+		task.Data = taskResult.Data
+	} else {
+		task.Data = redactVideoResponseBody(responseBody)
+	}
 	if len(taskResult.PluginState) > 0 {
 		task.PrivateData.PluginState = taskResult.PluginState
 	}

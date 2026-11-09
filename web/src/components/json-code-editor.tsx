@@ -52,6 +52,8 @@ export type JsonCodeEditorProps = Omit<
   onBlur?: () => void
   textareaRef?: (element: HTMLTextAreaElement | null) => void
   disabled?: boolean
+  /** Shows the value without accepting edits; it stays focusable and copyable. */
+  readOnly?: boolean
   heightClassName?: string
   placeholder?: string
   ariaLabel?: string
@@ -65,6 +67,7 @@ export function JsonCodeEditor({
   onBlur,
   textareaRef,
   disabled,
+  readOnly = false,
   heightClassName = 'h-56 min-h-56 max-h-56',
   placeholder,
   ariaLabel,
@@ -81,6 +84,7 @@ export function JsonCodeEditor({
   const latestValueRef = useRef(value)
   const latestOnChangeRef = useRef(onChange)
   const latestOnBlurRef = useRef(onBlur)
+  const latestReadOnlyRef = useRef(readOnly)
   const [cursorLocation, setCursorLocation] = useState<CursorLocation>({
     line: 1,
     column: 1,
@@ -99,6 +103,7 @@ export function JsonCodeEditor({
   latestValueRef.current = value
   latestOnChangeRef.current = onChange
   latestOnBlurRef.current = onBlur
+  latestReadOnlyRef.current = readOnly
 
   useEffect(() => {
     const mountNode = mountRef.current
@@ -123,9 +128,14 @@ export function JsonCodeEditor({
     editorRef.current = editor
 
     const handleUpdate = (nextValue: string) => {
-      if (nextValue !== latestValueRef.current) {
-        latestOnChangeRef.current(nextValue)
+      if (nextValue === latestValueRef.current) return
+      // Yace ignores keys on a read-only textarea, but other input events
+      // still reach it: keep showing the controlled value and report nothing.
+      if (latestReadOnlyRef.current) {
+        editor.update({ value: latestValueRef.current })
+        return
       }
+      latestOnChangeRef.current(nextValue)
     }
     const updateCursorLocation = () => {
       setCursorLocation(
@@ -199,6 +209,7 @@ export function JsonCodeEditor({
     const resolvedAriaInvalid = ariaInvalid ?? !jsonStatus.isValid
 
     editor.textarea.disabled = Boolean(disabled)
+    editor.textarea.readOnly = readOnly
     editor.textarea.id = id ?? ''
     editor.textarea.name = name ?? ''
 
@@ -241,6 +252,7 @@ export function JsonCodeEditor({
     jsonStatus.isValid,
     name,
     placeholder,
+    readOnly,
   ])
 
   const formatJson = () => {
@@ -305,17 +317,19 @@ export function JsonCodeEditor({
             <Copy className='mr-1 h-3.5 w-3.5' aria-hidden='true' />
             {t('Copy')}
           </Button>
-          <Button
-            type='button'
-            variant='ghost'
-            size='sm'
-            className='h-6 px-2 text-xs'
-            onClick={formatJson}
-            disabled={disabled || !jsonStatus.isValid || !value.trim()}
-          >
-            <Code2 className='mr-1 h-3.5 w-3.5' aria-hidden='true' />
-            {t('Format JSON')}
-          </Button>
+          {!readOnly && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              className='h-6 px-2 text-xs'
+              onClick={formatJson}
+              disabled={disabled || !jsonStatus.isValid || !value.trim()}
+            >
+              <Code2 className='mr-1 h-3.5 w-3.5' aria-hidden='true' />
+              {t('Format JSON')}
+            </Button>
+          )}
         </div>
       </div>
       <div

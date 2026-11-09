@@ -222,7 +222,7 @@ export const meta = {
     en: "Alibaba Cloud Bailian image and video generation (Wan, Qwen-Image, Z-Image)",
     zh: "阿里云百炼图片与视频生成（万相、千问图像、Z-Image）",
   },
-  version: "1.4.1",
+  version: "1.5.0",
   author: { name: "QuantumNous" },
   channelTypes: [17],
   // Literal metadata also supports the dashboard's static script preview.
@@ -972,8 +972,218 @@ function responsesOutputText(ctx, task) {
   return parts.join("\n\n");
 }
 
+// ============================================================================
+// Relay mode
+//
+// A channel whose task_plugin_config carries `relay` submits to and polls a
+// third-party relay instead of DashScope. Client entries, request validation,
+// reservation and the DashScope-shaped task data stay the same; the channel
+// configuration only declares the relay's wire format (validateChannelConfig
+// documents the accepted shape).
+
+const RELAY_STATUSES = ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"];
+// Fields of the normalized DashScope request that "$." references may read.
+const RELAY_REQUEST_FIELDS = [
+  "model",
+  "input.prompt",
+  "input.negative_prompt",
+  "input.template",
+  "input.media",
+  "parameters.resolution",
+  "parameters.ratio",
+  "parameters.size",
+  "parameters.duration",
+  "parameters.audio",
+  "parameters.watermark",
+  "parameters.seed",
+  "parameters.prompt_extend",
+  "parameters.shot_type",
+];
+const RELAY_QUERY_FIELDS = ["task_id"];
+// Request fields that hold arrays, the only sources a $each may iterate.
+const RELAY_ARRAY_FIELDS = ["input.media"];
+const RELAY_FORBIDDEN_HEADERS = ["host", "content-length", "transfer-encoding", "connection"];
+const RELAY_TEMPLATE_MAX_DEPTH = 16;
+const RELAY_RESPONSE_PATH = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
+const RELAY_VALUES_PATH = /^[A-Za-z0-9_-]+(\[\])?(\.[A-Za-z0-9_-]+(\[\])?)*$/;
+const RELAY_HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+// Marks an unresolved template reference so the enclosing member is omitted.
+const RELAY_MISSING = {};
+
+function relayConfig(ctx) {
+  const config = ctx && ctx.channelConfig;
+  return config && typeof config === "object" && config.relay && typeof config.relay === "object" ? config.relay : null;
+}
+
+// relayGet reads a dot-separated path; numeric segments index arrays. Only own
+// properties are followed, so prototype members never resolve.
+function relayGet(value, path) {
+  let current = value;
+  for (const segment of String(path).split(".")) {
+    if (current === null || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, segment)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function relayText(value) {
+  if (value === undefined || value === null) return "";
+  return typeof value === "string" ? value.trim() : JSON.stringify(value);
+}
+
+// relayValueKey is the string form used to match ok.equals, statusMap keys and
+// values mappings, so 200 matches "200" and -1 matches "-1".
+function relayValueKey(value) {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function relayNumber(value) {
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return value;
+}
+
+function relayOK(spec, body) {
+  if (!spec.ok) return true;
+  const actual = relayGet(body, spec.ok.path);
+  return actual !== undefined && relayValueKey(actual) === relayValueKey(spec.ok.equals);
+}
+
+function relayURL(ctx, path) {
+  return String(ctx.baseUrl || "").replace(/\/+$/, "") + path;
+}
+
+function relayHeaders(spec, apiKey, hasBody) {
+  const headers = { Authorization: "Bearer " + apiKey };
+  if (hasBody) headers["Content-Type"] = "application/json";
+  const overrides = spec.headers || {};
+  for (const name of Object.keys(overrides)) {
+    for (const existing of Object.keys(headers)) {
+      if (existing.toLowerCase() === name.toLowerCase()) delete headers[existing];
+    }
+    if (overrides[name] !== null) headers[name] = String(overrides[name]).split("{key}").join(apiKey);
+  }
+  return headers;
+}
+
+// renderRelayTemplate resolves "$." references against scope and "@."
+// references against the current $each item; other values are constants.
+function renderRelayTemplate(template, scope, item, depth) {
+  if (depth > RELAY_TEMPLATE_MAX_DEPTH) throw new Error("relay template is nested too deeply");
+  if (typeof template === "string") {
+    if (template.startsWith("$.")) {
+      const value = relayGet(scope, template.slice(2));
+      return value === undefined ? RELAY_MISSING : value;
+    }
+    if (template.startsWith("@.")) {
+      const value = item === undefined ? undefined : relayGet(item, template.slice(2));
+      return value === undefined ? RELAY_MISSING : value;
+    }
+    return template;
+  }
+  if (Array.isArray(template)) {
+    const rendered = [];
+    for (const element of template) {
+      const value = renderRelayTemplate(element, scope, item, depth + 1);
+      if (value !== RELAY_MISSING) rendered.push(value);
+    }
+    return rendered;
+  }
+  if (template === null || typeof template !== "object") return template;
+  if (Object.prototype.hasOwnProperty.call(template, "$each")) {
+    const source = renderRelayTemplate(template.$each, scope, item, depth + 1);
+    if (!Array.isArray(source)) return RELAY_MISSING;
+    return source.map((entry) => renderRelayObject(template, scope, entry, depth));
+  }
+  return renderRelayObject(template, scope, item, depth);
+}
+
+function renderRelayObject(template, scope, item, depth) {
+  const rendered = {};
+  for (const key of Object.keys(template)) {
+    if (key === "$each") continue;
+    const value = renderRelayTemplate(template[key], scope, item, depth + 1);
+    if (value !== RELAY_MISSING) rendered[key] = value;
+  }
+  return rendered;
+}
+
+// applyRelayValue returns container with one leaf rewritten. Only the objects
+// and arrays on the changed path are shallow-copied, so containers the
+// rendered body shares with the standard request through "$." and "@."
+// references are never modified, and an unchanged value is returned as it is.
+// A segment ending in "[]" visits every array element; a missing key or a
+// non-array "[]" target leaves the value unchanged; a mapping to null deletes
+// the leaf. Objects are copied with spread, which keeps a "__proto__" member
+// an own data property where Object.assign would set the prototype.
+function applyRelayValue(container, segments, mapping) {
+  if (container === null || typeof container !== "object") return container;
+  const each = segments[0].endsWith("[]");
+  const key = each ? segments[0].slice(0, -2) : segments[0];
+  if (!Object.prototype.hasOwnProperty.call(container, key)) return container;
+  const current = container[key];
+  const rest = segments.slice(1);
+  let next = current;
+  if (each) {
+    if (!Array.isArray(current)) return container;
+    for (let index = 0; index < current.length; index++) {
+      const element = applyRelayValue(current[index], rest, mapping);
+      if (element === current[index]) continue;
+      if (next === current) next = current.slice();
+      next[index] = element;
+    }
+    if (next === current) return container;
+  } else if (rest.length) {
+    next = applyRelayValue(current, rest, mapping);
+    if (next === current) return container;
+  } else {
+    const valueKey = relayValueKey(current);
+    if (!Object.prototype.hasOwnProperty.call(mapping, valueKey)) return container;
+    next = mapping[valueKey];
+  }
+  const copy = Array.isArray(container) ? container.slice() : { ...container };
+  if (next === null) delete copy[key];
+  else copy[key] = next;
+  return copy;
+}
+
+// relaySnapshot converts a relay query response into the DashScope task shape
+// that presenters, artifacts and extractUsageOnComplete already read.
+function relaySnapshot(ctx, spec, body, status) {
+  const output = { task_id: String(ctx.taskId || ""), task_status: status };
+  const snapshot = { request_id: "", output: output };
+  if (status === "SUCCEEDED") {
+    for (const path of Array.isArray(spec.videoUrl) ? spec.videoUrl : [spec.videoUrl]) {
+      const url = relayGet(body, path);
+      if (typeof url === "string" && url.trim()) {
+        output.video_url = url.trim();
+        break;
+      }
+    }
+  }
+  if (status === "FAILED" || status === "CANCELED") {
+    output.code = "UpstreamTaskFailed";
+    const reason = spec.reason ? relayText(relayGet(body, spec.reason)) : "";
+    if (reason) output.message = reason;
+  }
+  const usage = spec.usage || {};
+  const seconds = usage.seconds ? relayNumber(relayGet(body, usage.seconds)) : undefined;
+  if (seconds !== undefined && seconds !== null) {
+    const inputSeconds = usage.inputSeconds ? relayNumber(relayGet(body, usage.inputSeconds)) : undefined;
+    snapshot.usage = {
+      duration: seconds,
+      output_video_duration: seconds,
+      input_video_duration: inputSeconds === undefined || inputSeconds === null ? 0 : inputSeconds,
+    };
+    const resolution = usage.resolution ? relayGet(body, usage.resolution) : undefined;
+    if (resolution !== undefined && resolution !== null) snapshot.usage.SR = resolution;
+  }
+  return snapshot;
+}
+
 export function buildSubmitRequest(ctx) {
+  const relay = relayConfig(ctx);
   if (imageModel(ctx)) {
+    if (relay) throw new Error("relay mode only supports video models");
     const converted = convertImage(ctx);
     const headers = { Authorization: "Bearer " + ctx.apiKey, "Content-Type": "application/json" };
     if (!converted.synchronous) headers["X-DashScope-Async"] = "enable";
@@ -991,6 +1201,18 @@ export function buildSubmitRequest(ctx) {
     };
   }
   const body = convert(ctx);
+  if (relay) {
+    let requestBody = renderRelayObject(relay.submit.body, body, undefined, 0);
+    const values = relay.submit.values || {};
+    for (const path of Object.keys(values)) requestBody = applyRelayValue(requestBody, path.split("."), values[path]);
+    return {
+      url: relayURL(ctx, relay.submit.path),
+      method: "POST",
+      headers: relayHeaders(relay.submit, ctx.apiKey, true),
+      body: requestBody,
+      action: videoAction(body.input),
+    };
+  }
   const kind = modelProfile(body.model).kind;
   const service = kind === "frames" || kind === "speech" ? "image2video" : "video-generation";
   return {
@@ -1056,6 +1278,15 @@ export function parseSubmitEventDelta(ctx, event, previousState) {
 
 export function parseSubmitResponse(ctx, resp) {
   const body = resp.body || {};
+  const relay = relayConfig(ctx);
+  if (relay) {
+    const spec = relay.submit;
+    if (!relayOK(spec, body)) throw new Error((spec.error ? relayText(relayGet(body, spec.error)) : "") || "relay returned a failure");
+    const rawTaskId = relayGet(body, spec.taskId);
+    const taskId = typeof rawTaskId === "string" || typeof rawTaskId === "number" ? String(rawTaskId).trim() : "";
+    if (!taskId) throw new Error("relay response has no task id at " + spec.taskId);
+    return { taskId: taskId, taskData: { request_id: "", output: { task_id: taskId, task_status: "PENDING" } } };
+  }
   if (body.code) throw new Error(body.code + ": " + (body.message || ""));
   if (imageModel(ctx) && convertImage(ctx).synchronous) {
     const content = imageContent(body);
@@ -1140,10 +1371,39 @@ export function extractUsageOnComplete(task, taskResult, body) {
 }
 
 export function buildQueryRequest(ctx) {
+  const relay = relayConfig(ctx);
+  if (relay) {
+    const spec = relay.query;
+    const post = spec.method === "POST";
+    const descriptor = {
+      url: relayURL(ctx, spec.path.split("{task_id}").join(encodeURIComponent(ctx.taskId))),
+      method: post ? "POST" : "GET",
+      headers: relayHeaders(spec, ctx.apiKey, post),
+    };
+    if (post) descriptor.body = utils.json.clone(renderRelayObject(spec.body || {}, { task_id: ctx.taskId }, undefined, 0));
+    return descriptor;
+  }
   return { url: apiRoot(ctx) + "/api/v1/tasks/" + ctx.taskId, method: "GET", headers: { Authorization: "Bearer " + ctx.apiKey } };
 }
 
 export function parseTaskResult(ctx, body) {
+  const relay = relayConfig(ctx);
+  if (relay) {
+    const spec = relay.query;
+    if (!relayOK(spec, body)) return { status: "UNKNOWN", reason: "relay query was not successful" };
+    const rawStatus = relayGet(body, spec.status);
+    const statusKey = rawStatus === undefined || rawStatus === null ? "" : relayValueKey(rawStatus);
+    const status = Object.prototype.hasOwnProperty.call(spec.statusMap, statusKey) ? spec.statusMap[statusKey] : undefined;
+    if (!RELAY_STATUSES.includes(status)) return { status: "UNKNOWN", reason: "unrecognized relay status: " + relayText(rawStatus) };
+    const snapshot = relaySnapshot(ctx, spec, body, status);
+    if (status === "PENDING") return { status: "QUEUED", data: snapshot };
+    if (status === "RUNNING") return { status: "IN_PROGRESS", data: snapshot };
+    if (status === "SUCCEEDED") {
+      if (!snapshot.output.video_url) return { status: "UNKNOWN", reason: "relay reported success without a video URL" };
+      return { status: "SUCCESS", url: snapshot.output.video_url, data: snapshot };
+    }
+    return { status: "FAILURE", reason: snapshot.output.message || "task failed", data: snapshot };
+  }
   const output = body.output || {};
   if (output.task_status === "PENDING") return { status: "QUEUED" };
   if (output.task_status === "RUNNING") return { status: "IN_PROGRESS" };
@@ -1542,3 +1802,178 @@ export const protocols = {
     },
   },
 };
+
+function requireRelayObject(value, where) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(where + " must be an object");
+}
+
+function requireRelayKeys(value, where, allowed) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) throw new Error(where + " has unknown field " + key);
+  }
+}
+
+// hasControlCharacter reports whether text contains an ASCII control
+// character: a code below 0x20, or DEL (0x7f).
+function hasControlCharacter(text) {
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function validateRelayPath(path, where) {
+  if (typeof path !== "string" || !path.startsWith("/")) throw new Error(where + " must start with /");
+  if (path.length > 512) throw new Error(where + " must not exceed 512 characters");
+  if (path.includes("..") || path.includes("//") || path.includes("#") || /\s/.test(path) || hasControlCharacter(path)) {
+    throw new Error(where + " must not contain .., //, #, spaces or control characters");
+  }
+}
+
+function validateRelayResponsePath(path, where, required) {
+  if (path === undefined && !required) return;
+  if (typeof path !== "string" || !RELAY_RESPONSE_PATH.test(path)) throw new Error(where + " must be a dot-separated response path");
+}
+
+function validateRelayHeaders(headers, where) {
+  if (headers === undefined) return;
+  requireRelayObject(headers, where);
+  for (const name of Object.keys(headers)) {
+    if (!RELAY_HEADER_NAME.test(name)) throw new Error(where + " has an invalid header name " + name);
+    if (RELAY_FORBIDDEN_HEADERS.includes(name.toLowerCase())) throw new Error(where + " cannot set header " + name);
+    const value = headers[name];
+    if (value === null) continue;
+    if (typeof value !== "string" || hasControlCharacter(value)) {
+      throw new Error(where + "." + name + " must be a single-line string or null without control characters");
+    }
+    // relayHeaders substitutes only {key}; any other placeholder would be sent literally.
+    if (/\{[^{}]*\}/.test(value.split("{key}").join(""))) throw new Error(where + "." + name + " only supports the {key} placeholder");
+  }
+}
+
+function validateRelayOK(ok, where) {
+  if (ok === undefined) return;
+  requireRelayObject(ok, where);
+  requireRelayKeys(ok, where, ["path", "equals"]);
+  validateRelayResponsePath(ok.path, where + ".path", true);
+  const kind = typeof ok.equals;
+  if (kind !== "string" && kind !== "number" && kind !== "boolean") throw new Error(where + ".equals must be a string, number or boolean");
+}
+
+// validateRelayTemplate checks a body template against scope: scope.fields
+// lists the "$." references it may use, scope.arrays the fields a $each may
+// iterate, and every "$." reference in a string value is added to scope.refs.
+function validateRelayTemplate(value, where, scope, inEach, depth) {
+  if (depth > RELAY_TEMPLATE_MAX_DEPTH) throw new Error(where + " is nested too deeply");
+  if (typeof value === "string") {
+    if (value.startsWith("$.")) {
+      if (!scope.fields.includes(value.slice(2))) throw new Error(where + " references unknown field " + value);
+      scope.refs.push(value.slice(2));
+    }
+    if (value.startsWith("@.")) {
+      if (!inEach) throw new Error(where + " uses " + value + " outside $each");
+      if (!RELAY_RESPONSE_PATH.test(value.slice(2))) throw new Error(where + " has an invalid item path " + value);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((element, index) => validateRelayTemplate(element, where + "[" + index + "]", scope, inEach, depth + 1));
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  if (Object.prototype.hasOwnProperty.call(value, "$each")) {
+    // Every $each source resolves against the request, so an inner $each
+    // would repeat its whole source once per outer item.
+    if (inEach) throw new Error(where + ".$each cannot be nested inside another $each");
+    if (typeof value.$each !== "string" || !value.$each.startsWith("$.") || !scope.fields.includes(value.$each.slice(2))) {
+      throw new Error(where + ".$each must reference a request field");
+    }
+    if (!scope.arrays.includes(value.$each.slice(2))) throw new Error(where + ".$each must reference an array field");
+    if (Object.keys(value).length < 2) throw new Error(where + ".$each needs at least one mapped field");
+    for (const key of Object.keys(value)) {
+      if (key !== "$each") validateRelayTemplate(value[key], where + "." + key, scope, true, depth + 1);
+    }
+    return;
+  }
+  for (const key of Object.keys(value)) validateRelayTemplate(value[key], where + "." + key, scope, inEach, depth + 1);
+}
+
+// validateRelayBody checks submit.body or query.body. The renderer only reads
+// the members of a body, so a $each on the body itself would be ignored.
+function validateRelayBody(body, where, scope) {
+  requireRelayObject(body, where);
+  if (Object.prototype.hasOwnProperty.call(body, "$each")) throw new Error(where + " cannot be a $each object");
+  validateRelayTemplate(body, where, scope, false, 0);
+}
+
+// validateChannelConfig accepts the channel task_plugin_config described in
+// the relay mode section. The host calls it whenever a channel that stores a
+// configuration is saved.
+export function validateChannelConfig(config) {
+  requireRelayObject(config, "configuration");
+  for (const key of Object.keys(config)) {
+    if (key !== "relay") throw new Error("unknown configuration field: " + key);
+  }
+  const relay = config.relay;
+  requireRelayObject(relay, "relay");
+  requireRelayKeys(relay, "relay", ["submit", "query"]);
+
+  const submit = relay.submit;
+  requireRelayObject(submit, "relay.submit");
+  requireRelayKeys(submit, "relay.submit", ["path", "method", "headers", "body", "values", "ok", "taskId", "error"]);
+  validateRelayPath(submit.path, "relay.submit.path");
+  if (submit.method !== undefined && submit.method !== "POST") throw new Error("relay.submit.method must be POST");
+  validateRelayHeaders(submit.headers, "relay.submit.headers");
+  validateRelayBody(submit.body, "relay.submit.body", { fields: RELAY_REQUEST_FIELDS, arrays: RELAY_ARRAY_FIELDS, refs: [] });
+  if (submit.values !== undefined) {
+    requireRelayObject(submit.values, "relay.submit.values");
+    for (const path of Object.keys(submit.values)) {
+      if (!RELAY_VALUES_PATH.test(path) || path.endsWith("[]")) throw new Error("relay.submit.values has an invalid path " + path);
+      requireRelayObject(submit.values[path], "relay.submit.values." + path);
+    }
+  }
+  validateRelayOK(submit.ok, "relay.submit.ok");
+  validateRelayResponsePath(submit.taskId, "relay.submit.taskId", true);
+  validateRelayResponsePath(submit.error, "relay.submit.error", false);
+
+  const query = relay.query;
+  requireRelayObject(query, "relay.query");
+  requireRelayKeys(query, "relay.query", ["path", "method", "headers", "body", "ok", "status", "statusMap", "videoUrl", "reason", "usage"]);
+  validateRelayPath(query.path, "relay.query.path");
+  if (query.method !== undefined && query.method !== "GET" && query.method !== "POST") throw new Error("relay.query.method must be GET or POST");
+  validateRelayHeaders(query.headers, "relay.query.headers");
+  const queryScope = { fields: RELAY_QUERY_FIELDS, arrays: [], refs: [] };
+  if (query.body !== undefined) {
+    if (query.method !== "POST") throw new Error("relay.query.body requires method POST");
+    validateRelayBody(query.body, "relay.query.body", queryScope);
+  }
+  if (!query.path.includes("{task_id}") && !queryScope.refs.includes("task_id")) {
+    throw new Error("relay.query must reference the task id with {task_id} in path or $.task_id in body");
+  }
+  validateRelayOK(query.ok, "relay.query.ok");
+  validateRelayResponsePath(query.status, "relay.query.status", true);
+  requireRelayObject(query.statusMap, "relay.query.statusMap");
+  const mapped = [];
+  for (const key of Object.keys(query.statusMap)) {
+    const value = query.statusMap[key];
+    if (!RELAY_STATUSES.includes(value)) {
+      throw new Error("relay.query.statusMap values must be one of " + RELAY_STATUSES.join(", ") + " (got " + key + ": " + relayValueKey(value) + ")");
+    }
+    mapped.push(value);
+  }
+  if (!mapped.includes("SUCCEEDED") || !(mapped.includes("FAILED") || mapped.includes("CANCELED"))) {
+    throw new Error("relay.query.statusMap must map a success status and a failure status");
+  }
+  if (Array.isArray(query.videoUrl) && query.videoUrl.length) {
+    query.videoUrl.forEach((path, index) => validateRelayResponsePath(path, "relay.query.videoUrl[" + index + "]", true));
+  } else {
+    validateRelayResponsePath(query.videoUrl, "relay.query.videoUrl", true);
+  }
+  validateRelayResponsePath(query.reason, "relay.query.reason", false);
+  if (query.usage !== undefined) {
+    requireRelayObject(query.usage, "relay.query.usage");
+    requireRelayKeys(query.usage, "relay.query.usage", ["seconds", "inputSeconds", "resolution"]);
+    for (const key of Object.keys(query.usage)) validateRelayResponsePath(query.usage[key], "relay.query.usage." + key, true);
+  }
+}

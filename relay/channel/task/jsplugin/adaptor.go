@@ -94,6 +94,7 @@ type taskResult struct {
 	CompletionTokens float64 `json:"completionTokens"`
 	TotalTokens      float64 `json:"totalTokens"`
 	State            any     `json:"state"`
+	Data             any     `json:"data"`
 }
 
 var taskArtifactKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$`)
@@ -852,10 +853,22 @@ func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, bod
 			result.PluginState = pluginState
 		}
 	}
+	usageBody := input
+	if parsed.Data != nil {
+		data, marshalErr := common.Marshal(parsed.Data)
+		if marshalErr != nil || len(data) > maxTaskPluginPersistedJSONBytes {
+			logger.LogWarn(context.Background(), common.LogText("task plugin %s rejected invalid or oversized poll data", a.plugin.Meta.Key))
+		} else {
+			// A plugin that normalizes the upstream snapshot persists that
+			// snapshot and settles from the same value.
+			result.Data = data
+			usageBody = parsed.Data
+		}
+	}
 	// The raw polling response only exists at this boundary. Capture upstream
 	// units here so the host settlement path can consume them from TaskInfo.
 	if a.hasHook(context.Background(), "extractUsageOnComplete") {
-		facts, hookErr := a.plugin.Engine.Call(context.Background(), "extractUsageOnComplete", ctx, jsonValue(result), input)
+		facts, hookErr := a.plugin.Engine.Call(context.Background(), "extractUsageOnComplete", ctx, jsonValue(result), usageBody)
 		if hookErr == nil {
 			upstreamModel, _ := ctx["upstreamModel"].(string)
 			originModel, _ := ctx["model"].(string)
@@ -977,6 +990,7 @@ func (a *TaskAdaptor) BuildContentRequest(task *model.Task, artifactKey string, 
 	ctx["upstreamTaskId"] = task.GetUpstreamTaskID()
 	ctx["artifactKey"] = artifactKey
 	ctx["baseUrl"] = a.info.ChannelBaseUrl
+	ctx["channelConfig"] = channelConfigValue(a.info)
 	ctx["clientRequest"] = jsonValue(clientRequest)
 	if err = a.applyUpstreamCredentials(ctx, a.info.ChannelType, a.info.ApiKey, a.info.ChannelSetting.Proxy); err != nil {
 		return nil, err
@@ -1071,6 +1085,7 @@ func (a *TaskAdaptor) queryContext(task *model.Task, key, baseURL, proxy string)
 		"baseUrl":       baseURL,
 		"data":          nil,
 		"state":         nil,
+		"channelConfig": channelConfigValue(a.info),
 	}
 	if task != nil {
 		originModel := task.Properties.OriginModelName
@@ -1108,7 +1123,7 @@ func (a *TaskAdaptor) queryContext(task *model.Task, key, baseURL, proxy string)
 }
 
 func (a *TaskAdaptor) batchQueryContext(key, baseURL, proxy string, tasks []map[string]any) (map[string]any, error) {
-	ctx := map[string]any{"baseUrl": baseURL, "tasks": tasks}
+	ctx := map[string]any{"baseUrl": baseURL, "tasks": tasks, "channelConfig": channelConfigValue(a.info)}
 	if err := a.applyUpstreamCredentials(ctx, a.channelType(), key, proxy); err != nil {
 		return nil, err
 	}
@@ -1120,6 +1135,20 @@ func (a *TaskAdaptor) queryCredentials() (key, baseURL, proxy string) {
 		return "", "", ""
 	}
 	return a.info.ApiKey, a.info.ChannelBaseUrl, a.info.ChannelSetting.Proxy
+}
+
+// channelConfigValue decodes the executing channel's task_plugin_config for
+// ctx.channelConfig. A channel without one, or without channel metadata,
+// yields null.
+func channelConfigValue(info *relaycommon.RelayInfo) any {
+	if info == nil || !info.HasChannelMeta() || len(info.ChannelSetting.TaskPluginConfig) == 0 {
+		return nil
+	}
+	var config any
+	if err := common.Unmarshal(info.ChannelSetting.TaskPluginConfig, &config); err != nil {
+		return nil
+	}
+	return config
 }
 
 // channelType is the executing channel's type when polling or content
@@ -1471,6 +1500,7 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	ctx["upstreamModel"] = info.UpstreamModelName
 	ctx["baseUrl"] = info.ChannelBaseUrl
 	ctx["userSetting"] = info.UserSetting
+	ctx["channelConfig"] = channelConfigValue(info)
 	if err := a.applyUpstreamCredentials(ctx, info.ChannelType, info.ApiKey, info.ChannelSetting.Proxy); err != nil {
 		ctx["authError"] = err.Error()
 	}

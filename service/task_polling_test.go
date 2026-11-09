@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -244,6 +245,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	baseURL := "https://gateway.example"
 	gateway := &model.Channel{Id: channelID, Type: constant.ChannelTypeNewAPI, Name: "gateway", Key: "sk-gateway", Status: common.ChannelStatusEnabled, BaseURL: &baseURL}
 	gateway.SetOtherSettings(dto.ChannelOtherSettings{DisableTaskPollingSleep: true})
+	gateway.SetSetting(dto.ChannelSettings{TaskPluginConfig: json.RawMessage(`{"marker":"poll"}`)})
 	require.NoError(t, model.DB.Create(gateway).Error)
 	task := seedPollingTask(t, channelID, "task_gateway", "upstream_gateway")
 	taskChannels := map[int][]string{channelID: {task.GetUpstreamTaskID()}}
@@ -259,6 +261,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType, "the adaptor derives the upstream kind from the channel type")
 	assert.Equal(t, channelID, meta.ChannelId)
 	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.JSONEq(t, `{"marker":"poll"}`, string(meta.ChannelSetting.TaskPluginConfig), "per-task polling carries the channel setting")
 
 	batch := &batchPollingAdaptor{}
 	require.NoError(t, UpdateBatchTasks(context.Background(), batch, taskChannels, tasks))
@@ -267,6 +270,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType)
 	assert.Equal(t, channelID, meta.ChannelId)
 	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.JSONEq(t, `{"marker":"poll"}`, string(meta.ChannelSetting.TaskPluginConfig), "batch polling carries the channel setting")
 }
 
 func TestDispatchPlatformUpdateUsesFetchMode(t *testing.T) {
@@ -828,6 +832,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 	testCases := []struct {
 		name          string
 		statusCode    int
+		body          []byte
 		fetchErr      error
 		parse         *relaycommon.TaskInfo
 		parseErr      error
@@ -840,6 +845,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 		wantReason    string
 		wantState     string
 		wantUnchanged bool
+		wantData      string
 	}{
 		{
 			name:          "404 fails immediately and refunds",
@@ -909,6 +915,22 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			wantFailures:  1,
 			wantUnchanged: true,
 		},
+		{
+			name:       "plugin data replaces the upstream body",
+			statusCode: http.StatusOK,
+			body:       []byte(`{"relay":"envelope"}`),
+			parse:      &relaycommon.TaskInfo{Status: model.TaskStatusInProgress, Data: []byte(`{"output":{"task_status":"RUNNING"}}`)},
+			wantStatus: model.TaskStatusInProgress,
+			wantData:   `{"output":{"task_status":"RUNNING"}}`,
+		},
+		{
+			name:       "without plugin data the upstream body is kept",
+			statusCode: http.StatusOK,
+			body:       []byte(`{"relay":"envelope"}`),
+			parse:      &relaycommon.TaskInfo{Status: model.TaskStatusInProgress},
+			wantStatus: model.TaskStatusInProgress,
+			wantData:   `{"relay":"envelope"}`,
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -935,7 +957,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			}
 			require.NoError(t, model.DB.Create(task).Error)
 
-			adaptor := &scriptedPollingAdaptor{statusCode: testCase.statusCode, fetchErr: testCase.fetchErr, parse: testCase.parse, parseErr: testCase.parseErr}
+			adaptor := &scriptedPollingAdaptor{statusCode: testCase.statusCode, body: testCase.body, fetchErr: testCase.fetchErr, parse: testCase.parse, parseErr: testCase.parseErr}
 			require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, ch, task.GetUpstreamTaskID(), map[string]*model.Task{
 				task.GetUpstreamTaskID(): task,
 			}))
@@ -949,6 +971,9 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			}
 			if testCase.wantReason != "" {
 				assert.Equal(t, testCase.wantReason, persisted.FailReason)
+			}
+			if testCase.wantData != "" {
+				assert.JSONEq(t, testCase.wantData, string(persisted.Data))
 			}
 			if testCase.wantState != "" {
 				assert.JSONEq(t, testCase.wantState, string(persisted.PrivateData.PluginState))
