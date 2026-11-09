@@ -49,6 +49,7 @@ import {
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_VOLC_PASSTHROUGH,
 } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
@@ -304,13 +305,10 @@ test.each([
     const user = userEvent.setup()
     render(<ConfigurationHarness currentRow={editingChannel} />)
     await screen.findByDisplayValue('Existing channel')
-    if (type === 45) {
-      const addressLabel = screen.getByText('API Base URL')
-      for (let click = 0; click < 10; click++) {
-        fireEvent.click(addressLabel)
-      }
-    }
-    const address = screen.getByRole('textbox', { name: label })
+    // 45 的地址由 fork 的下拉加手填渲染，输入框是 combobox 角色
+    const address = screen.getByRole(type === 45 ? 'combobox' : 'textbox', {
+      name: label,
+    })
     await waitFor(() => expect(address).toHaveAttribute('placeholder', url))
     expect(address).toHaveValue('https://saved.example')
     await user.clear(address)
@@ -3072,4 +3070,61 @@ test('an admin who is not a super admin does not see supplier pricing', async ()
   expect(
     screen.queryByRole('group', { name: 'Supplier Settings' })
   ).not.toBeInTheDocument()
+})
+
+test('editing a Volc passthrough channel shows its signing settings and keeps the keys on save', async () => {
+  editingChannel.type = CHANNEL_TYPE_VOLC_PASSTHROUGH
+  editingChannel.settings = JSON.stringify({
+    byteplus_access_key: 'saved-ak',
+    byteplus_secret_key: 'saved-sk',
+    byteplus_project_name: 'saved-project',
+    volc_sign_region: 'cn-beijing',
+    volc_asset_quota_limit: 200,
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+
+  const signing = screen.getByRole('group', { name: 'Control plane signing' })
+  const region = within(signing).getByRole('textbox', {
+    name: 'Signing Region',
+  })
+  expect(region).toHaveValue('cn-beijing')
+  await user.clear(region)
+  await user.type(region, 'ap-southeast-1')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { settings?: string }
+  expect(JSON.parse(payload.settings ?? '{}')).toMatchObject({
+    byteplus_access_key: 'saved-ak',
+    byteplus_secret_key: 'saved-sk',
+    byteplus_project_name: 'saved-project',
+    volc_sign_region: 'ap-southeast-1',
+    volc_asset_quota_limit: 200,
+  })
+})
+
+test('choosing the Volc passthrough provider fills the domestic Ark address', async () => {
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+  await user.click(screen.getByRole('option', { name: /^字节火山透传/ }))
+  expect(
+    await screen.findByRole('combobox', { name: 'API Base URL' })
+  ).toHaveValue('https://ark.cn-beijing.volces.com')
+})
+
+test('filling related models for a Seedance third-party channel adds its model list', async () => {
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+  await user.click(screen.getByRole('option', { name: /^seedance\(第三方\)/ }))
+  await user.click(
+    await screen.findByRole('button', { name: 'Fill Related Models' })
+  )
+  expect(
+    await screen.findByRole('button', { name: 'dreamina-seedance-2-5-260628' })
+  ).toBeVisible()
 })

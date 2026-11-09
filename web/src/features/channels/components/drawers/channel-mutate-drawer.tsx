@@ -217,6 +217,11 @@ import {
   assessBaseUrlTrust,
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
+import {
+  getVideoChannelDefaultBaseUrl,
+  getVideoChannelDefaultModels,
+  ownsVideoChannelBaseUrl,
+} from '../../lib/video-channel-extensions'
 import type { Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
@@ -261,6 +266,7 @@ import {
   ChannelSSOSection,
   type ChannelSSOSectionHandle,
 } from './sections'
+import { VideoChannelSettings } from './video-channel/video-channel-settings'
 
 type ChannelMutateDrawerProps = {
   open: boolean
@@ -747,6 +753,8 @@ export function ChannelMutateDrawer({
 
   // Get basic models for the current channel type
   const basicModels = useMemo(() => {
+    const videoChannelModels = getVideoChannelDefaultModels(currentType)
+    if (videoChannelModels) return videoChannelModels
     if (!allModelsList.length) return []
     // Filter models based on common patterns for specific types
     if (currentType === 1) {
@@ -1113,6 +1121,12 @@ export function ChannelMutateDrawer({
       if (!currentBaseUrlValue || currentBaseUrlValue === '') {
         form.setValue('base_url', 'https://ark.cn-beijing.volces.com')
       }
+    }
+
+    // fork 视频渠道的默认地址，见 video-channel-extensions.ts
+    const videoChannelBaseUrl = getVideoChannelDefaultBaseUrl(currentType)
+    if (videoChannelBaseUrl && !form.getValues('base_url')) {
+      form.setValue('base_url', videoChannelBaseUrl)
     }
 
     // Type 18 (Xunfei) - set default other (version)
@@ -4379,82 +4393,86 @@ export function ChannelMutateDrawer({
             )}
 
             {/* VolcEngine (type 45) */}
-            {currentType === 45 && !doubaoApiEditUnlocked && (
-              <FormField
-                control={form.control}
-                name='base_url'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel
-                      required
-                      className='cursor-pointer select-none'
-                      onClick={handleApiConfigSecretClick}
-                    >
-                      {t('API Base URL')}
-                    </FormLabel>
-                    <Select
-                      disabled={sensitiveLocked}
-                      items={[
-                        {
-                          value: 'https://ark.cn-beijing.volces.com',
-                          label: t('https://ark.cn-beijing.volces.com'),
-                        },
-                        {
-                          value: 'https://ark.ap-southeast.bytepluses.com',
-                          label: t('https://ark.ap-southeast.bytepluses.com'),
-                        },
-                      ]}
-                      onValueChange={field.onChange}
-                      value={
-                        field.value === 'doubao-coding-plan'
-                          ? 'https://ark.cn-beijing.volces.com'
-                          : field.value || 'https://ark.cn-beijing.volces.com'
-                      }
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          <SelectItem value='https://ark.cn-beijing.volces.com'>
-                            {t('https://ark.cn-beijing.volces.com')}
-                          </SelectItem>
-                          <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
-                            {t('https://ark.ap-southeast.bytepluses.com')}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {t('Select the API endpoint region')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {currentType === 45 &&
+              !ownsVideoChannelBaseUrl(currentType) &&
+              !doubaoApiEditUnlocked && (
+                <FormField
+                  control={form.control}
+                  name='base_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel
+                        required
+                        className='cursor-pointer select-none'
+                        onClick={handleApiConfigSecretClick}
+                      >
+                        {t('API Base URL')}
+                      </FormLabel>
+                      <Select
+                        disabled={sensitiveLocked}
+                        items={[
+                          {
+                            value: 'https://ark.cn-beijing.volces.com',
+                            label: t('https://ark.cn-beijing.volces.com'),
+                          },
+                          {
+                            value: 'https://ark.ap-southeast.bytepluses.com',
+                            label: t('https://ark.ap-southeast.bytepluses.com'),
+                          },
+                        ]}
+                        onValueChange={field.onChange}
+                        value={
+                          field.value === 'doubao-coding-plan'
+                            ? 'https://ark.cn-beijing.volces.com'
+                            : field.value || 'https://ark.cn-beijing.volces.com'
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            <SelectItem value='https://ark.cn-beijing.volces.com'>
+                              {t('https://ark.cn-beijing.volces.com')}
+                            </SelectItem>
+                            <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
+                              {t('https://ark.ap-southeast.bytepluses.com')}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t('Select the API endpoint region')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
             {/* VolcEngine (type 45) - Custom API URL (unlocked) */}
-            {currentType === 45 && doubaoApiEditUnlocked && (
-              <FormField
-                control={form.control}
-                name='base_url'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel required>{t('API Base URL')}</FormLabel>
-                    <FormControl>
-                      <Input placeholder={baseUrlPlaceholder} {...field} />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Enter custom API endpoint URL')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {currentType === 45 &&
+              !ownsVideoChannelBaseUrl(currentType) &&
+              doubaoApiEditUnlocked && (
+                <FormField
+                  control={form.control}
+                  name='base_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel required>{t('API Base URL')}</FormLabel>
+                      <FormControl>
+                        <Input placeholder={baseUrlPlaceholder} {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Enter custom API endpoint URL')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
             {/* Coze (type 49) */}
             {currentType === 49 && (
@@ -4480,93 +4498,101 @@ export function ChannelMutateDrawer({
             )}
 
             {/* General base_url for other types */}
-            {![3, 8, 22, 36, 45].includes(currentType) && (
-              <FormField
-                control={form.control}
-                name='base_url'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel
-                      required={
-                        currentType === CHANNEL_TYPE_TASK_PLUGIN ||
-                        currentType === CHANNEL_TYPE_VLLM ||
-                        currentType === CHANNEL_TYPE_SGLANG
-                      }
-                    >
-                      {t('Base URL')}
-                    </FormLabel>
-                    <FormControl>
-                      <Input placeholder={baseUrlPlaceholder} {...field} />
-                    </FormControl>
-                    {currentType !== CHANNEL_TYPE_TASK_PLUGIN && (
-                      <FormDescription>
-                        {t(
-                          'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                        )}
-                      </FormDescription>
-                    )}
-                    {currentType === CHANNEL_TYPE_TASK_PLUGIN &&
-                      !boundTaskPlugin?.baseUrl && (
+            {![3, 8, 22, 36, 45].includes(currentType) &&
+              !ownsVideoChannelBaseUrl(currentType) && (
+                <FormField
+                  control={form.control}
+                  name='base_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel
+                        required={
+                          currentType === CHANNEL_TYPE_TASK_PLUGIN ||
+                          currentType === CHANNEL_TYPE_VLLM ||
+                          currentType === CHANNEL_TYPE_SGLANG
+                        }
+                      >
+                        {t('Base URL')}
+                      </FormLabel>
+                      <FormControl>
+                        <Input placeholder={baseUrlPlaceholder} {...field} />
+                      </FormControl>
+                      {currentType !== CHANNEL_TYPE_TASK_PLUGIN && (
                         <FormDescription>
                           {t(
-                            'The upstream address this plugin sends requests to. The plugin declares no default, so it must be filled in.'
+                            'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
                           )}
                         </FormDescription>
                       )}
-                    {currentType === CHANNEL_TYPE_TASK_PLUGIN &&
-                      boundTaskPlugin?.baseUrl && (
-                        <FormDescription className='flex flex-wrap items-center gap-x-1'>
-                          <span>{t('Plugin default')}:</span>
-                          <span className='font-mono break-all'>
-                            {boundTaskPlugin.baseUrl}
-                          </span>
-                          {(field.value ?? '').trim().replace(/\/+$/, '') !==
-                            boundTaskPlugin.baseUrl && (
-                            <Button
-                              type='button'
-                              variant='link'
-                              size='xs'
-                              className='h-auto p-0'
-                              onClick={() =>
-                                form.setValue(
-                                  'base_url',
-                                  boundTaskPlugin.baseUrl ?? '',
-                                  {
-                                    shouldDirty: true,
-                                    shouldValidate: true,
-                                  }
-                                )
-                              }
-                            >
-                              {t('Use default')}
-                            </Button>
-                          )}
-                        </FormDescription>
+                      {currentType === CHANNEL_TYPE_TASK_PLUGIN &&
+                        !boundTaskPlugin?.baseUrl && (
+                          <FormDescription>
+                            {t(
+                              'The upstream address this plugin sends requests to. The plugin declares no default, so it must be filled in.'
+                            )}
+                          </FormDescription>
+                        )}
+                      {currentType === CHANNEL_TYPE_TASK_PLUGIN &&
+                        boundTaskPlugin?.baseUrl && (
+                          <FormDescription className='flex flex-wrap items-center gap-x-1'>
+                            <span>{t('Plugin default')}:</span>
+                            <span className='font-mono break-all'>
+                              {boundTaskPlugin.baseUrl}
+                            </span>
+                            {(field.value ?? '').trim().replace(/\/+$/, '') !==
+                              boundTaskPlugin.baseUrl && (
+                              <Button
+                                type='button'
+                                variant='link'
+                                size='xs'
+                                className='h-auto p-0'
+                                onClick={() =>
+                                  form.setValue(
+                                    'base_url',
+                                    boundTaskPlugin.baseUrl ?? '',
+                                    {
+                                      shouldDirty: true,
+                                      shouldValidate: true,
+                                    }
+                                  )
+                                }
+                              >
+                                {t('Use default')}
+                              </Button>
+                            )}
+                          </FormDescription>
+                        )}
+                      <FormMessage />
+                      {(taskPluginBaseUrlTrust?.plainHttp ||
+                        taskPluginBaseUrlTrust?.privateHost) && (
+                        <Alert>
+                          <AlertCircle />
+                          <AlertDescription>
+                            {taskPluginBaseUrlTrust?.plainHttp &&
+                              t(
+                                'This base URL uses plain HTTP, so the channel key is sent unencrypted.'
+                              )}
+                            {taskPluginBaseUrlTrust?.plainHttp &&
+                              taskPluginBaseUrlTrust?.privateHost &&
+                              ' '}
+                            {taskPluginBaseUrlTrust?.privateHost &&
+                              t(
+                                'This base URL points at a private or local network host. Make sure it is an upstream you control.'
+                              )}
+                          </AlertDescription>
+                        </Alert>
                       )}
-                    <FormMessage />
-                    {(taskPluginBaseUrlTrust?.plainHttp ||
-                      taskPluginBaseUrlTrust?.privateHost) && (
-                      <Alert>
-                        <AlertCircle />
-                        <AlertDescription>
-                          {taskPluginBaseUrlTrust?.plainHttp &&
-                            t(
-                              'This base URL uses plain HTTP, so the channel key is sent unencrypted.'
-                            )}
-                          {taskPluginBaseUrlTrust?.plainHttp &&
-                            taskPluginBaseUrlTrust?.privateHost &&
-                            ' '}
-                          {taskPluginBaseUrlTrust?.privateHost &&
-                            t(
-                              'This base URL points at a private or local network host. Make sure it is an upstream you control.'
-                            )}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </FormItem>
-                )}
-              />
-            )}
+                    </FormItem>
+                  )}
+                />
+              )}
+
+            <VideoChannelSettings
+              form={form}
+              type={currentType}
+              disabled={sensitiveLocked}
+              baseUrlPlaceholder={baseUrlPlaceholder}
+            />
 
             {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (
               <FormField
