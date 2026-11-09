@@ -22,10 +22,8 @@ import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
-  CHANNEL_TYPE_SEEDANCE_3RD,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
-  CHANNEL_TYPE_VOLC_PASSTHROUGH,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
@@ -47,6 +45,13 @@ import {
   supportsTaskPluginConfig,
 } from './channel-plugin-extensions'
 import { supportsResponsesWebSocket } from './responses-websocket'
+import {
+  VIDEO_CHANNEL_SETTINGS_DEFAULTS,
+  readVideoChannelSettings,
+  validateVideoChannelSettings,
+  videoChannelSettingsShape,
+  writeVideoChannelSettings,
+} from './video-channel-extensions'
 
 // ============================================================================
 // Form Validation Schema
@@ -316,23 +321,8 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
-    // BytePlus overseas asset library (stored in settings JSON; VolcEngine/DoubaoVideo)
-    byteplus_asset_enabled: z.boolean().optional(),
-    byteplus_access_key: z.string().optional(),
-    byteplus_secret_key: z.string().optional(),
-    byteplus_asset_group_id: z.string().optional(),
-    byteplus_project_name: z.string().optional(),
-    byteplus_region: z.string().optional(),
-    byteplus_moderation_skip: z.boolean().optional(),
-    asset_provider: z.enum(['byteplus', 'cloudwise']).optional(),
-    // 字节火山透传 (type 66): control-plane signing region / endpoint override
-    volc_sign_region: z.string().optional(),
-    volc_openapi_endpoint: z.string().optional(),
-    // 素材库条数上限，仅用于管理页对账展示；0 表示未知/不限
-    volc_asset_quota_limit: z.number().optional(),
-    // Seedance(第三方) asset pre-upload (stored in settings JSON; channel type 65)
-    seedance3rd_asset_enabled: z.boolean().optional(),
-    expose_upstream_task_id: z.boolean().optional(),
+    // fork 视频渠道的 settings 字段，见 video-channel-extensions.ts
+    ...videoChannelSettingsShape,
   })
   .superRefine((data, ctx) => {
     if (
@@ -451,35 +441,7 @@ export const channelFormSchema = z
       )
     }
 
-    // BytePlus asset library: when enabled on VolcEngine/DoubaoVideo channels,
-    // validate based on the selected asset_provider.
-    if ([45, 54].includes(data.type) && data.byteplus_asset_enabled) {
-      const provider = data.asset_provider || 'byteplus'
-      if (provider === 'byteplus') {
-        if (!data.byteplus_access_key?.trim()) {
-          addRequiredIssue(
-            ctx,
-            'byteplus_access_key',
-            'Official asset library requires an Access Key'
-          )
-        }
-        if (!data.byteplus_secret_key?.trim()) {
-          addRequiredIssue(
-            ctx,
-            'byteplus_secret_key',
-            'Official asset library requires a Secret Key'
-          )
-        }
-      } else if (provider === 'cloudwise') {
-        if (!data.base_url?.trim()) {
-          addRequiredIssue(
-            ctx,
-            'base_url',
-            'Third-party asset library reuses the channel API URL, please fill it in first'
-          )
-        }
-      }
-    }
+    validateVideoChannelSettings(data, ctx)
 
     const protocol = normalizeHttpProtocol(data.http_protocol)
     const shards = data.http2_connection_shards ?? 1
@@ -569,22 +531,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
-  // BytePlus overseas asset library
-  byteplus_asset_enabled: false,
-  byteplus_access_key: '',
-  byteplus_secret_key: '',
-  byteplus_asset_group_id: '',
-  byteplus_project_name: 'default',
-  byteplus_region: 'cn-beijing',
-  byteplus_moderation_skip: true,
-  asset_provider: 'byteplus',
-  // Seedance(第三方) asset pre-upload
-  seedance3rd_asset_enabled: false,
-  expose_upstream_task_id: false,
-  // 字节火山透传：留空则按渠道 BaseURL 推导，不预填具体 region
-  volc_sign_region: '',
-  volc_openapi_endpoint: '',
-  volc_asset_quota_limit: 0,
+  ...VIDEO_CHANNEL_SETTINGS_DEFAULTS,
   advanced_custom: '',
 }
 
@@ -696,19 +643,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
-  let bytePlusAssetEnabled = false
-  let bytePlusAccessKey = ''
-  let bytePlusSecretKey = ''
-  let bytePlusAssetGroupId = ''
-  let bytePlusProjectName = 'default'
-  let bytePlusRegion = 'cn-beijing'
-  let bytePlusModerationSkip = true
-  let assetProvider: 'byteplus' | 'cloudwise' = 'byteplus'
-  let seedance3rdAssetEnabled = false
-  let exposeUpstreamTaskId = false
-  let volcSignRegion = ''
-  let volcOpenAPIEndpoint = ''
-  let volcAssetQuotaLimit = 0
+  let videoChannelSettings = readVideoChannelSettings(null)
   let advancedCustom = ''
 
   if (channel.settings) {
@@ -736,19 +671,7 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
-      bytePlusAssetEnabled = parsed.byteplus_asset_enabled === true
-      bytePlusAccessKey = parsed.byteplus_access_key || ''
-      bytePlusSecretKey = parsed.byteplus_secret_key || ''
-      bytePlusAssetGroupId = parsed.byteplus_asset_group_id || ''
-      bytePlusProjectName = parsed.byteplus_project_name || 'default'
-      bytePlusRegion = parsed.byteplus_region || 'cn-beijing'
-      bytePlusModerationSkip = parsed.byteplus_moderation_skip !== false
-      assetProvider = parsed.asset_provider || 'byteplus'
-      seedance3rdAssetEnabled = parsed.seedance3rd_asset_enabled === true
-      exposeUpstreamTaskId = parsed.expose_upstream_task_id === true
-      volcSignRegion = parsed.volc_sign_region || ''
-      volcOpenAPIEndpoint = parsed.volc_openapi_endpoint || ''
-      volcAssetQuotaLimit = Number(parsed.volc_asset_quota_limit) || 0
+      videoChannelSettings = readVideoChannelSettings(parsed)
       if (parsed.advanced_custom) {
         advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
       }
@@ -804,22 +727,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
-    // BytePlus overseas asset library
-    byteplus_asset_enabled: bytePlusAssetEnabled,
-    byteplus_access_key: bytePlusAccessKey,
-    byteplus_secret_key: bytePlusSecretKey,
-    byteplus_asset_group_id: bytePlusAssetGroupId,
-    byteplus_project_name: bytePlusProjectName,
-    byteplus_region: bytePlusRegion,
-    byteplus_moderation_skip: bytePlusModerationSkip,
-    asset_provider: assetProvider,
-    // Seedance(第三方) asset pre-upload
-    seedance3rd_asset_enabled: seedance3rdAssetEnabled,
-    expose_upstream_task_id: exposeUpstreamTaskId,
-    // 字节火山透传控制面签名
-    volc_sign_region: volcSignRegion,
-    volc_openapi_endpoint: volcOpenAPIEndpoint,
-    volc_asset_quota_limit: volcAssetQuotaLimit,
+    ...videoChannelSettings,
     advanced_custom: advancedCustom,
   }
 }
@@ -958,95 +866,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     delete settingsObj.aws_key_type
   }
 
-  // BytePlus overseas asset library for VolcEngine (45) / DoubaoVideo (54).
-  const bytePlusKeys = [
-    'byteplus_asset_enabled',
-    'byteplus_access_key',
-    'byteplus_secret_key',
-    'byteplus_asset_group_id',
-    'byteplus_project_name',
-    'byteplus_region',
-    'byteplus_moderation_skip',
-    'asset_provider',
-  ]
-  if (formData.type === CHANNEL_TYPE_VOLC_PASSTHROUGH) {
-    // type 66 的 AK/SK/项目名在下面的透传分支里写入，这里不再重复处理，
-    // 也不能走 else 分支把它们删掉。
-  } else if ([45, 54].includes(formData.type)) {
-    settingsObj.byteplus_asset_enabled =
-      formData.byteplus_asset_enabled === true
-    settingsObj.byteplus_access_key = (
-      formData.byteplus_access_key || ''
-    ).trim()
-    settingsObj.byteplus_secret_key = (
-      formData.byteplus_secret_key || ''
-    ).trim()
-    settingsObj.byteplus_asset_group_id = (
-      formData.byteplus_asset_group_id || ''
-    ).trim()
-    settingsObj.byteplus_project_name =
-      (formData.byteplus_project_name || '').trim() || 'default'
-    settingsObj.byteplus_region =
-      (formData.byteplus_region || '').trim() || 'cn-beijing'
-    settingsObj.byteplus_moderation_skip =
-      formData.byteplus_moderation_skip !== false
-    settingsObj.asset_provider = formData.asset_provider || 'byteplus'
-  } else {
-    for (const k of bytePlusKeys) {
-      if (k in settingsObj) delete settingsObj[k]
-    }
-  }
-
-  // 字节火山透传 (type 66)：控制面签名 region 与 endpoint 覆盖。
-  // 两者均可留空 —— 后端按渠道 BaseURL 推导（见 dto.ResolveVolcSignRegion）。
-  // 控制面（?Action=）走 AK/SK 签名，与数据面的 Bearer 密钥独立，
-  // 复用 byteplus_access_key / byteplus_secret_key / byteplus_project_name 三个键，
-  // 后端 buildPassthroughCredentials 从同一处读取。
-  const volcPassthroughKeys = [
-    'volc_sign_region',
-    'volc_openapi_endpoint',
-    'volc_asset_quota_limit',
-  ]
-  if (formData.type === CHANNEL_TYPE_VOLC_PASSTHROUGH) {
-    // 素材库上限官方查不到，只能手填；0/空一律存 0，管理页据此显示「未知/不限」。
-    settingsObj.volc_asset_quota_limit = Math.max(
-      0,
-      Math.floor(Number(formData.volc_asset_quota_limit) || 0)
-    )
-    settingsObj.volc_sign_region = (formData.volc_sign_region || '').trim()
-    settingsObj.volc_openapi_endpoint = (
-      formData.volc_openapi_endpoint || ''
-    ).trim()
-    settingsObj.byteplus_access_key = (
-      formData.byteplus_access_key || ''
-    ).trim()
-    settingsObj.byteplus_secret_key = (
-      formData.byteplus_secret_key || ''
-    ).trim()
-    settingsObj.byteplus_project_name =
-      (formData.byteplus_project_name || '').trim() || 'default'
-  } else {
-    for (const k of volcPassthroughKeys) {
-      if (k in settingsObj) delete settingsObj[k]
-    }
-  }
-
-  // Seedance(第三方) asset pre-upload for channel type 65.
-  if (formData.type === CHANNEL_TYPE_SEEDANCE_3RD) {
-    settingsObj.seedance3rd_asset_enabled =
-      formData.seedance3rd_asset_enabled === true
-  } else if ('seedance3rd_asset_enabled' in settingsObj) {
-    delete settingsObj.seedance3rd_asset_enabled
-  }
-
-  // Upstream task id passthrough for all Seedance channels:
-  // VolcEngine (45) / DoubaoVideo (54) / Seedance 3rd-party (65).
-  if ([45, 54, CHANNEL_TYPE_SEEDANCE_3RD].includes(formData.type)) {
-    settingsObj.expose_upstream_task_id =
-      formData.expose_upstream_task_id === true
-  } else if ('expose_upstream_task_id' in settingsObj) {
-    delete settingsObj.expose_upstream_task_id
-  }
+  // fork 视频渠道的 settings，见 video-channel-extensions.ts
+  writeVideoChannelSettings(settingsObj, formData)
 
   // Field passthrough controls:
   // - OpenAI, Anthropic, Codex, and New API: allow_service_tier

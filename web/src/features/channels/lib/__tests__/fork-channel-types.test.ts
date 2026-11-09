@@ -29,6 +29,8 @@ import {
 } from '../../constants'
 import { channelSchema } from '../../types'
 import {
+  CHANNEL_FORM_DEFAULT_VALUES,
+  channelFormSchema,
   transformChannelToFormDefaults,
   transformFormDataToUpdatePayload,
 } from '../channel-form'
@@ -334,5 +336,40 @@ describe('video channel settings module', () => {
       true,
       false,
     ])
+  })
+})
+
+describe('channel form wiring for video channels', () => {
+  const arkForm = {
+    ...CHANNEL_FORM_DEFAULT_VALUES,
+    name: 'Ark',
+    key: 'sk-test',
+    models: 'seedance',
+    type: 45,
+    base_url: ARK_CN_BASE_URL,
+    byteplus_asset_enabled: true,
+  }
+
+  test('new channel form defaults include the video channel defaults', () => {
+    expect(CHANNEL_FORM_DEFAULT_VALUES).toMatchObject(
+      VIDEO_CHANNEL_SETTINGS_DEFAULTS
+    )
+  })
+
+  test('the channel form rejects the official asset library without keys', () => {
+    const result = channelFormSchema.safeParse(arkForm)
+    expect(result.error?.issues.map((issue) => issue.path[0])).toEqual([
+      'byteplus_access_key',
+      'byteplus_secret_key',
+    ])
+  })
+
+  test('the channel form accepts the official asset library with keys', () => {
+    const result = channelFormSchema.safeParse({
+      ...arkForm,
+      byteplus_access_key: 'ak',
+      byteplus_secret_key: 'sk',
+    })
+    expect(result.error?.issues ?? []).toEqual([])
   })
 })
