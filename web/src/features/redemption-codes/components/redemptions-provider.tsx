@@ -20,11 +20,7 @@ import React, { useState } from 'react'
 
 import useDialogState from '@/hooks/use-dialog'
 
-import {
-  type AutoCreateCredentials,
-  type Redemption,
-  type RedemptionsDialogType,
-} from '../types'
+import type { Redemption, RedemptionsDialogType } from '../types'
 
 type RedemptionsContextType = {
   open: RedemptionsDialogType | null
@@ -33,16 +29,6 @@ type RedemptionsContextType = {
   setCurrentRow: React.Dispatch<React.SetStateAction<Redemption | null>>
   refreshTrigger: number
   triggerRefresh: () => void
-  /**
-   * Snapshot of the user just produced by the auto-create flow.
-   * Set right before transitioning to the 'credentials' dialog so that
-   * the credentials popup can render the (possibly edited) username/password
-   * without re-fetching anything.
-   */
-  credentials: AutoCreateCredentials | null
-  setCredentials: React.Dispatch<
-    React.SetStateAction<AutoCreateCredentials | null>
-  >
 }
 
 const RedemptionsContext = React.createContext<RedemptionsContextType | null>(
@@ -57,9 +43,6 @@ export function RedemptionsProvider({
   const [open, setOpen] = useDialogState<RedemptionsDialogType>(null)
   const [currentRow, setCurrentRow] = useState<Redemption | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
-  const [credentials, setCredentials] = useState<AutoCreateCredentials | null>(
-    null
-  )
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1)
 
@@ -72,8 +55,6 @@ export function RedemptionsProvider({
         setCurrentRow,
         refreshTrigger,
         triggerRefresh,
-        credentials,
-        setCredentials,
       }}
     >
       {children}

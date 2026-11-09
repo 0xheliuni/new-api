@@ -67,6 +67,7 @@ async function renderEditor() {
         savedAudioCompletionRatio='{}'
         savedBillingMode='{}'
         savedBillingExpr='{}'
+        savedVideoPromo='{}'
         modelPrice='{}'
         modelRatio={modelRatio}
         cacheRatio='{}'
@@ -77,6 +78,7 @@ async function renderEditor() {
         audioCompletionRatio='{}'
         billingMode='{}'
         billingExpr='{}'
+        videoPromo='{}'
         onChange={vi.fn()}
         onSave={vi.fn()}
         isSaving={false}

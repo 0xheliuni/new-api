@@ -38,7 +38,6 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
   const unpricedCount = overview?.unpriced_channel_count ?? 0
   // Backend profit_cny = revenue_usd × rate − cost_cny: both sides in CNY.
   const profitAmount = totals?.profit_cny ?? 0
-  const profitTone = profitAmount < 0 ? ('rose' as const) : ('teal' as const)
 
   const revenue = totals
     ? resolveDualMoney(totals.revenue_usd, 'usd', primary, exchangeRate)
@@ -78,7 +77,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
                 : `${revenue.secondary} · ${t('Refunds')} -${refund.primary}`
             }
             icon={DollarSign}
-            tone='gray'
+            iconTone='neutral'
             loading={loading}
           />
         </div>
@@ -92,7 +91,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
                 : `${cost.secondary} · ${t('List Price')} ${listPrice.primary} × ${t('per-channel ratios')}`
             }
             icon={Receipt}
-            tone='gray'
+            iconTone='neutral'
             loading={loading}
           />
         </div>
@@ -114,7 +113,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
             }
             description={loading || !totals || !profit ? '' : profit.secondary}
             icon={PiggyBank}
-            tone={profitTone}
+            iconTone='neutral'
             loading={loading}
           />
         </div>
@@ -128,7 +127,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
                 : `${profit.primary} / ${revenue.primary}`
             }
             icon={TrendingUp}
-            tone={profitTone}
+            iconTone='neutral'
             loading={loading}
           />
         </div>

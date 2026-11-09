@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
 import { splitPluginBillingExprKey } from '@/features/pricing/lib/plugin-pricing'
 
-import { safeJsonParse } from '../utils/json-parser'
 import type { VideoPromoConfig } from '../types'
+import { safeJsonParse } from '../utils/json-parser'
 import { formatPricingNumber } from './pricing-format'
 
 export type ModelPricingSnapshotInput = {
@@ -34,7 +34,7 @@ export type ModelPricingSnapshotInput = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
-  videoPromo: string
+  videoPromo?: string
   pluginBillingExpr?: string
 }
 

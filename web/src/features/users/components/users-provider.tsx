@@ -24,7 +24,7 @@ import {
 } from '@/features/auth/secure-verification'
 import useDialogState from '@/hooks/use-dialog'
 
-import type { User, UsersDialogType } from '../types'
+import type { AutoCreateCredentials, User, UsersDialogType } from '../types'
 
 type UsersContextType = {
   open: UsersDialogType | null
@@ -39,6 +39,16 @@ type UsersContextType = {
   >['requestVerification']
   /** True while the step-up dialog is showing; confirm dialogs yield to it. */
   verificationActive: boolean
+  /**
+   * Snapshot of the user just produced by the auto-create flow.
+   * Set right before transitioning to the 'credentials' dialog so that
+   * the credentials popup can render the (possibly edited) username/password
+   * without re-fetching anything.
+   */
+  credentials: AutoCreateCredentials | null
+  setCredentials: React.Dispatch<
+    React.SetStateAction<AutoCreateCredentials | null>
+  >
 }
 
 const UsersContext = React.createContext<UsersContextType | null>(null)
@@ -47,6 +57,9 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useDialogState<UsersDialogType>(null)
   const [currentRow, setCurrentRow] = useState<User | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [credentials, setCredentials] = useState<AutoCreateCredentials | null>(
+    null
+  )
   // The dialog mounts once here; consumers only receive the proof token, and
   // the memoized value keeps dialog keystrokes from re-rendering the table.
   const verification = useSecureVerification()
@@ -68,6 +81,8 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
       triggerRefresh,
       requestVerification,
       verificationActive,
+      credentials,
+      setCredentials,
     }),
     [
       open,
@@ -77,6 +92,7 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
       triggerRefresh,
       requestVerification,
       verificationActive,
+      credentials,
     ]
   )
 
