@@ -23,21 +23,35 @@ import {
   hasAssetLibrary,
   hasSeedanceAssetUpload,
   hasUpstreamTaskIdOption,
+  hasVolcPassthroughSigning,
+  ownsVideoChannelBaseUrl,
 } from '../../../lib/video-channel-extensions'
 import { AssetLibraryFields } from './asset-library-fields'
 import { SeedanceThirdPartyFields } from './seedance-third-party-fields'
 import { UpstreamTaskIdField } from './upstream-task-id-field'
+import { VideoChannelBaseUrlField } from './video-channel-base-url-field'
+import { VolcPassthroughFields } from './volc-passthrough-fields'
 
 type VideoChannelSettingsProps = {
   form: UseFormReturn<ChannelFormValues>
   type: number
   disabled: boolean
+  /** 抽屉的地址占位文字，即服务端下发的默认地址 */
+  baseUrlPlaceholder: string
 }
 
 /** fork 视频渠道在"连接与模型"分区里的额外配置；其他渠道类型不渲染任何内容。 */
 export function VideoChannelSettings(props: VideoChannelSettingsProps) {
   return (
     <>
+      {ownsVideoChannelBaseUrl(props.type) && (
+        <VideoChannelBaseUrlField
+          form={props.form}
+          type={props.type}
+          placeholder={props.baseUrlPlaceholder}
+          disabled={props.disabled}
+        />
+      )}
       {hasAssetLibrary(props.type) && (
         <AssetLibraryFields form={props.form} disabled={props.disabled} />
       )}
@@ -46,6 +60,9 @@ export function VideoChannelSettings(props: VideoChannelSettingsProps) {
       )}
       {hasUpstreamTaskIdOption(props.type) && (
         <UpstreamTaskIdField form={props.form} disabled={props.disabled} />
+      )}
+      {hasVolcPassthroughSigning(props.type) && (
+        <VolcPassthroughFields form={props.form} disabled={props.disabled} />
       )}
     </>
   )

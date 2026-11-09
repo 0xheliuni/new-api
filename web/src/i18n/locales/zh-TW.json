@@ -7807,6 +7807,9 @@
     "Task plugin {{key}} could not validate the configuration, please try again later": "任務外掛 {{key}} 無法驗證此設定，請稍後再試",
     "Invalid preview request": "預覽請求無效",
     "Preview input must not exceed 1 MiB": "預覽輸入不能超過 1 MiB",
-    "Task plugin configuration is empty": "任務外掛設定為空"
+    "Task plugin configuration is empty": "任務外掛設定為空",
+    "e.g., 1000": "例如，1000",
+    "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "此 IAM 帳號最多可持有的素材數量。官方沒有查詢介面，需手動填寫；留空或填 0 表示未知/不限。僅用於素材管理頁對帳。",
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "透傳的資料面位址。下方簽章地區留空時，也據此推導控制面簽章地區。"
   }
 }

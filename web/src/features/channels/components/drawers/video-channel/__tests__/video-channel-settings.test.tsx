@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useForm } from 'react-hook-form'
 import { describe, expect, test } from 'vitest'
@@ -47,6 +47,7 @@ function Harness(props: {
         form={form}
         type={props.type}
         disabled={props.disabled ?? false}
+        baseUrlPlaceholder='https://placeholder.example'
       />
     </Form>
   )
@@ -155,6 +156,79 @@ describe('VideoChannelSettings', () => {
     expect(screen.getByLabelText('Access Key (AK)')).toBeDisabled()
     expect(
       screen.getByRole('textbox', { name: 'Asset Group ID' })
+    ).toBeDisabled()
+  })
+})
+
+describe('VideoChannelSettings address and control plane signing', () => {
+  test('Volc passthrough shows an optional address and the signing fields', () => {
+    render(
+      <Harness
+        type={66}
+        values={{
+          base_url: '',
+          byteplus_access_key: 'ak',
+          volc_asset_quota_limit: 200,
+        }}
+      />
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'API Base URL' })
+    ).toHaveAttribute('placeholder', 'https://placeholder.example')
+    const signing = screen.getByRole('group', {
+      name: 'Control plane signing',
+    })
+    expect(
+      within(signing).getByRole('textbox', { name: 'Access Key (AK)' })
+    ).toHaveValue('ak')
+    expect(within(signing).getByLabelText('Secret Key (SK)')).toHaveAttribute(
+      'type',
+      'password'
+    )
+    expect(
+      within(signing).getByRole('spinbutton', { name: 'Asset Quota Limit' })
+    ).toHaveValue(200)
+    expect(
+      screen.queryByRole('group', { name: 'Asset library pre-upload' })
+    ).not.toBeInTheDocument()
+  })
+
+  test('VolcEngine marks its address as required and keeps a typed custom address', async () => {
+    const user = userEvent.setup()
+    render(<Harness type={45} values={{ base_url: '' }} />)
+    const address = screen.getByRole('combobox', { name: /^API Base URL/ })
+    expect(address).toHaveAccessibleName('API Base URL *')
+
+    await user.type(address, 'https://api.cloudwise.ai/api')
+    await user.tab()
+
+    expect(address).toHaveValue('https://api.cloudwise.ai/api')
+  })
+
+  test('a stored Coding Plan address shows as the domestic Ark address', () => {
+    render(<Harness type={45} values={{ base_url: 'doubao-coding-plan' }} />)
+    expect(screen.getByRole('combobox', { name: /^API Base URL/ })).toHaveValue(
+      'https://ark.cn-beijing.volces.com'
+    )
+  })
+
+  test('DoubaoVideo leaves the address field to the drawer', () => {
+    render(<Harness type={54} />)
+    expect(
+      screen.queryByRole('combobox', { name: /^API Base URL/ })
+    ).not.toBeInTheDocument()
+  })
+
+  test('locked Volc passthrough settings disable the address and signing fields', () => {
+    render(<Harness type={66} disabled />)
+    expect(
+      screen.getByRole('combobox', { name: 'API Base URL' })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('textbox', { name: 'Signing Region' })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('spinbutton', { name: 'Asset Quota Limit' })
     ).toBeDisabled()
   })
 })

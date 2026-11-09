@@ -7807,6 +7807,9 @@
     "Task plugin {{key}} could not validate the configuration, please try again later": "Le plugin de tâche {{key}} n'a pas pu valider la configuration, veuillez réessayer plus tard",
     "Invalid preview request": "Requête d'aperçu invalide",
     "Preview input must not exceed 1 MiB": "Les données d'aperçu ne doivent pas dépasser 1 Mio",
-    "Task plugin configuration is empty": "La configuration du plugin de tâche est vide"
+    "Task plugin configuration is empty": "La configuration du plugin de tâche est vide",
+    "e.g., 1000": "p. ex., 1000",
+    "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "Nombre maximal de ressources que ce compte IAM peut détenir. Aucune API officielle ne permet de le consulter : saisissez-le manuellement ; laissez vide ou 0 si inconnu ou illimité. Sert uniquement au rapprochement dans la page de gestion des ressources.",
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Hôte du plan de données pour le relais. Détermine aussi la région de signature du plan de contrôle lorsque celle-ci est laissée vide ci-dessous."
   }
 }

@@ -7807,6 +7807,9 @@
     "Task plugin {{key}} could not validate the configuration, please try again later": "タスクプラグイン {{key}} が設定を検証できませんでした。しばらくしてから再度お試しください",
     "Invalid preview request": "プレビューリクエストが無効です",
     "Preview input must not exceed 1 MiB": "プレビューの入力は 1 MiB 以内にしてください",
-    "Task plugin configuration is empty": "タスクプラグインの設定が空です"
+    "Task plugin configuration is empty": "タスクプラグインの設定が空です",
+    "e.g., 1000": "例: 1000",
+    "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "この IAM アカウントが保持できるアセットの最大数です。公式の照会 API がないため手動で入力してください。空欄または 0 は不明／無制限を表します。アセット管理ページでの照合にのみ使用されます。",
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "パススルーのデータプレーンのホストです。下の署名リージョンが未設定の場合は、コントロールプレーンの署名リージョンもここから決まります。"
   }
 }
