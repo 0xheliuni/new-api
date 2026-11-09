@@ -17,12 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from '@/components/ui/hover-card'
+
 import {
   breakdownChannelCount,
   effectiveCostRatioOf,
@@ -45,6 +47,7 @@ export interface PricingCellRow {
   cost_mode?: '' | 'ratio' | 'discount'
   cost_ratio?: number
   cost_discount?: number
+  cost_exchange_rate?: number
   priced?: boolean
   breakdown?: CostBreakdownRow[]
   /** Cost ratio actually paid over the range (cost ÷ list, quota weighted). */
@@ -102,6 +105,18 @@ function WeightedCostRatio({ row }: { row: PricingCellRow }) {
 
   if (!breakdown.length) return <span className='tabular-nums'>{text}</span>
 
+  // Every branch has to describe a *derived* number: the value shown is
+  // cost ÷ list price over the row's own money, never a stored config.
+  // Saying "configured" here contradicts the list below whenever the
+  // channel is discount-mode (0.8 configured renders as 5.76 derived)
+  // or part of the range has no price version.
+  let basisLabel = t('Actual cost ratio: cost ÷ list price')
+  if (blended) {
+    basisLabel = t('Weighted across channels: cost ÷ list price')
+  } else if (versioned) {
+    basisLabel = t('Weighted across price versions: cost ÷ list price')
+  }
+
   return (
     <HoverCard>
       <HoverCardTrigger
@@ -114,22 +129,11 @@ function WeightedCostRatio({ row }: { row: PricingCellRow }) {
       </HoverCardTrigger>
       <HoverCardContent align='end' className='w-72'>
         <div className='flex flex-col gap-1.5'>
-          {/* Every branch has to describe a *derived* number: the value shown is
-              cost ÷ list price over the row's own money, never a stored config.
-              Saying "configured" here contradicts the list below whenever the
-              channel is discount-mode (0.8 configured renders as 5.76 derived)
-              or part of the range has no price version. */}
-          <p className='text-muted-foreground text-xs'>
-            {blended
-              ? t('Weighted across channels: cost ÷ list price')
-              : versioned
-                ? t('Weighted across price versions: cost ÷ list price')
-                : t('Actual cost ratio: cost ÷ list price')}
-          </p>
+          <p className='text-muted-foreground text-xs'>{basisLabel}</p>
           <div className='flex flex-col divide-y'>
-            {breakdown.map((b, index) => (
+            {breakdown.map((b) => (
               <div
-                key={`${b.channel_id ?? 'none'}-${index}`}
+                key={`${b.username ?? ''}|${b.model_name ?? ''}|${b.channel_id ?? 0}`}
                 className='flex items-center justify-between gap-4 py-1 text-xs'
               >
                 <span className='truncate'>
@@ -207,6 +211,7 @@ export function CostRatioDiscountCell({
           currentRatio={row.cost_ratio ?? 0}
           currentMode={row.cost_mode}
           currentDiscount={row.cost_discount ?? 0}
+          currentExchangeRate={row.cost_exchange_rate}
           exchangeRate={exchangeRate}
         />
       </div>

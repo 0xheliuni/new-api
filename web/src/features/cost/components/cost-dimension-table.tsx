@@ -16,13 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Fragment, type ReactNode, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import { Fragment, type ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
-import { formatNumber } from '@/lib/format'
+
+import { StaticDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -43,16 +43,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { StaticDataTable } from '@/components/data-table'
+import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
 import { getCostByDimension } from '../api'
-import { DEFAULT_EXCHANGE_RATE } from './cost-filter'
-import type {
-  CostBreakdownRow,
-  CostChannelSubSupplier,
-  CostDimension,
-  CostDimensionRow,
-  CostMoney,
-} from '../types'
 import {
   formatAvgTtft,
   formatRate,
@@ -61,8 +55,14 @@ import {
   type CostBreakdownGroupBy,
   type MoneyPrimaryCurrency,
 } from '../lib'
-import { MoneyDualCell } from './money-dual-cell'
-import { TokensDetailHover } from './tokens-detail-hover'
+import type {
+  CostBreakdownRow,
+  CostChannelSubSupplier,
+  CostDimension,
+  CostDimensionRow,
+  CostMoney,
+} from '../types'
+import { DEFAULT_EXCHANGE_RATE } from './cost-filter'
 import {
   CostHelpFormula,
   CostHelpHover,
@@ -73,8 +73,12 @@ import {
   RequestOutcomeCell,
   UserDiscountCell,
 } from './cost-user-cells'
+import { MoneyDualCell } from './money-dual-cell'
+import { TokensDetailHover } from './tokens-detail-hover'
 
 const PAGE_SIZE = 20
+/** Stable keys for the loading placeholder rows (they carry no data). */
+const SKELETON_ROW_KEYS = ['s1', 's2', 's3', 's4', 's5']
 const route = getRouteApi('/_authenticated/cost/')
 
 interface CostDimensionTableProps {
@@ -158,9 +162,17 @@ function MoneyCell({
  */
 type MetricRow = CostMoney &
   Partial<
-    Pick<CostDimensionRow, 'breakdown' | 'priced' | 'channel_id' | 'channel_name'>
+    Pick<
+      CostDimensionRow,
+      'breakdown' | 'priced' | 'channel_id' | 'channel_name'
+    >
   > &
-  Partial<Pick<CostBreakdownRow, 'cost_mode' | 'cost_ratio' | 'cost_discount'>>
+  Partial<
+    Pick<
+      CostBreakdownRow,
+      'cost_mode' | 'cost_ratio' | 'cost_discount' | 'cost_exchange_rate'
+    >
+  >
 
 interface MetricColumnSpec {
   id: string
@@ -191,9 +203,15 @@ function ProfitRateHeader() {
         />
         <CostHelpNotes
           notes={[
-            t('Revenue already includes the group discount and nets out refunds.'),
-            t('Channels with no cost ratio set count as zero cost, which inflates the rate.'),
-            t('Summary rows are total profit ÷ total revenue, not an average of the row rates.'),
+            t(
+              'Revenue already includes the group discount and nets out refunds.'
+            ),
+            t(
+              'Channels with no cost ratio set count as zero cost, which inflates the rate.'
+            ),
+            t(
+              'Summary rows are total profit ÷ total revenue, not an average of the row rates.'
+            ),
           ]}
         />
       </div>
@@ -219,8 +237,12 @@ function CostRatioHeader() {
         />
         <CostHelpNotes
           notes={[
-            t('User/model rows blend several channels: shown as ≈ cost ÷ list price; hover to see each channel.'),
-            t('"Not set" means the channel has no cost pricing configured and counts as zero cost.'),
+            t(
+              'User/model rows blend several channels: shown as ≈ cost ÷ list price; hover to see each channel.'
+            ),
+            t(
+              '"Not set" means the channel has no cost pricing configured and counts as zero cost.'
+            ),
           ]}
         />
       </div>
@@ -240,9 +262,15 @@ function UserDiscountHeader() {
         />
         <CostHelpNotes
           notes={[
-            t('This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.'),
-            t('Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.'),
-            t('Shows \'-\' when the range has no list price (free or unpriced models).'),
+            t(
+              'This is the discount actually applied, weighted by quota — dedicated ratios and mid-range group changes are already reflected.'
+            ),
+            t(
+              'Hover a value to see the signals derived from the range: dedicated ratio, mid-range changes and pricing coverage.'
+            ),
+            t(
+              "Shows '-' when the range has no list price (free or unpriced models)."
+            ),
           ]}
         />
       </div>
@@ -267,7 +295,9 @@ function CacheRateHeader() {
         <CostHelpNotes
           notes={[
             t('Output tokens are excluded — they can never be a cache hit.'),
-            t('Claude reports input excluding cache while OpenAI includes it; both are normalized to uncached input so channels stay comparable.'),
+            t(
+              'Claude reports input excluding cache while OpenAI includes it; both are normalized to uncached input so channels stay comparable.'
+            ),
           ]}
         />
       </div>
@@ -326,7 +356,7 @@ function buildMetricColumns(
   columns.push(
     {
       id: 'cost_cny',
-      header: t('Cost'),
+      header: t('Upstream Cost'),
       cell: (row) => (
         <MoneyDualCell
           amount={row.cost_cny}
@@ -424,7 +454,10 @@ const IDENTITY_MERGE_LABEL_KEY: Record<IdentityField, string> = {
  * keeps sub-row column widths stable whether the parent row is in detail or
  * merged mode).
  */
-const BREAKDOWN_IDENTITY_ORDER: Record<CostDimension, [IdentityField, IdentityField]> = {
+const BREAKDOWN_IDENTITY_ORDER: Record<
+  CostDimension,
+  [IdentityField, IdentityField]
+> = {
   users: ['channel', 'model_name'],
   models: ['username', 'channel'],
   channels: ['username', 'model_name'],
@@ -511,12 +544,14 @@ function BreakdownIdentityValue({
 }) {
   const { t } = useTranslation()
   if (collapsed) return <span className='text-muted-foreground'>—</span>
-  if (field === 'username') return <>{row.username || '-'}</>
-  if (field === 'model_name') return <>{row.model_name || '-'}</>
+  if (field === 'username') return row.username || '-'
+  if (field === 'model_name') return row.model_name || '-'
   // channel_id falsy (undefined/0) => no channel selected on the underlying
   // logs, not a real channel.
-  if (!row.channel_id) return <>{t('Unknown channel')}</>
-  return <>{row.channel_name ? `${row.channel_name} (#${row.channel_id})` : `#${row.channel_id}`}</>
+  if (!row.channel_id) return t('Unknown channel')
+  return row.channel_name
+    ? `${row.channel_name} (#${row.channel_id})`
+    : `#${row.channel_id}`
 }
 
 /**
@@ -584,7 +619,9 @@ function BreakdownRows({
   const { t } = useTranslation()
   const rawBreakdown = row.breakdown ?? []
   const breakdown =
-    viewMode === 'detail' ? rawBreakdown : mergeBreakdown(rawBreakdown, viewMode)
+    viewMode === 'detail'
+      ? rawBreakdown
+      : mergeBreakdown(rawBreakdown, viewMode)
   // Channels dim only: the channel identity is folded into the parent, so copy
   // the parent's channel id + pricing config onto every sub-row (the cost-ratio
   // cell then renders "2.5 / ratio" instead of a blank). Nothing to copy for
@@ -599,6 +636,7 @@ function BreakdownRows({
         cost_mode: row.cost_mode,
         cost_ratio: row.cost_ratio,
         cost_discount: row.cost_discount,
+        cost_exchange_rate: row.cost_exchange_rate,
       }
     }
     return b
@@ -648,9 +686,10 @@ function BreakdownRows({
 
       {breakdown.map((bRow, index) => {
         const enriched = enrich(bRow)
+        const channelId = bRow.channel_id
         return (
           <TableRow
-            key={index}
+            key={`${bRow.username ?? ''}|${bRow.model_name ?? ''}|${channelId ?? 0}`}
             className={cn(
               'bg-muted/20 hover:bg-muted/30',
               groupRowClass(false, bottomOnLastBreakdown && index === lastIndex)
@@ -675,18 +714,18 @@ function BreakdownRows({
             ))}
             <TableCell>
               {channelActionAvailable &&
-                !isFieldCollapsed('channel', viewMode) &&
-                Boolean(bRow.channel_id) && (
-                  <Button
-                    type='button'
-                    variant='link'
-                    size='xs'
-                    className='h-auto p-0 text-xs'
-                    onClick={() => onViewChannel(bRow.channel_id!)}
-                  >
-                    {t('View channel only')}
-                  </Button>
-                )}
+              !isFieldCollapsed('channel', viewMode) &&
+              channelId ? (
+                <Button
+                  type='button'
+                  variant='link'
+                  size='xs'
+                  className='h-auto p-0 text-xs'
+                  onClick={() => onViewChannel(channelId)}
+                >
+                  {t('View channel only')}
+                </Button>
+              ) : null}
             </TableCell>
           </TableRow>
         )
@@ -719,8 +758,8 @@ function DimensionCell({
   row: CostDimensionRow
 }) {
   const { t } = useTranslation()
-  if (dim === 'users') return <>{row.username || '-'}</>
-  if (dim === 'models') return <>{row.model_name || '-'}</>
+  if (dim === 'users') return row.username || '-'
+  if (dim === 'models') return row.model_name || '-'
   // channel_id is omitted (omitempty) by the backend when it's 0, i.e. "no
   // channel selected" on the underlying logs — not a real, unpriced channel.
   // Render it distinctly instead of "Unnamed channel #undefined".
@@ -774,7 +813,15 @@ export function CostDimensionTable({
   // range, filter or page can hand the same key to a different row. Drop the
   // per-row expand/merge state whenever the result set changes, otherwise one
   // row inherits another's expanded breakdown or merge view.
-  const resultSetId = [dim, start, end, page, username, channel, modelName].join('|')
+  const resultSetId = [
+    dim,
+    start,
+    end,
+    page,
+    username,
+    channel,
+    modelName,
+  ].join('|')
   const [lastResultSetId, setLastResultSetId] = useState(resultSetId)
   if (lastResultSetId !== resultSetId) {
     setLastResultSetId(resultSetId)
@@ -814,7 +861,12 @@ export function CostDimensionTable({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const primary = useMoneyPrimaryCurrency()
   const effectiveExchangeRate = exchangeRate ?? DEFAULT_EXCHANGE_RATE
-  const metricColumns = buildMetricColumns(t, primary, effectiveExchangeRate, dim)
+  const metricColumns = buildMetricColumns(
+    t,
+    primary,
+    effectiveExchangeRate,
+    dim
+  )
   // expand toggle + identity + metrics + actions
   const totalColSpan = 3 + metricColumns.length
 
@@ -851,8 +903,12 @@ export function CostDimensionTable({
     })
   }
 
-  const identityHeader =
-    dim === 'users' ? t('Username') : dim === 'models' ? t('Model') : t('Channel')
+  let identityHeader = t('Channel')
+  if (dim === 'users') {
+    identityHeader = t('Username')
+  } else if (dim === 'models') {
+    identityHeader = t('Model')
+  }
 
   return (
     <div className='flex flex-col gap-2'>
@@ -872,18 +928,18 @@ export function CostDimensionTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, index) => (
+            {isLoading &&
+              SKELETON_ROW_KEYS.map((skeletonKey) => (
                 <TableRow
-                  key={`skeleton-${index}`}
+                  key={skeletonKey}
                   className={groupRowClass(true, true)}
                 >
                   <TableCell colSpan={totalColSpan}>
                     <Skeleton className='h-6 w-full' />
                   </TableCell>
                 </TableRow>
-              ))
-            ) : items.length === 0 ? (
+              ))}
+            {!isLoading && items.length === 0 && (
               <TableRow className={groupRowClass(true, true)}>
                 <TableCell
                   colSpan={totalColSpan}
@@ -892,7 +948,8 @@ export function CostDimensionTable({
                   {t('No data available')}
                 </TableCell>
               </TableRow>
-            ) : (
+            )}
+            {!isLoading &&
               items.map((row, index) => {
                 const key = rowKey(dim, row, index)
                 const hasBreakdown = Boolean(row.breakdown?.length)
@@ -965,8 +1022,7 @@ export function CostDimensionTable({
                     )}
                   </Fragment>
                 )
-              })
-            )}
+              })}
           </TableBody>
           {summary && items.length > 0 && (
             <TableFooter>

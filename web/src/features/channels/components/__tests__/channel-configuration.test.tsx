@@ -2988,3 +2988,88 @@ test('invalid relay JSON is revealed in Request & Response on submission without
   ).not.toHaveAccessibleName(/Error/)
   expect(put).not.toHaveBeenCalled()
 })
+
+test('a super admin switching a channel to discount pricing saves the seeded settlement rate', async () => {
+  editingChannel = channelSchema.parse({
+    ...editingChannel,
+    setting: JSON.stringify({ cost_ratio: 3.1 }),
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  const supplier = within(
+    screen.getByRole('group', { name: 'Supplier Settings' })
+  )
+  expect(supplier.getByLabelText('Cost Ratio (CNY per USD)')).toHaveValue(3.1)
+
+  await user.click(supplier.getByRole('combobox', { name: 'Pricing Mode' }))
+  await user.click(await screen.findByRole('option', { name: 'Cost Discount' }))
+  await user.type(supplier.getByLabelText('Cost Discount'), '0.31')
+  expect(supplier.getByLabelText('Settlement exchange rate')).toHaveValue(6.8)
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { setting: string }
+  expect(JSON.parse(payload.setting)).toMatchObject({
+    cost_mode: 'discount',
+    cost_discount: 0.31,
+    cost_exchange_rate: 6.8,
+  })
+})
+
+test('a super admin saving a discount price without a settlement rate is sent to the rate field', async () => {
+  editingChannel = channelSchema.parse({
+    ...editingChannel,
+    setting: JSON.stringify({ cost_mode: 'discount', cost_discount: 0.31 }),
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() =>
+    expect(screen.getByRole('tab', { name: /Other Settings/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  )
+  expect(screen.getByLabelText('Settlement exchange rate')).toHaveAttribute(
+    'aria-invalid',
+    'true'
+  )
+  expect(put).not.toHaveBeenCalled()
+})
+
+test('an admin who is not a super admin does not see supplier pricing', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            channel: { read: true, write: true, operate: true },
+          },
+        },
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+
+  expect(
+    screen.queryByRole('group', { name: 'Supplier Settings' })
+  ).not.toBeInTheDocument()
+})

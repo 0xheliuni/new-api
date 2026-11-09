@@ -98,6 +98,17 @@ const CONFIGURATION_BLOCKS = {
     ],
   },
   internalNotes: { section: 'other', fields: ['tag', 'remark'] },
+  supplierSettings: {
+    section: 'other',
+    fields: [
+      'cost_mode',
+      'cost_ratio',
+      'cost_discount',
+      'cost_exchange_rate',
+      'is_aggregator',
+      'sub_suppliers',
+    ],
+  },
 } as const satisfies Record<
   string,
   {
@@ -190,6 +201,13 @@ export function getChannelConfigurationState(
         values.upstream_model_update_ignored_models?.trim()
       ),
     internalNotes: Boolean(values.tag?.trim() || values.remark?.trim()),
+    supplierSettings: Boolean(
+      values.cost_ratio ||
+      values.cost_mode === 'discount' ||
+      values.cost_discount ||
+      values.is_aggregator ||
+      values.sub_suppliers?.length
+    ),
   }
   const blocks = {} as Record<
     ChannelConfigurationBlock,

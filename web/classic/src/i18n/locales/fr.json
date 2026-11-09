@@ -3753,6 +3753,7 @@
     "收入折算汇率": "Taux de conversion des revenus",
     "生效时间": "Prend effet le",
     "结算汇率": "Taux de règlement",
+    "折扣计价需要填写结算汇率": "La tarification par remise nécessite un taux de règlement",
     "结算汇率随该版本一起冻结，此后不随站点汇率变动，历史成本因此不会漂移。": "Le taux de règlement est figé avec cette version et ne suit plus le taux du site, le coût historique ne dérive donc pas.",
     "补录历史价": "Ajouter un prix historique",
     "计价": "Tarification",

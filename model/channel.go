@@ -1314,8 +1314,10 @@ type ChannelCostInfo struct {
 	CostRatio    float64
 	CostMode     string
 	CostDiscount float64
-	IsAggregator bool
-	SubSuppliers []hostdto.ChannelSubSupplier
+	// CostExchangeRate 折扣模式的结算汇率（渠道设置值，渠道未建版本时供展示回退）
+	CostExchangeRate float64
+	IsAggregator     bool
+	SubSuppliers     []hostdto.ChannelSubSupplier
 }
 
 // GetAllUserGroups 一次性载入全部用户当前所属分组（主库），返回 username -> group。
@@ -1351,6 +1353,7 @@ func GetAllChannelCostInfos() (map[int]*ChannelCostInfo, error) {
 				info.CostRatio = s.CostRatio
 				info.CostMode = s.CostMode
 				info.CostDiscount = s.CostDiscount
+				info.CostExchangeRate = s.CostExchangeRate
 				info.IsAggregator = s.IsAggregator
 				info.SubSuppliers = s.SubSuppliers
 			}

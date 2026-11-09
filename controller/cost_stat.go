@@ -312,8 +312,8 @@ type costMoney struct {
 }
 
 // costBreakdownRow 维度折叠行下的子明细（折叠掉本维度与 Day，保留其余两个维度）。
-// CostMode/CostRatio/CostDiscount 为该明细行所属渠道在查询区间末尾生效版本的计价
-// 配置，供前端在明细行对照"现在是按哪个倍率/折扣算的"；渠道身份被合并（按模型
+// CostMode/CostRatio/CostDiscount 为该明细行所属渠道当前生效版本的计价配置，供
+// 前端在明细行对照"现在是按哪个倍率/折扣算的"；渠道身份被合并（按模型
 // 汇总）时这些字段无意义，由前端按 channel_id 是否存在决定是否渲染。
 // 区间内真实付出的倍率见内嵌 costMoney.EffectiveRatio（CostCny/ListUsd 加权值）。
 type costBreakdownRow struct {
@@ -325,11 +325,13 @@ type costBreakdownRow struct {
 	CostMode     string  `json:"cost_mode,omitempty"`
 	CostRatio    float64 `json:"cost_ratio,omitempty"`
 	CostDiscount float64 `json:"cost_discount,omitempty"`
+	// CostExchangeRate 折扣模式冻结的结算汇率；倍率模式不下发。
+	CostExchangeRate float64 `json:"cost_exchange_rate,omitempty"`
 
 	// Priced 与父行 costDimensionRow.Priced 同义同标签（不带 omitempty，false 也要
-	// 下发——恰恰是 false 才需要提示）。逐条定价后父行 priced=false 已不能代表整组都
-	// 被低估：渠道可能只在中途某个版本空档未定价，其余区间都有价。少了这个字段，
-	// 落在空档里的明细行会输出 cost_cny=0、profit_rate=1 且不带 effective_ratio，
+	// 下发——恰恰是 false 才需要提示）。父行 priced=false 不能代表整组都被低估：一个
+	// 用户/模型的流量可能只有部分渠道没有定价。少了这个字段，没定价渠道的明细行
+	// 会输出 cost_cny=0、profit_rate=1 且不带 effective_ratio，
 	// 与真正免费的上游逐字节一致，在表里反而显示为最赚钱的一行。
 	Priced bool `json:"priced"`
 
@@ -344,7 +346,7 @@ type costDimensionRow struct {
 	ModelName   string `json:"model_name,omitempty"`
 	ChannelId   int    `json:"channel_id,omitempty"`
 	ChannelName string `json:"channel_name,omitempty"`
-	// CostRatio 为区间末尾生效版本的配置倍率（ratio 模式；discount 模式恒为 0，
+	// CostRatio 为当前生效版本的配置倍率（ratio 模式；discount 模式恒为 0，
 	// 折扣见 CostDiscount）。它是"现在按什么价"的对照值，与区间内实际付出的加权
 	// 倍率 costMoney.EffectiveRatio 不同——改过价时两者本就应该不一致。
 	CostRatio float64 `json:"cost_ratio,omitempty"`
@@ -357,10 +359,12 @@ type costDimensionRow struct {
 	BreakdownTruncated int                `json:"breakdown_truncated,omitempty"`
 
 	// 以下字段仅渠道维度（costDimChannel）填充，供前端按计价模式渲染。
-	CostMode     string                   `json:"cost_mode,omitempty"`
-	CostDiscount float64                  `json:"cost_discount,omitempty"`
-	IsAggregator bool                     `json:"is_aggregator,omitempty"`
-	SubSuppliers []dto.ChannelSubSupplier `json:"sub_suppliers,omitempty"`
+	CostMode     string  `json:"cost_mode,omitempty"`
+	CostDiscount float64 `json:"cost_discount,omitempty"`
+	// CostExchangeRate 折扣模式冻结的结算汇率；倍率模式不下发。
+	CostExchangeRate float64                  `json:"cost_exchange_rate,omitempty"`
+	IsAggregator     bool                     `json:"is_aggregator,omitempty"`
+	SubSuppliers     []dto.ChannelSubSupplier `json:"sub_suppliers,omitempty"`
 
 	// 内部使用，不下发：累计无版本可用的刊例敞口，最终派生 Priced
 	unpricedListQuota float64 `json:"-"`
@@ -520,9 +524,10 @@ func historicalDiscount(info *logPricingInfo) float64 {
 }
 
 // foldCostCube 沿 dim 折叠立方体。成本已在采集阶段按各条日志当时生效的版本算好，
-// 这里只做累加；end 用于取"区间末尾生效版本"作为配置展示的对照值。
+// 这里只做累加；configAt 是计价配置展示的取值时刻（接口传当前时间：编辑弹窗改的是
+// 当前价，展示必须与之一致，否则刚保存的新价落在区间末尾之后，看起来像没保存上）。
 func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCostInfo,
-	versions model.VersionMap, exchangeRate float64, end int64) []costDimensionRow {
+	versions model.VersionMap, exchangeRate float64, configAt int64) []costDimensionRow {
 	type groupKey struct {
 		UserId    int
 		Username  string
@@ -578,16 +583,22 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 					row.IsAggregator = ci.IsAggregator
 					row.SubSuppliers = ci.SubSuppliers
 				}
-				// 配置展示优先取区间末尾版本（供 hover 对照"现在是什么价"）；
+				// 配置展示取 configAt 时刻生效的版本（供 hover 对照"现在是什么价"）；
 				// 渠道从未建过版本时回退到 ChannelSettings 的当前配置。
-				if ver, ok := versions.VersionAt(gk.ChannelId, end); ok {
+				if ver, ok := versions.VersionAt(gk.ChannelId, configAt); ok {
 					row.CostMode = ver.CostMode
 					row.CostRatio = ver.CostRatio
 					row.CostDiscount = ver.CostDiscount
+					if ver.CostMode == "discount" {
+						row.CostExchangeRate = ver.ExchangeRate
+					}
 				} else if ci := channels[gk.ChannelId]; ci != nil {
 					row.CostMode = ci.CostMode
 					row.CostRatio = ci.CostRatio
 					row.CostDiscount = ci.CostDiscount
+					if ci.CostMode == "discount" {
+						row.CostExchangeRate = ci.CostExchangeRate
+					}
 				}
 				userSets[gk] = make(map[int]bool)
 			}
@@ -671,18 +682,24 @@ func foldCostCube(cube *costCube, dim string, channels map[int]*model.ChannelCos
 			}
 			br.Priced = b.sub.unpricedListQuota <= costUnpricedEpsilon
 			br.RatioMixed = len(b.sub.ratioVersionSeen) > 1
-			// 渠道身份未被折叠（ChannelId != 0）时带上该渠道区间末尾生效版本的计价
+			// 渠道身份未被折叠（ChannelId != 0）时带上该渠道 configAt 时刻生效版本的计价
 			// 配置，供前端在明细行展示成本倍率/折扣。按模型汇总的明细行 ChannelId
 			// 为 0，此时跨渠道混合，不存在单一倍率，字段留空由前端显示"—"。
 			if b.key.ChannelId != 0 {
-				if ver, ok := versions.VersionAt(b.key.ChannelId, end); ok {
+				if ver, ok := versions.VersionAt(b.key.ChannelId, configAt); ok {
 					br.CostMode = ver.CostMode
 					br.CostRatio = ver.CostRatio
 					br.CostDiscount = ver.CostDiscount
+					if ver.CostMode == "discount" {
+						br.CostExchangeRate = ver.ExchangeRate
+					}
 				} else if ci := channels[b.key.ChannelId]; ci != nil {
 					br.CostMode = ci.CostMode
 					br.CostRatio = ci.CostRatio
 					br.CostDiscount = ci.CostDiscount
+					if ci.CostMode == "discount" {
+						br.CostExchangeRate = ci.CostExchangeRate
+					}
 				}
 			}
 			row.Breakdown = append(row.Breakdown, br)

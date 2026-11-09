@@ -936,6 +936,8 @@ const EditChannelModal = (props) => {
           data.cost_mode =
             parsedSettings.cost_mode === 'discount' ? 'discount' : 'ratio';
           data.cost_discount = Number(parsedSettings.cost_discount) || 0;
+          data.cost_exchange_rate =
+            Number(parsedSettings.cost_exchange_rate) || 0;
           data.is_aggregator = parsedSettings.is_aggregator === true;
           data.sub_suppliers = Array.isArray(parsedSettings.sub_suppliers)
             ? parsedSettings.sub_suppliers
@@ -1137,6 +1139,7 @@ const EditChannelModal = (props) => {
         cost_ratio: data.cost_ratio,
         cost_mode: data.cost_mode,
         cost_discount: data.cost_discount,
+        cost_exchange_rate: data.cost_exchange_rate,
         is_aggregator: data.is_aggregator,
         sub_suppliers: data.sub_suppliers,
       });
@@ -1681,6 +1684,17 @@ const EditChannelModal = (props) => {
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
 
+    // 折扣模式的结算汇率会冻结进新的计价版本，留空就会按站点「美元汇率」结算。
+    if (
+      isRoot() &&
+      channelSettings.cost_mode === 'discount' &&
+      Number(channelSettings.cost_discount) > 0 &&
+      !(Number(channelSettings.cost_exchange_rate) > 0)
+    ) {
+      showInfo(t('折扣计价需要填写结算汇率'));
+      return;
+    }
+
     if (localInputs.type === 57) {
       if (batch) {
         showInfo(t('Codex 渠道不支持批量创建'));
@@ -1896,6 +1910,11 @@ const EditChannelModal = (props) => {
       cost_ratio: Number(channelSettings.cost_ratio) || 0,
       cost_mode: channelSettings.cost_mode === 'discount' ? 'discount' : 'ratio',
       cost_discount: Number(channelSettings.cost_discount) || 0,
+      // 折扣模式的结算汇率，保存时由后端冻结进新的计价版本
+      ...(channelSettings.cost_mode === 'discount' &&
+      Number(channelSettings.cost_exchange_rate) > 0
+        ? { cost_exchange_rate: Number(channelSettings.cost_exchange_rate) }
+        : {}),
       is_aggregator: channelSettings.is_aggregator === true,
       sub_suppliers: Array.isArray(channelSettings.sub_suppliers)
         ? channelSettings.sub_suppliers
@@ -4231,24 +4250,51 @@ const EditChannelModal = (props) => {
                       ]}
                       style={{ width: '100%' }}
                       value={inputs.cost_mode || 'ratio'}
-                      onChange={(value) =>
-                        handleChannelSettingsChange('cost_mode', value)
-                      }
+                      onChange={(value) => {
+                        handleChannelSettingsChange('cost_mode', value);
+                        // 结算汇率随新版本冻结，切到折扣时先给成本核算页的默认值，
+                        // 避免留空后按站点「美元汇率」结算。
+                        if (
+                          value === 'discount' &&
+                          !(Number(channelSettings.cost_exchange_rate) > 0)
+                        ) {
+                          handleChannelSettingsChange('cost_exchange_rate', 6.8);
+                        }
+                      }}
                     />
 
                     {inputs.cost_mode === 'discount' ? (
-                      <Form.InputNumber
-                        field='cost_discount'
-                        label={t('成本折扣')}
-                        min={0}
-                        step={0.01}
-                        style={{ width: '100%' }}
-                        value={inputs.cost_discount ?? 0}
-                        onNumberChange={(value) =>
-                          handleChannelSettingsChange('cost_discount', value)
-                        }
-                        extraText={t('例如 0.8 表示刊例价打 8 折计入成本')}
-                      />
+                      <>
+                        <Form.InputNumber
+                          field='cost_discount'
+                          label={t('成本折扣')}
+                          min={0}
+                          step={0.01}
+                          style={{ width: '100%' }}
+                          value={inputs.cost_discount ?? 0}
+                          onNumberChange={(value) =>
+                            handleChannelSettingsChange('cost_discount', value)
+                          }
+                          extraText={t('例如 0.8 表示刊例价打 8 折计入成本')}
+                        />
+                        <Form.InputNumber
+                          field='cost_exchange_rate'
+                          label={t('结算汇率')}
+                          min={0}
+                          step={0.01}
+                          style={{ width: '100%' }}
+                          value={inputs.cost_exchange_rate ?? 0}
+                          onNumberChange={(value) =>
+                            handleChannelSettingsChange(
+                              'cost_exchange_rate',
+                              value,
+                            )
+                          }
+                          extraText={t(
+                            '结算汇率随该版本一起冻结，此后不随站点汇率变动，历史成本因此不会漂移。',
+                          )}
+                        />
+                      </>
                     ) : (
                       <Form.InputNumber
                         field='cost_ratio'

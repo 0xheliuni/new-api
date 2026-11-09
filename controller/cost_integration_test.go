@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
@@ -8,9 +9,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // costIntegrationDB 用真实的 model.InitDB() 在临时目录建一个 SQLite 库。
@@ -286,12 +291,8 @@ func nearly(got, want float64) bool {
 	return d < 1e-6 && d > -1e-6
 }
 
-// 渠道的**首个**自动版本必须落在 effective_from=0，而不是 now。
-//
-// 用 now 会同时挖两个坑：渠道创建到首次编辑之间的日志永远落在版本区间之前，
-// VersionAt 解析不到版本，那段成本永久记 0（显示成 100% 毛利）；而且一旦写入，
-// seedChannelCostVersions 的 seeded 集合就认为该渠道"已回填"，重启补种也不再
-// 管它。版本行不可变、创建接口又硬拒 effective_from=0，事后无从补救。
+// 渠道的**首个**自动版本必须落在 effective_from=0，而不是 now：它是版本历史里的
+// 「初始」价，覆盖渠道创建到首次编辑之间的全部日志，之后的改价才从改动时刻生效。
 func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
 	costIntegrationDB(t)
 
@@ -328,8 +329,8 @@ func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
 // 它可能尚未生效（创建接口只拒 effective_from=0，未来时间点是允许的）。拿未来那条
 // 做比对，会把「当前价确实变了」误判成没变：
 //
-//   基线 2.5 生效中 → 管理员排期一条明天生效的 3.0 → 再把渠道当前价改成 3.0
-//   → 与未来那条一比「相等」→ 不追版本
+//	基线 2.5 生效中 → 管理员排期一条明天生效的 3.0 → 再把渠道当前价改成 3.0
+//	→ 与未来那条一比「相等」→ 不追版本
 //
 // 结果是今天的流量继续按 2.5 计成本，而渠道设置里写着 3.0，两边对不上且无人察觉。
 func TestAppendCostVersion_ComparesAgainstVersionInEffectNotFuture(t *testing.T) {
@@ -372,4 +373,68 @@ func TestAppendCostVersion_ComparesAgainstVersionInEffectNotFuture(t *testing.T)
 	if !foundNow {
 		t.Fatalf("no version priced 3.0 is in effect now; versions = %+v", versions)
 	}
+}
+
+// 走真实的 PUT /api/channel：成本页弹窗与渠道编辑页都只提交 setting JSON，版本必须
+// 由这条路径追加。setting 曾被先解进不含成本字段的 relaykit ChannelSettings，成本字段
+// 在转换中丢失，于是渠道设置存进去了、版本却一条没追，报表一直按旧价算。
+func TestUpdateChannel_CostSettingChangeAppendsPriceVersion(t *testing.T) {
+	costIntegrationDB(t)
+	require.NoError(t, authz.Init(model.DB))
+
+	setting := `{"cost_mode":"ratio","cost_ratio":3.1}`
+	channel := model.Channel{Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Name: "upstream-b", Models: "gpt-4o", Group: "default", Key: "sk-test", Setting: &setting}
+	require.NoError(t, channel.Insert())
+	require.NoError(t, model.CreateChannelCostVersion(&model.ChannelCostVersion{
+		ChannelId: channel.Id, EffectiveFrom: 0, CostMode: "ratio", CostRatio: 3.1,
+	}))
+
+	body := fmt.Sprintf(`{"id":%d,"setting":%q}`, channel.Id,
+		`{"cost_mode":"discount","cost_discount":0.31,"cost_exchange_rate":6.8}`)
+	rec := putUpdateChannel(t, 1, common.RoleRootUser, body)
+	require.Contains(t, rec.Body.String(), `"success":true`)
+
+	versions, err := model.GetChannelCostVersions(channel.Id) // 降序，[0] 为最新
+	require.NoError(t, err)
+	require.Len(t, versions, 2, "saving a new cost price must append a price version")
+	assert.Equal(t, "discount", versions[0].CostMode)
+	assert.InDelta(t, 0.31, versions[0].CostDiscount, 1e-9)
+	assert.Positive(t, versions[0].EffectiveFrom)
+	// 结算汇率取渠道设置里填的值，而不是系统「美元汇率」——后者是展示用设置，
+	// 线上可以是 1，冻结它会把折扣渠道的成本算小好几倍。
+	assert.InDelta(t, 6.8, versions[0].ExchangeRate, 1e-9)
+}
+
+// 渠道维度的计价配置展示「此刻生效」的价：编辑弹窗保存的是当前价，新版本从保存那
+// 一刻生效。若按区间末尾取版本，「今天」这类区间的末尾早于保存时刻，刚存的价永远
+// 显示不出来，看起来像没保存上。区间内日志的成本仍按它们当时的价计算。
+func TestCostByChannels_ShowsPriceInEffectNow(t *testing.T) {
+	costIntegrationDB(t)
+	at := costSeedBaseTime()
+	seedCostIntegrationData(t, at)
+	require.NoError(t, model.CreateChannelCostVersion(&model.ChannelCostVersion{
+		ChannelId: 3, EffectiveFrom: time.Now().Unix() - 1,
+		CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8,
+	}))
+
+	start := at.Add(-time.Hour).Unix()
+	end := at.Add(2*time.Hour).Unix() + 1 // 区间止于最后一条日志之后、新价生效之前
+	c, rec := costTestContext("start_timestamp=" + strconv.FormatInt(start, 10) +
+		"&end_timestamp=" + strconv.FormatInt(end, 10) + "&exchange_rate=7")
+	GetCostByChannels(c)
+
+	var resp struct {
+		Success bool        `json:"success"`
+		Data    costPageDTO `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(rec.Body.Bytes(), &resp))
+	require.True(t, resp.Success, rec.Body.String())
+	require.Len(t, resp.Data.Items, 1)
+	row := resp.Data.Items[0]
+	assert.Equal(t, "discount", row.CostMode)
+	assert.InDelta(t, 0.31, row.CostDiscount, 1e-9)
+	assert.InDelta(t, 6.8, row.CostExchangeRate, 1e-9)
+	// 区间内两条日志都在新价之前，仍按初始倍率 2.5 计成本。
+	assert.InDelta(t, 0.01, row.CostCny, 1e-6)
 }

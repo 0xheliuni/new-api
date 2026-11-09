@@ -2,6 +2,9 @@ package model
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func mkVersionMap(versions []ChannelCostVersion) VersionMap {
@@ -28,13 +31,16 @@ func TestVersionMap_SingleRatio(t *testing.T) {
 	}
 }
 
+// 早于最早一条记录的日志按最早那条计价：初始价被删掉后，由后面的记录往前覆盖，
+// 不留下成本记 0 的空档。
 func TestVersionMap_BeforeFirstVersion(t *testing.T) {
 	vm := mkVersionMap([]ChannelCostVersion{
 		{ChannelId: 1, EffectiveFrom: 1000, CostMode: "ratio", CostRatio: 2.5},
+		{ChannelId: 1, EffectiveFrom: 2000, CostMode: "ratio", CostRatio: 3.0},
 	})
-	if _, ok := vm.RatioAt(1, 500); ok {
-		t.Fatal("before first version must return false")
-	}
+	r, ok := vm.RatioAt(1, 500)
+	require.True(t, ok)
+	assert.InDelta(t, 2.5, r, 1e-9)
 }
 
 func TestVersionMap_CrossVersionBoundary(t *testing.T) {
@@ -101,8 +107,8 @@ func TestVersionMap_VersionAt_IdentifiesVersion(t *testing.T) {
 	if !ok || v2.Id != 2 {
 		t.Fatalf("at 2000: want version id 2, got id=%d ok=%v", v2.Id, ok)
 	}
-	if _, ok := vm.VersionAt(3, -1); ok {
-		t.Fatal("before first version must return ok=false")
+	if v0, ok := vm.VersionAt(3, -1); !ok || v0.Id != 1 {
+		t.Fatalf("before first version: want earliest version id 1, got id=%d ok=%v", v0.Id, ok)
 	}
 }
 

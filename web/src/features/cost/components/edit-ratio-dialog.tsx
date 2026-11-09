@@ -16,13 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { dateToUnixTimestamp, formatDateTimeObject } from '@/lib/time'
+
+import { DateTimePicker } from '@/components/datetime-picker'
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,9 +37,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { DateTimePicker } from '@/components/datetime-picker'
-import { Dialog } from '@/components/dialog'
 import { getChannel, updateChannel } from '@/features/channels/api'
+import { dateToUnixTimestamp, formatDateTimeObject } from '@/lib/time'
+
 import {
   createChannelCostVersion,
   deleteChannelCostVersion,
@@ -58,6 +60,9 @@ interface EditRatioDialogProps {
   currentRatio: number
   currentMode?: string
   currentDiscount?: number
+  /** Settlement rate frozen with the current discount-mode price. */
+  currentExchangeRate?: number
+  /** The report's query rate; seeds the settlement rate when none is stored. */
   exchangeRate: number
 }
 
@@ -67,10 +72,12 @@ export function EditRatioDialog({
   currentRatio,
   currentMode,
   currentDiscount,
+  currentExchangeRate,
   exchangeRate,
 }: EditRatioDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const initialRate = String(currentExchangeRate || exchangeRate)
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<CostPricingMode>(
     currentMode === 'discount' ? 'discount' : 'ratio'
@@ -81,6 +88,7 @@ export function EditRatioDialog({
   const [discountValue, setDiscountValue] = useState(
     currentDiscount ? String(currentDiscount) : ''
   )
+  const [rateValue, setRateValue] = useState(initialRate)
   const [submitting, setSubmitting] = useState(false)
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -88,6 +96,7 @@ export function EditRatioDialog({
       setMode(currentMode === 'discount' ? 'discount' : 'ratio')
       setRatioValue(currentRatio ? String(currentRatio) : '')
       setDiscountValue(currentDiscount ? String(currentDiscount) : '')
+      setRateValue(initialRate)
     }
     setOpen(nextOpen)
   }
@@ -95,12 +104,16 @@ export function EditRatioDialog({
   const parsedRatio = Number(ratioValue)
   const isValidRatio =
     ratioValue.trim() !== '' && Number.isFinite(parsedRatio) && parsedRatio >= 0
+  const parsedRate = Number(rateValue)
+  const isValidRate =
+    rateValue.trim() !== '' && Number.isFinite(parsedRate) && parsedRate > 0
   const parsedDiscount = Number(discountValue)
   const isValidDiscount =
     discountValue.trim() !== '' &&
     Number.isFinite(parsedDiscount) &&
     parsedDiscount >= 0
-  const isValid = mode === 'discount' ? isValidDiscount : isValidRatio
+  const isValid =
+    mode === 'discount' ? isValidDiscount && isValidRate : isValidRatio
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -125,8 +138,11 @@ export function EditRatioDialog({
       settingObj.cost_mode = mode
       if (mode === 'discount') {
         settingObj.cost_discount = parsedDiscount
+        // The server freezes this rate into the new price version.
+        settingObj.cost_exchange_rate = parsedRate
       } else {
         settingObj.cost_ratio = parsedRatio
+        delete settingObj.cost_exchange_rate
       }
 
       const updateRes = await updateChannel(channelId, {
@@ -224,23 +240,42 @@ export function EditRatioDialog({
 
         {mode === 'discount' ? (
           <div className='flex flex-col gap-2'>
-            <Label htmlFor='cost-discount-input'>{t('Cost Discount')}</Label>
-            <Input
-              id='cost-discount-input'
-              type='number'
-              min={0}
-              step={0.01}
-              value={discountValue}
-              onChange={(event) => setDiscountValue(event.target.value)}
-            />
+            <div className='grid gap-3 sm:grid-cols-2'>
+              <div className='flex flex-col gap-2'>
+                <Label htmlFor='cost-discount-input'>
+                  {t('Cost Discount')}
+                </Label>
+                <Input
+                  id='cost-discount-input'
+                  type='number'
+                  min={0}
+                  step={0.01}
+                  value={discountValue}
+                  onChange={(event) => setDiscountValue(event.target.value)}
+                />
+              </div>
+              <div className='flex flex-col gap-2'>
+                <Label htmlFor='cost-exchange-rate-input'>
+                  {t('Settlement exchange rate')}
+                </Label>
+                <Input
+                  id='cost-exchange-rate-input'
+                  type='number'
+                  min={0}
+                  step={0.01}
+                  value={rateValue}
+                  onChange={(event) => setRateValue(event.target.value)}
+                />
+              </div>
+            </div>
             <p className='text-muted-foreground text-xs'>
-              {isValidDiscount
+              {isValidDiscount && isValidRate
                 ? t(
                     'Discount {{d}} × rate {{r}} → $1 list price costs ¥{{cny}}',
                     {
                       d: parsedDiscount,
-                      r: exchangeRate,
-                      cny: (parsedDiscount * exchangeRate).toFixed(2),
+                      r: parsedRate,
+                      cny: (parsedDiscount * parsedRate).toFixed(2),
                     }
                   )
                 : t('Used by cost accounting. Leave empty if unknown.')}
@@ -394,13 +429,15 @@ function VersionHistoryPanel({
         />
       )}
 
-      {isLoading ? (
+      {isLoading && (
         <p className='text-muted-foreground text-xs'>{t('Loading...')}</p>
-      ) : error ? (
+      )}
+      {!isLoading && Boolean(error) && (
         <p className='text-destructive text-xs'>
           {errorMessage(error) || t('Failed to load price versions')}
         </p>
-      ) : (
+      )}
+      {!isLoading && !error && (
         <ul className='flex max-h-48 flex-col gap-1 overflow-y-auto text-xs'>
           {versions.map((v) => (
             <li
@@ -427,24 +464,22 @@ function VersionHistoryPanel({
                 <span className='text-muted-foreground tabular-nums'>
                   {describeVersion(v, t)}
                 </span>
-                {/* The seeded "since forever" row is what every log before the
-                    first real version prices against; the API refuses to
-                    delete it, so don't offer to. */}
-                {v.effective_from !== 0 && (
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon'
-                    className='size-6'
-                    aria-label={t('Delete')}
-                    // Scoped to the row in flight: one shared mutation would
-                    // otherwise grey out every other row's delete button.
-                    disabled={remove.isPending && remove.variables === v.id}
-                    onClick={() => remove.mutate(v.id)}
-                  >
-                    <Trash2 className='size-3.5' />
-                  </Button>
-                )}
+                {/* The initial row is deletable too: logs before the earliest
+                    remaining version price against that version, so the next
+                    record takes over. The API only refuses the last one. */}
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon'
+                  className='size-6'
+                  aria-label={t('Delete')}
+                  // Scoped to the row in flight: one shared mutation would
+                  // otherwise grey out every other row's delete button.
+                  disabled={remove.isPending && remove.variables === v.id}
+                  onClick={() => remove.mutate(v.id)}
+                >
+                  <Trash2 className='size-3.5' />
+                </Button>
               </div>
             </li>
           ))}

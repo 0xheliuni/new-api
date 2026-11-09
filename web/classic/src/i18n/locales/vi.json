@@ -4286,6 +4286,7 @@
     "折扣信息覆盖率 {{pct}}%，部分日志缺少定价字段，折扣仅含已知部分。": "Dữ liệu chiết khấu bao phủ {{pct}}% bản ghi; một số log thiếu trường định giá nên chiết khấu chỉ phản ánh phần đã biết.",
     "收入折算汇率": "Tỷ giá quy đổi doanh thu",
     "结算汇率": "Tỷ giá quyết toán",
+    "折扣计价需要填写结算汇率": "Định giá theo chiết khấu cần nhập tỷ giá thanh toán",
     "结算汇率随该版本一起冻结，此后不随站点汇率变动，历史成本因此不会漂移。": "Tỷ giá quyết toán được đóng băng cùng phiên bản này và không còn theo tỷ giá của site, nên chi phí lịch sử không bị lệch.",
     "补录历史价": "Thêm giá lịch sử",
     "计价": "Định giá",

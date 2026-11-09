@@ -379,6 +379,8 @@ const CostTables = ({
       mode: record.cost_mode === 'discount' ? 'discount' : 'ratio',
       ratioValue: record.cost_ratio || 0,
       discountValue: record.cost_discount || 0,
+      // 折扣模式的结算汇率随新版本冻结；没存过时用筛选栏汇率起步。
+      rateValue: record.cost_exchange_rate || exchangeRate,
     });
   };
 
@@ -405,7 +407,8 @@ const CostTables = ({
     activeRatioValue !== undefined &&
     activeRatioValue !== '' &&
     !Number.isNaN(Number(activeRatioValue)) &&
-    Number(activeRatioValue) >= 0;
+    Number(activeRatioValue) >= 0 &&
+    (ratioModal.mode !== 'discount' || Number(ratioModal.rateValue) > 0);
 
   const submitRatio = async () => {
     if (!isValidRatio) return;
@@ -432,6 +435,11 @@ const CostTables = ({
       settingObj.cost_mode = ratioModal.mode;
       settingObj.cost_ratio = Number(ratioModal.ratioValue) || 0;
       settingObj.cost_discount = Number(ratioModal.discountValue) || 0;
+      if (ratioModal.mode === 'discount') {
+        settingObj.cost_exchange_rate = Number(ratioModal.rateValue);
+      } else {
+        delete settingObj.cost_exchange_rate;
+      }
 
       const updateRes = await API.put('/api/channel/', {
         id: ratioModal.channelId,
@@ -795,15 +803,28 @@ const CostTables = ({
         />
 
         {ratioModal.mode === 'discount' ? (
-          <InputNumber
-            className='w-full'
-            min={0}
-            step={0.01}
-            value={ratioModal.discountValue}
-            onChange={(value) =>
-              setRatioModal((s) => ({ ...s, discountValue: value }))
-            }
-          />
+          <div className='flex gap-2'>
+            <InputNumber
+              className='w-full'
+              min={0}
+              step={0.01}
+              prefix={t('成本折扣')}
+              value={ratioModal.discountValue}
+              onChange={(value) =>
+                setRatioModal((s) => ({ ...s, discountValue: value }))
+              }
+            />
+            <InputNumber
+              className='w-full'
+              min={0}
+              step={0.01}
+              prefix={t('结算汇率')}
+              value={ratioModal.rateValue}
+              onChange={(value) =>
+                setRatioModal((s) => ({ ...s, rateValue: value }))
+              }
+            />
+          </div>
         ) : (
           <InputNumber
             className='w-full'
@@ -823,10 +844,10 @@ const CostTables = ({
               : ratioModal.mode === 'discount'
                 ? t('折扣 {{d}} × 汇率 {{rate}} → 刊例 $1 记成本 ¥{{cny}}', {
                     d: ratioModal.discountValue,
-                    rate: exchangeRate,
+                    rate: ratioModal.rateValue,
                     cny: (
                       Number(ratioModal.discountValue) *
-                      Number(exchangeRate || 0)
+                      Number(ratioModal.rateValue || 0)
                     ).toFixed(2),
                   })
                 : t('倍率 {{r}} → 上游每消耗刊例 $1 记成本 ¥{{cny}}', {

@@ -242,8 +242,9 @@ const AddVersionForm = ({
  * 时间的价补录进来的地方 —— 成本按日志所属时段的版本分段计算，缺了历史版本，
  * 改价之前的日志就只能按今天的价算。
  *
- * 生效时间为 0 的那一行是迁移回填的初始版本（"自古以来"），第一条真实版本之前的
- * 所有日志都靠它定价，后端拒绝删除，因此这里也不给删除按钮。
+ * 生效时间为 0 的那一行是迁移回填的初始版本（"自古以来"）。它也可以删除：早于
+ * 最早一条记录的日志按最早那条定价，删掉后由后面的记录往前覆盖；后端只拒绝删除
+ * 渠道仅剩的最后一条。
  */
 const CostVersionPanel = ({
   channelId,
@@ -330,18 +331,17 @@ const CostVersionPanel = ({
       key: 'action',
       title: '',
       align: 'right',
-      render: (_, row) =>
-        Number(row.effective_from) === 0 ? null : (
-          <Button
-            icon={<IconDelete />}
-            type='danger'
-            theme='borderless'
-            size='small'
-            aria-label={t('删除')}
-            loading={deletingId === row.id}
-            onClick={() => handleDelete(row.id)}
-          />
-        ),
+      render: (_, row) => (
+        <Button
+          icon={<IconDelete />}
+          type='danger'
+          theme='borderless'
+          size='small'
+          aria-label={t('删除')}
+          loading={deletingId === row.id}
+          onClick={() => handleDelete(row.id)}
+        />
+      ),
     },
   ];
 

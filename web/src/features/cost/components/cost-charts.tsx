@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useMemo } from 'react'
 import { VChart } from '@visactor/react-vchart'
 import { LineChart, BarChart3 } from 'lucide-react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
-import type { CostGranularity, CostOverview } from '../types'
+
 import {
   cycleThemeChartColors,
   foldChannelStack,
@@ -32,6 +33,7 @@ import {
   sampleBucketTicks,
   useCostCurrency,
 } from '../lib'
+import type { CostGranularity, CostOverview } from '../types'
 
 interface CostChartsProps {
   overview?: CostOverview
@@ -77,7 +79,7 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
   const currency = useCostCurrency()
 
   const revenueLabel = t('Revenue')
-  const costLabel = t('Cost')
+  const costLabel = t('Upstream Cost')
   const profitLabel = t('Profit')
   const otherLabel = t('Other')
 
@@ -143,7 +145,8 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
         {
           orient: 'left',
           label: {
-            formatMethod: (value: unknown) => currency.format(Number(value) || 0),
+            formatMethod: (value: unknown) =>
+              currency.format(Number(value) || 0),
           },
         },
       ],
@@ -194,7 +197,7 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
     const folded = foldChannelStack(overview?.cost_stack ?? [], otherLabel, 8)
     const range = cycleThemeChartColors(folded.domain.length)
     const gapStroke = getThemeBackgroundColor()
-    const buckets = Array.from(new Set(folded.data.map((d) => d.date))).sort()
+    const buckets = [...new Set(folded.data.map((d) => d.date))].sort()
     const ticks = sampleBucketTicks(buckets)
     // Same one-conversion rule as the trend chart.
     const values = folded.data.map((d) => ({
@@ -230,7 +233,8 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
         {
           orient: 'left',
           label: {
-            formatMethod: (value: unknown) => currency.format(Number(value) || 0),
+            formatMethod: (value: unknown) =>
+              currency.format(Number(value) || 0),
           },
         },
       ],

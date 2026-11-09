@@ -284,6 +284,8 @@ export const channelFormSchema = z
     // (stored in setting JSON, not sent directly)
     cost_mode: z.enum(['ratio', 'discount']).optional(),
     cost_discount: z.number().optional(),
+    // Discount-mode settlement rate (CNY per USD), frozen into the price version
+    cost_exchange_rate: z.number().optional(),
     is_aggregator: z.boolean().optional(),
     sub_suppliers: z
       .array(
@@ -544,6 +546,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   cost_ratio: undefined,
   cost_mode: 'ratio',
   cost_discount: undefined,
+  cost_exchange_rate: undefined,
   is_aggregator: false,
   sub_suppliers: [],
   // Type-specific settings
@@ -610,6 +613,7 @@ export function transformChannelToFormDefaults(
     cost_ratio: undefined as number | undefined,
     cost_mode: 'ratio' as 'ratio' | 'discount',
     cost_discount: undefined as number | undefined,
+    cost_exchange_rate: undefined as number | undefined,
     is_aggregator: false,
     sub_suppliers: [] as Array<{ name: string; cost_ratio?: number }>,
   }
@@ -645,6 +649,11 @@ export function transformChannelToFormDefaults(
         cost_discount:
           typeof parsed.cost_discount === 'number' && parsed.cost_discount > 0
             ? parsed.cost_discount
+            : undefined,
+        cost_exchange_rate:
+          typeof parsed.cost_exchange_rate === 'number' &&
+          parsed.cost_exchange_rate > 0
+            ? parsed.cost_exchange_rate
             : undefined,
         is_aggregator: parsed.is_aggregator === true,
         sub_suppliers: Array.isArray(parsed.sub_suppliers)
@@ -861,6 +870,14 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
   ) {
     settingObj.cost_discount = formData.cost_discount
   }
+  if (
+    formData.cost_mode === 'discount' &&
+    typeof formData.cost_exchange_rate === 'number' &&
+    Number.isFinite(formData.cost_exchange_rate) &&
+    formData.cost_exchange_rate > 0
+  ) {
+    settingObj.cost_exchange_rate = formData.cost_exchange_rate
+  }
   if (formData.is_aggregator === true) {
     settingObj.is_aggregator = true
   }
@@ -992,7 +1009,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     // 素材库上限官方查不到，只能手填；0/空一律存 0，管理页据此显示「未知/不限」。
     settingsObj.volc_asset_quota_limit = Math.max(
       0,
-      Math.floor(Number(formData.volc_asset_quota_limit) || 0),
+      Math.floor(Number(formData.volc_asset_quota_limit) || 0)
     )
     settingsObj.volc_sign_region = (formData.volc_sign_region || '').trim()
     settingsObj.volc_openapi_endpoint = (

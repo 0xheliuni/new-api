@@ -18,14 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { DollarSign, PiggyBank, Receipt, TrendingUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
+
 import { StatCard } from '@/features/dashboard/components/ui/stat-card'
+import { cn } from '@/lib/utils'
+
+import { formatRate, resolveDualMoney, useMoneyPrimaryCurrency } from '../lib'
 import type { CostOverview } from '../types'
-import {
-  formatRate,
-  resolveDualMoney,
-  useMoneyPrimaryCurrency,
-} from '../lib'
 
 interface CostKpiCardsProps {
   overview?: CostOverview
@@ -86,7 +84,7 @@ export function CostKpiCards({ overview, loading }: CostKpiCardsProps) {
         </div>
         <div className='bg-card rounded-xl border p-3'>
           <StatCard
-            title={t('Cost')}
+            title={t('Upstream Cost')}
             value={loading || !totals || !cost ? '--' : cost.primary}
             description={
               loading || !totals || !cost || !listPrice

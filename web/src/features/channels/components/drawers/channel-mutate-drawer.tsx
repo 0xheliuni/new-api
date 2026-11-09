@@ -24,9 +24,11 @@ import {
   ArrowRightLeft,
   PanelLeftOpen,
   AlertCircle,
+  Building2,
   ChevronDown,
   ClipboardPaste,
   Loader2,
+  Plus,
   Server,
   Sparkles,
   Trash2,
@@ -50,7 +52,11 @@ import {
   useCallback,
   useRef,
 } from 'react'
-import { type SubmitErrorHandler, useForm } from 'react-hook-form'
+import {
+  type SubmitErrorHandler,
+  useFieldArray,
+  useForm,
+} from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -106,6 +112,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { DEFAULT_EXCHANGE_RATE } from '@/features/cost/components/cost-filter'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -585,6 +592,14 @@ export function ChannelMutateDrawer({
 
   // Watch values once for conditional fields and configuration indicators.
   const formValues = form.watch()
+  // Cost pricing feeds the super-admin-only cost report, so only a super admin
+  // sees or edits it; other admins save the stored values back untouched.
+  const canEditCostSettings = currentUser?.role === ROLE.SUPER_ADMIN
+  const {
+    fields: subSupplierFields,
+    append: appendSubSupplier,
+    remove: removeSubSupplier,
+  } = useFieldArray({ control: form.control, name: 'sub_suppliers' })
   const multiKeyMode = formValues.multi_key_mode
   const multiKeyType = formValues.multi_key_type
   const keyMode = formValues.key_mode
@@ -1645,6 +1660,22 @@ export function ChannelMutateDrawer({
         setPendingErrorFocus('key')
         return
       }
+      // The server freezes this rate into the discount price version; left
+      // blank it would settle at the site-wide display exchange rate instead.
+      if (
+        canEditCostSettings &&
+        data.cost_mode === 'discount' &&
+        (data.cost_discount ?? 0) > 0 &&
+        !((data.cost_exchange_rate ?? 0) > 0)
+      ) {
+        form.setError('cost_exchange_rate', {
+          type: 'manual',
+          message: 'Settlement exchange rate is required for discount pricing',
+        })
+        setConfigurationSection('other')
+        setPendingErrorFocus('cost_exchange_rate')
+        return
+      }
 
       if (sensitiveLocked) {
         const dirtyFields = form.formState.dirtyFields as Partial<
@@ -1772,6 +1803,7 @@ export function ChannelMutateDrawer({
       isEditing,
       providerTarget,
       canEditSensitive,
+      canEditCostSettings,
       sensitiveLocked,
       channelData,
       form,
@@ -2095,6 +2127,265 @@ export function ChannelMutateDrawer({
           )}
         />
       </div>
+    </div>
+  )
+
+  // The settlement rate is frozen into the price version on save. Seed it with
+  // the cost report's default the moment a discount is chosen, so a discount
+  // never settles at the site-wide display exchange rate by omission.
+  const seedCostExchangeRate = () => {
+    if (!((form.getValues('cost_exchange_rate') ?? 0) > 0)) {
+      form.setValue('cost_exchange_rate', DEFAULT_EXCHANGE_RATE, {
+        shouldDirty: true,
+      })
+    }
+  }
+
+  const supplierFields = (
+    <div
+      role='group'
+      aria-label={t('Supplier Settings')}
+      className={channelConfigurationBlockClassName(
+        configuration.blocks.supplierSettings,
+        'space-y-4'
+      )}
+    >
+      <CardHeading
+        status={configuration.blocks.supplierSettings}
+        title={t('Supplier Settings')}
+        icon={<Building2 className='size-4' />}
+      />
+      <p className='text-muted-foreground text-xs'>
+        {t('Cost pricing mode, aggregator status, and sub-suppliers')}
+      </p>
+      <fieldset
+        disabled={sensitiveLocked}
+        className='space-y-4 disabled:opacity-60'
+      >
+        <FormField
+          control={form.control}
+          name='cost_mode'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Pricing Mode')}</FormLabel>
+              <Select
+                disabled={sensitiveLocked}
+                items={[
+                  { value: 'ratio', label: t('Cost Ratio (CNY per USD)') },
+                  { value: 'discount', label: t('Cost Discount') },
+                ]}
+                value={field.value || 'ratio'}
+                onValueChange={(value) => {
+                  const nextMode = value === 'discount' ? 'discount' : 'ratio'
+                  field.onChange(nextMode)
+                  if (nextMode === 'discount') seedCostExchangeRate()
+                }}
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value='ratio'>
+                      {t('Cost Ratio (CNY per USD)')}
+                    </SelectItem>
+                    <SelectItem value='discount'>
+                      {t('Cost Discount')}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {formValues.cost_mode === 'discount' ? (
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='cost_discount'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Cost Discount')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      step={0.01}
+                      placeholder={t('e.g., 0.8')}
+                      value={field.value ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        field.onChange(raw === '' ? undefined : Number(raw))
+                        seedCostExchangeRate()
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Cost = list price × discount × exchange rate. 0.8 means 80% of list price.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='cost_exchange_rate'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Settlement exchange rate')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      step={0.01}
+                      placeholder={String(DEFAULT_EXCHANGE_RATE)}
+                      value={field.value ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        field.onChange(raw === '' ? undefined : Number(raw))
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Frozen with this version so historical cost never drifts.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        ) : (
+          <FormField
+            control={form.control}
+            name='cost_ratio'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Cost Ratio (CNY per USD)')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    min={0}
+                    step={0.01}
+                    placeholder={t('e.g., 6.5')}
+                    value={field.value ?? ''}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      field.onChange(raw === '' ? undefined : Number(raw))
+                    }}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t('Used by cost accounting. Leave empty if unknown.')}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        <FormField
+          control={form.control}
+          name='is_aggregator'
+          render={({ field }) => (
+            <FormItem className={sideDrawerSwitchItemClassName()}>
+              <div className='flex flex-col gap-0.5'>
+                <FormLabel>{t('Aggregator Channel')}</FormLabel>
+                <FormDescription className='text-xs'>
+                  {t('This channel routes to multiple upstream sub-suppliers')}
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value === true}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        {formValues.is_aggregator && (
+          <div className='flex flex-col gap-3'>
+            {subSupplierFields.length > 0 ? (
+              <div className='flex flex-col gap-2'>
+                <div className='grid grid-cols-[1fr_1fr_auto] gap-2 text-sm font-medium'>
+                  <div>{t('Sub-supplier')}</div>
+                  <div>{t('Cost Ratio (CNY per USD)')}</div>
+                  <div className='w-10' />
+                </div>
+                {subSupplierFields.map((fieldItem, index) => (
+                  <div
+                    key={fieldItem.id}
+                    className='grid grid-cols-[1fr_1fr_auto] gap-2'
+                  >
+                    <FormField
+                      control={form.control}
+                      name={`sub_suppliers.${index}.name`}
+                      render={({ field }) => (
+                        <Input
+                          aria-label={t('Sub-supplier')}
+                          placeholder={t('Sub-supplier')}
+                          {...field}
+                        />
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`sub_suppliers.${index}.cost_ratio`}
+                      render={({ field }) => (
+                        <Input
+                          aria-label={t('Cost Ratio (CNY per USD)')}
+                          type='number'
+                          min={0}
+                          step={0.01}
+                          placeholder={t('e.g., 6.5')}
+                          value={field.value ?? ''}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            field.onChange(raw === '' ? undefined : Number(raw))
+                          }}
+                        />
+                      )}
+                    />
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='icon'
+                      onClick={() => removeSubSupplier(index)}
+                      aria-label={t('Remove')}
+                    >
+                      <Trash2 className='size-4' aria-hidden='true' />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className='text-muted-foreground flex h-16 items-center justify-center rounded-md border border-dashed text-sm'>
+                {t('No sub-suppliers configured yet.')}
+              </div>
+            )}
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={() =>
+                appendSubSupplier({ name: '', cost_ratio: undefined })
+              }
+            >
+              <Plus className='size-4' aria-hidden='true' />
+              {t('Add supplier')}
+            </Button>
+          </div>
+        )}
+      </fieldset>
     </div>
   )
 
@@ -4807,6 +5098,7 @@ export function ChannelMutateDrawer({
                 {httpShardsFields}
               </fieldset>
             </div>
+            {canEditCostSettings && supplierFields}
             {upstreamModelDetectionFields}
             {notesFields}
           </>

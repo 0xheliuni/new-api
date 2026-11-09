@@ -76,6 +76,7 @@ const SUPPLIER_SETTINGS_FIELDS = new Set<FieldPath<ChannelFormValues>>([
   'cost_ratio',
   'cost_mode',
   'cost_discount',
+  'cost_exchange_rate',
   'is_aggregator',
   'sub_suppliers',
 ])
@@ -83,9 +84,7 @@ const SUPPLIER_SETTINGS_FIELDS = new Set<FieldPath<ChannelFormValues>>([
 export function isSupplierSettingsField(
   fieldName: string
 ): fieldName is FieldPath<ChannelFormValues> {
-  return SUPPLIER_SETTINGS_FIELDS.has(
-    fieldName as FieldPath<ChannelFormValues>
-  )
+  return SUPPLIER_SETTINGS_FIELDS.has(fieldName as FieldPath<ChannelFormValues>)
 }
 
 export function hasSupplierSettingsErrors(

@@ -158,12 +158,9 @@ func CreateChannelCostVersion(c *gin.Context) {
 // DeleteChannelCostVersion DELETE /api/cost/versions/:vid
 // 删除指定版本（幂等：版本已不存在时返回成功）。
 //
-// 设计不变量 4 处理策略：拒绝删除渠道的最后一个版本。
-// 理由：版本行不可变且无更新接口，删除最后一行后该渠道所有历史日志将永久标记为
-// 未定价（EffectiveRatio 返回 ok=false），且无法通过"再插一行"来覆盖历史——
-// effective_from=0 的种子行若丢失，1970 年之后、下一版本之前的全部日志都将失去
-// 成本基准，损失不可逆。保留最后一条是最低安全护栏。
-// 管理员如需彻底移除某渠道定价，应先追加一个新版本再删旧版本，确保始终有版本可查。
+// 唯一的拒绝条件是该渠道只剩这一条版本：删光后渠道没有任何价格可用，全部日志成本
+// 记 0。初始版本（effective_from=0）可以删，删掉后由后面的记录往前覆盖（见
+// model.VersionMap.VersionAt）。管理员如需换掉唯一的一条，应先补录新版本再删旧版本。
 func DeleteChannelCostVersion(c *gin.Context) {
 	vid, err := strconv.Atoi(c.Param("vid"))
 	if err != nil || vid <= 0 {
@@ -182,14 +179,10 @@ func DeleteChannelCostVersion(c *gin.Context) {
 		return
 	}
 	// 校验与删除的原子性由 model 层负责（事务 + 行锁），见
-	// DeleteChannelCostVersionIfNotLast。两种拒绝都是预期内的业务结果而非内部故障，
-	// 所以各给一句可操作的提示，不走 ApiError 那条通道。
+	// DeleteChannelCostVersionIfNotLast。拒绝是预期内的业务结果而非内部故障，
+	// 所以给一句可操作的提示，不走 ApiError 那条通道。
 	if err := model.DeleteChannelCostVersionIfNotLast(v.ChannelId, vid); err != nil {
-		switch {
-		case errors.Is(err, model.ErrBaselineVersion):
-			common.ApiErrorMsg(c, "cannot delete the baseline version; it prices every log before the next version and cannot be recreated")
-			return
-		case errors.Is(err, model.ErrLastVersion):
+		if errors.Is(err, model.ErrLastVersion) {
 			common.ApiErrorMsg(c, "cannot delete the last version of a channel; add a replacement version first")
 			return
 		}
@@ -236,10 +229,15 @@ func costVersionChanged(latest model.ChannelCostVersion, s *dto.ChannelSettings)
 		d := a - b
 		return d < costVersionFloatEpsilon && d > -costVersionFloatEpsilon
 	}
+	// 折扣模式还要比结算汇率：同一个折扣换个汇率结算就是另一个价。设置里没带汇率
+	// （只提交折扣的旧客户端）时不参与比对，否则每次保存都会多追一条版本。
+	rateChanged := normMode(s.CostMode) == "discount" && s.CostExchangeRate > 0 &&
+		!sameFloat(latest.ExchangeRate, s.CostExchangeRate)
 	// 三个字段都要比：版本行原样存下这三个值，任何一个不同都是一条内容不同的版本。
 	return normMode(latest.CostMode) != normMode(s.CostMode) ||
 		!sameFloat(latest.CostRatio, s.CostRatio) ||
-		!sameFloat(latest.CostDiscount, s.CostDiscount)
+		!sameFloat(latest.CostDiscount, s.CostDiscount) ||
+		rateChanged
 }
 
 // appendCostVersionIfChanged 在渠道保存成功后追加一条 effective_from=now 的计价版本，
@@ -277,29 +275,28 @@ func appendCostVersionIfChanged(c *gin.Context, channelId int, s *dto.ChannelSet
 	if inEffect, ok := versionInEffect(versions, time.Now().Unix()); ok && !costVersionChanged(inEffect, s) {
 		return
 	}
-	// discount 模式冻结服务端当前汇率，与 CreateChannelCostVersion 同一来源
+	// discount 模式冻结渠道设置里填的结算汇率；没填时退回服务端当前汇率
 	// （operation_setting.USDExchangeRate，启动时由 InitOptionMap 从 options 表同步）。
+	// 优先取设置值：USDExchangeRate 是全站展示用的设置，可以被配成 1，拿它冻结会把
+	// 折扣渠道的成本算小好几倍。
 	//
 	// 汇率非正时放弃追加，而不是兜底一个默认值：把 0 冻进不可变的版本行，该版本
 	// 覆盖的日志会永久算不出成本（显示成 100% 毛利）；兜底成 7.3 更糟——数字看着
 	// 正常，实际是编的。这里又不能像 API 那样退回 400：渠道已经存好了。
 	// 放弃是可自愈的：汇率配好后再保存一次渠道，与最新版本的比对依然为「变了」，
 	// 版本会在那时补上，只是 effective_from 顺延到那一刻。
-	exRate := operation_setting.USDExchangeRate
+	exRate := s.CostExchangeRate
+	if exRate <= 0 {
+		exRate = operation_setting.USDExchangeRate
+	}
 	if s.CostMode == "discount" && exRate <= 0 {
 		common.SysError("skip auto cost version for channel " + strconv.Itoa(channelId) +
 			": discount mode requires a positive USDExchangeRate")
 		return
 	}
-	// 首个版本用 effective_from=0（自古以来），而不是 now。
-	//
-	// 用 now 会同时挖两个坑：渠道创建到首次编辑之间的日志永远落在版本区间之前，
-	// VersionAt 返回 false，这段成本永久记 0（显示成 100% 毛利）；而且一旦写入，
-	// seedChannelCostVersions 的 seeded 集合就认为该渠道"已回填"，重启补种也不会
-	// 再管它。版本行不可变、创建接口又硬拒 effective_from=0，事后无从补救。
-	//
-	// 取 0 与 seedChannelCostVersions 的语义完全一致（它同样把当前配置按
-	// effective_from=0 落库），把这条历史缺口从源头堵上。
+	// 首个版本用 effective_from=0（自古以来），而不是 now：它就是版本历史里的「初始」
+	// 价，覆盖渠道创建到首次编辑之间的全部日志。取 0 与 seedChannelCostVersions 的
+	// 语义完全一致（它同样把当前配置按 effective_from=0 落库）。
 	effectiveFrom := int64(0)
 	if len(versions) > 0 {
 		effectiveFrom = time.Now().Unix()

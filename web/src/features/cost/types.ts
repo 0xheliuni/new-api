@@ -85,6 +85,8 @@ export interface CostBreakdownRow extends CostMoney {
   cost_mode?: '' | 'ratio' | 'discount'
   cost_ratio?: number
   cost_discount?: number
+  // Settlement rate frozen with a discount-mode price; absent in ratio mode.
+  cost_exchange_rate?: number
   // Every list-price amount in this sub-row found a price version. false marks
   // an unpriced gap, which reads as a zero-cost (100% margin) row otherwise.
   priced?: boolean
@@ -104,6 +106,7 @@ export interface CostDimensionRow extends CostMoney {
   // Channel-dim only (costDimChannel in controller/cost_stat.go).
   cost_mode?: '' | 'ratio' | 'discount'
   cost_discount?: number
+  cost_exchange_rate?: number
   is_aggregator?: boolean
   sub_suppliers?: CostChannelSubSupplier[]
 }

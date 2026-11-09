@@ -35,7 +35,8 @@ type ChannelCostVersion struct {
 type VersionMap map[int][]ChannelCostVersion
 
 // VersionAt 返回 channelId 在 ts 时刻生效的版本本体，供调用方识别"跨了哪几个版本"。
-// ok=false 时第一个返回值无意义。
+// 早于最早一条版本的时刻按最早那条计：初始价被删掉后由后面的记录往前覆盖，不留下
+// 查不到价的空档。ok=false 仅表示该渠道没有任何版本，此时第一个返回值无意义。
 func (v VersionMap) VersionAt(channelId int, ts int64) (ChannelCostVersion, bool) {
 	versions := v[channelId]
 	if len(versions) == 0 {
@@ -45,10 +46,7 @@ func (v VersionMap) VersionAt(channelId int, ts int64) (ChannelCostVersion, bool
 	idx := sort.Search(len(versions), func(i int) bool {
 		return versions[i].EffectiveFrom > ts
 	}) - 1
-	if idx < 0 {
-		return ChannelCostVersion{}, false
-	}
-	return versions[idx], true
+	return versions[max(idx, 0)], true
 }
 
 // EffectiveRatio 返回该版本换算后的 CNY:USD 倍率（discount 模式乘冻结汇率）。
@@ -113,30 +111,23 @@ func DeleteChannelCostVersion(id int) error {
 // （返回可读提示而非 500）。
 var ErrLastVersion = errors.New("cannot delete the last version of a channel")
 
-// ErrBaselineVersion 目标是 effective_from=0 的基线版本时返回。
-var ErrBaselineVersion = errors.New("cannot delete the baseline (effective_from=0) version")
-
-// DeleteChannelCostVersionIfNotLast 删除指定版本，但挡住两种会造成不可逆损失的删除：
-// 目标是 effective_from=0 的基线版本（ErrBaselineVersion），或该渠道仅剩一条版本
-// （ErrLastVersion）。
+// DeleteChannelCostVersionIfNotLast 删除指定版本，但不允许删掉该渠道仅剩的一条
+// （ErrLastVersion）：删光后渠道没有任何价格可用，全部日志成本记 0。
 //
-// 基线保护是这里真正的不变量。基线覆盖「自古以来到下一个版本」的全部日志，一旦删除，
-// 那段区间 VersionAt 解析不到版本，成本永久记 0（显示成 100% 毛利），而补回的路径
-// 全部堵死：创建接口硬拒 effective_from=0（该值保留给迁移回填），自动追版本只在渠道
-// 零版本时才用 0，重启回填又按「是否存在任意版本」跳过该渠道，版本行本身还不可更新。
-// 其余版本没有这个问题——它们都能用 POST 原样重建，所以只有基线需要硬保护。
+// 初始版本（effective_from=0）可以删：早于最早一条记录的日志按最早那条计价（见
+// VersionAt），删掉它就由后面的记录往前覆盖，不会留下成本记 0 的空档；更早的价
+// 也能用「补录历史价格」重新录入。
 //
 // 关于并发：事务只给原子性，不给互斥——普通 COUNT(*) 在三库上都是不加锁的读，两个
-// 并发 DELETE 会同时读到 count=2、同时通过计数校验，把渠道删空。基线保护挡掉了大部分
-// 后果（剩下的行都能用 POST 原样重建），但历史遗留的无基线渠道恰好只剩计数这一道防线，
-// 而那正是并发下失效的一环。所以这里对 channel_id 的全部版本行加行锁，把「数」和
-// 「删」真正串起来：第二个事务阻塞到第一个提交后重读，看到 count=1 并正确拒绝。
+// 并发 DELETE 会同时读到 count=2、同时通过计数校验，把渠道删空。所以这里对
+// channel_id 的全部版本行加行锁，把「数」和「删」真正串起来：第二个事务阻塞到第一个
+// 提交后重读，看到 count=1 并正确拒绝。
 //
 // SQLite 不支持 FOR UPDATE，按 Rule 2 分支跳过：它的写事务本身互斥，第二个删除要么
 // 排在第一个之后（重读到 count=1，同样被拒），要么直接拿到 SQLITE_BUSY——失败得很响，
 // 不会静默删空。
 //
-// 顺带把原先的三次查询压成两次：加锁的这次 SELECT 同时充当目标行查找与计数。
+// 加锁的这次 SELECT 同时充当目标行查找与计数。
 func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		q := tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", channelId)
@@ -158,9 +149,6 @@ func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 		}
 		if idx < 0 {
 			return nil
-		}
-		if rows[idx].EffectiveFrom == 0 {
-			return ErrBaselineVersion
 		}
 		if len(rows) <= 1 {
 			return ErrLastVersion
@@ -213,10 +201,15 @@ func seedChannelCostVersions() error {
 		if !hasCost {
 			continue
 		}
+		// 渠道设置里填了结算汇率就用它，与渠道保存时追版本同一口径。
+		rate := er
+		if s.CostExchangeRate > 0 {
+			rate = s.CostExchangeRate
+		}
 		v := &ChannelCostVersion{
 			ChannelId: ch.Id, EffectiveFrom: 0,
 			CostMode: s.CostMode, CostRatio: s.CostRatio,
-			CostDiscount: s.CostDiscount, ExchangeRate: er,
+			CostDiscount: s.CostDiscount, ExchangeRate: rate,
 			Note: "migrated from channel settings",
 		}
 		if err := CreateChannelCostVersion(v); err != nil {

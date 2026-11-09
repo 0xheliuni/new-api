@@ -1272,14 +1272,12 @@ func UpdateChannel(c *gin.Context) {
 	// 成本计价字段变化时追加一条 effective_from=now 的版本，让改价之后的日志按新价
 	// 计算、改价之前的历史仍按原价计算。放在 Update 成功之后：版本描述的是"已经生效
 	// 的价"，渠道没存进去就不该有对应版本。
+	// 必须解进 hostdto：relaykit 的 ChannelSettings 没有成本字段，经它转一手会丢掉
+	// cost_mode/cost_ratio/cost_discount，版本就不会追加。
 	if channel.Setting != nil {
-		var newSetting dto.ChannelSettings
-		if err := common.UnmarshalJsonStr(*channel.Setting, &newSetting); err == nil {
-			var hostSetting hostdto.ChannelSettings
-			if data, me := common.Marshal(newSetting); me == nil {
-				_ = common.Unmarshal(data, &hostSetting)
-			}
-			appendCostVersionIfChanged(c, channel.Id, &hostSetting)
+		var costSetting hostdto.ChannelSettings
+		if err := common.UnmarshalJsonStr(*channel.Setting, &costSetting); err == nil {
+			appendCostVersionIfChanged(c, channel.Id, &costSetting)
 		}
 	}
 	if proxyChanged {

@@ -4019,6 +4019,7 @@
     "收入折算汇率": "Revenue conversion rate",
     "生效时间": "Effective from",
     "结算汇率": "Settlement rate",
+    "折扣计价需要填写结算汇率": "Discount pricing needs a settlement rate",
     "结算汇率随该版本一起冻结，此后不随站点汇率变动，历史成本因此不会漂移。": "The settlement rate is frozen with this version and no longer follows the site rate, so historical cost does not drift.",
     "补录历史价": "Add historical price",
     "计价": "Pricing",

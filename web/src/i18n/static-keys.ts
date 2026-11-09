@@ -896,4 +896,5 @@ export const STATIC_I18N_KEYS = [
   'Verification method',
   'Admin permissions updated',
   'Provider ID',
+  'Settlement exchange rate is required for discount pricing',
 ] as const

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // seedLoadExchangeRate 必须从 options 表读汇率，而不是读包级变量。
@@ -125,13 +127,7 @@ func TestSeedChannelCostVersions_SkipsSeededChannelsIdempotently(t *testing.T) {
 	}
 }
 
-// 最后一条版本不可删：删光后该渠道全部历史日志失去成本基准，且版本行不可更新，
-// 损失不可逆。
-//
-// 这里刻意全部用非零 effective_from：基线（effective_from=0）由
-// TestDeleteChannelCostVersion_BaselineIsProtected 单独覆盖，且基线保护会先于计数
-// 校验命中。用非基线行才能把「仅剩一条」这道计数校验单独钉住——它正是历史遗留的
-// 无基线渠道所依赖的第二道防线。
+// 最后一条版本不可删：删光后该渠道没有任何价格可用，全部日志成本记 0。
 func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
 	DB.Exec("DELETE FROM channel_cost_versions")
 	t.Cleanup(func() { DB.Exec("DELETE FROM channel_cost_versions") })
@@ -176,53 +172,28 @@ func TestDeleteChannelCostVersionIfNotLast(t *testing.T) {
 	}
 }
 
-// effective_from=0 的基线版本不可删——这是整条历史的成本地基，且删掉无法补回。
-//
-// 为什么单靠 count>1 不够：渠道有 [0, T1] 两条时 count=2，校验放行，于是基线被删。
-// 此后 T1 之前的全部日志 VersionAt 解析不到版本，成本永久记 0（显示成 100% 毛利）。
-// 补救路径全部堵死：POST 硬拒 effective_from=0；appendCostVersionIfChanged 只在
-// 渠道「零版本」时才写 0，而此时还剩 T1；重启时 seedChannelCostVersions 的 seeded
-// 集合按「该渠道是否存在任意版本」判定，同样跳过。版本行又不可更新。
-//
-// 两个前端都已隐藏基线行的删除按钮，并注明理由是"接口会拒绝"——这条测试确保
-// 那句注释成立，而不是把不变量只寄托在客户端。
-func TestDeleteChannelCostVersion_BaselineIsProtected(t *testing.T) {
+// 初始价格（effective_from=0）可以删：初始价填错时删掉它，由后面的价格记录往前覆盖。
+// 早于最早一条记录的日志按最早那条计价（见 VersionAt），所以删掉初始价不会留下成本
+// 记 0 的空档。只剩一条时仍不可删——删光后渠道没有任何价格可用。
+func TestDeleteChannelCostVersion_InitialVersionDeletable(t *testing.T) {
 	DB.Exec("DELETE FROM channel_cost_versions")
 	t.Cleanup(func() { DB.Exec("DELETE FROM channel_cost_versions") })
 
-	mk := func(channelId int, effectiveFrom int64) *ChannelCostVersion {
-		v := &ChannelCostVersion{
-			ChannelId: channelId, EffectiveFrom: effectiveFrom,
-			CostMode: "ratio", CostRatio: 2.5,
-		}
-		if err := CreateChannelCostVersion(v); err != nil {
-			t.Fatalf("create version: %v", err)
-		}
-		return v
-	}
+	initial := &ChannelCostVersion{ChannelId: 7, EffectiveFrom: 0, CostMode: "ratio", CostRatio: 3.1}
+	require.NoError(t, CreateChannelCostVersion(initial))
+	later := &ChannelCostVersion{ChannelId: 7, EffectiveFrom: 1754000000,
+		CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8}
+	require.NoError(t, CreateChannelCostVersion(later))
 
-	baseline := mk(7, 0)
-	later := mk(7, 1754000000)
+	require.NoError(t, DeleteChannelCostVersionIfNotLast(7, initial.Id))
 
-	// count=2 会让 count<=1 那道校验放行，所以这里必须由基线保护挡住。
-	if err := DeleteChannelCostVersionIfNotLast(7, baseline.Id); !errors.Is(err, ErrBaselineVersion) {
-		t.Fatalf("deleting the effective_from=0 baseline: err = %v, want ErrBaselineVersion", err)
-	}
-	var survives int64
-	DB.Model(&ChannelCostVersion{}).Where("id = ?", baseline.Id).Count(&survives)
-	if survives != 1 {
-		t.Fatal("baseline row was deleted; every log before the next version now prices at 0")
-	}
+	versions, err := GetAllChannelCostVersions()
+	require.NoError(t, err)
+	ratio, ok := versions.RatioAt(7, 1000) // 远早于剩下那条记录的日志
+	require.True(t, ok, "logs before the earliest remaining record must still be priced")
+	assert.InDelta(t, 0.31*6.8, ratio, 1e-9)
 
-	// 非基线版本仍然可删：它可以用 POST 原样重建，删除不造成不可逆损失。
-	if err := DeleteChannelCostVersionIfNotLast(7, later.Id); err != nil {
-		t.Fatalf("deleting a non-baseline version: %v", err)
-	}
-
-	// 只剩基线时，两道校验都该挡住（此时 count<=1 也生效）。
-	if err := DeleteChannelCostVersionIfNotLast(7, baseline.Id); err == nil {
-		t.Fatal("deleting the sole remaining baseline must fail")
-	}
+	assert.ErrorIs(t, DeleteChannelCostVersionIfNotLast(7, later.Id), ErrLastVersion)
 }
 
 // BatchInsertChannels 必须把自增主键回填进调用方的切片。

@@ -343,7 +343,7 @@ func getCostByDimension(c *gin.Context, dim string) {
 		return
 	}
 	page, pageSize := parseBillSummaryPaging(c)
-	rows := foldCostCube(data.cube, dim, data.channels, data.versions, data.rate, data.end)
+	rows := foldCostCube(data.cube, dim, data.channels, data.versions, data.rate, time.Now().Unix())
 	common.ApiSuccess(c, paginateCostRows(rows, page, pageSize))
 }
 
