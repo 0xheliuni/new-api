@@ -104,7 +104,7 @@ export function VideoChannelTextField(props: VideoChannelTextFieldProps) {
               <PasswordInput
                 {...field}
                 value={field.value ?? ''}
-                autoComplete='off'
+                autoComplete='new-password'
                 placeholder={props.placeholder}
                 disabled={props.disabled}
               />
@@ -112,6 +112,7 @@ export function VideoChannelTextField(props: VideoChannelTextFieldProps) {
               <Input
                 {...field}
                 value={field.value ?? ''}
+                autoComplete='off'
                 placeholder={props.placeholder}
                 disabled={props.disabled}
               />

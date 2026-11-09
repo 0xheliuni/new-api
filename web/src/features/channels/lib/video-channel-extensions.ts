@@ -39,22 +39,19 @@ export const VIDEO_CHANNEL_BASE_URL_PRESETS: readonly string[] = [
   ARK_AP_BASE_URL,
 ]
 
-// eslint-disable-next-line unicorn/prefer-set-has
-const ASSET_LIBRARY_TYPES: readonly number[] = [
+const ASSET_LIBRARY_TYPES: ReadonlySet<number> = new Set([
   CHANNEL_TYPE_VOLCENGINE,
   CHANNEL_TYPE_DOUBAO_VIDEO,
-]
-// eslint-disable-next-line unicorn/prefer-set-has
-const UPSTREAM_TASK_ID_TYPES: readonly number[] = [
+])
+const UPSTREAM_TASK_ID_TYPES: ReadonlySet<number> = new Set([
   CHANNEL_TYPE_VOLCENGINE,
   CHANNEL_TYPE_DOUBAO_VIDEO,
   CHANNEL_TYPE_SEEDANCE_3RD,
-]
-// eslint-disable-next-line unicorn/prefer-set-has
-const BASE_URL_FIELD_TYPES: readonly number[] = [
+])
+const BASE_URL_FIELD_TYPES: ReadonlySet<number> = new Set([
   CHANNEL_TYPE_VOLCENGINE,
   CHANNEL_TYPE_VOLC_PASSTHROUGH,
-]
+])
 
 const ASSET_LIBRARY_KEYS = [
   'byteplus_asset_enabled',
@@ -217,7 +214,7 @@ export function writeVideoChannelSettings(
 
   if (type === CHANNEL_TYPE_VOLC_PASSTHROUGH) {
     // 66 的 AK/SK/项目名在下面的火山透传分支写入；素材库相关的旧键保留不删。
-  } else if (ASSET_LIBRARY_TYPES.includes(type)) {
+  } else if (ASSET_LIBRARY_TYPES.has(type)) {
     settings.byteplus_asset_enabled = formData.byteplus_asset_enabled === true
     settings.byteplus_access_key = (formData.byteplus_access_key || '').trim()
     settings.byteplus_secret_key = (formData.byteplus_secret_key || '').trim()
@@ -260,7 +257,7 @@ export function writeVideoChannelSettings(
     delete settings.seedance3rd_asset_enabled
   }
 
-  if (UPSTREAM_TASK_ID_TYPES.includes(type)) {
+  if (UPSTREAM_TASK_ID_TYPES.has(type)) {
     settings.expose_upstream_task_id = formData.expose_upstream_task_id === true
   } else {
     delete settings.expose_upstream_task_id
@@ -272,10 +269,7 @@ export function validateVideoChannelSettings(
   data: VideoChannelFormSlice,
   ctx: z.RefinementCtx
 ): void {
-  if (
-    !ASSET_LIBRARY_TYPES.includes(data.type) ||
-    !data.byteplus_asset_enabled
-  ) {
+  if (!ASSET_LIBRARY_TYPES.has(data.type) || !data.byteplus_asset_enabled) {
     return
   }
   if (data.asset_provider === 'cloudwise') {
@@ -306,7 +300,7 @@ export function validateVideoChannelSettings(
 }
 
 export function hasAssetLibrary(type: number): boolean {
-  return ASSET_LIBRARY_TYPES.includes(type)
+  return ASSET_LIBRARY_TYPES.has(type)
 }
 
 export function hasSeedanceAssetUpload(type: number): boolean {
@@ -314,7 +308,7 @@ export function hasSeedanceAssetUpload(type: number): boolean {
 }
 
 export function hasUpstreamTaskIdOption(type: number): boolean {
-  return UPSTREAM_TASK_ID_TYPES.includes(type)
+  return UPSTREAM_TASK_ID_TYPES.has(type)
 }
 
 export function hasVolcPassthroughSigning(type: number): boolean {
@@ -323,7 +317,7 @@ export function hasVolcPassthroughSigning(type: number): boolean {
 
 /** 这些类型的地址输入由 fork 组件渲染，抽屉里上游的地址块要跳过。 */
 export function ownsVideoChannelBaseUrl(type: number): boolean {
-  return BASE_URL_FIELD_TYPES.includes(type)
+  return BASE_URL_FIELD_TYPES.has(type)
 }
 
 /** 新建渠道时，地址为空就填这个默认值。 */

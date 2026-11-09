@@ -3128,3 +3128,27 @@ test('filling related models for a Seedance third-party channel adds its model l
     await screen.findByRole('button', { name: 'dreamina-seedance-2-5-260628' })
   ).toBeVisible()
 })
+
+test('saving a VolcEngine channel with the official asset library but no keys is blocked', async () => {
+  editingChannel.type = 45
+  editingChannel.settings = JSON.stringify({
+    byteplus_asset_enabled: true,
+    asset_provider: 'byteplus',
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() =>
+    expect(screen.getByLabelText('Access Key (AK)')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+  )
+  expect(put).not.toHaveBeenCalled()
+})

@@ -4495,6 +4495,7 @@ export function ChannelMutateDrawer({
               />
             )}
 
+            {/* General base_url for other types */}
             {![3, 8, 22, 36, 45].includes(currentType) && !forkOwnsUrl && (
               <FormField
                 control={form.control}

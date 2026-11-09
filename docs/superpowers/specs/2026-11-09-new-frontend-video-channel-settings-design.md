@@ -184,3 +184,4 @@ fork 模块：扩展现有的 `lib/__tests__/fork-channel-types.test.ts`。
 - 只改前端，随下个版本发布。settings 键名不变，不需要数据迁移。
 - 前提：4 个 Seedance 第三方渠道已用 SQL 从 59 改为 65。
 - 以后合并上游后，先确认 `channel-form.ts` 的 5 处调用和抽屉里的 4 处接入点都还在，再跑 fork 相关测试。
+- 45 的上游地址块被 fork 组件整个接管，上游以后在那里加的地区或 Coding Plan 处理不会自动出现。合并上游后，对比上游 45 地址块的选项与 `VIDEO_CHANNEL_BASE_URL_PRESETS`，有新增就同步到 fork 模块。

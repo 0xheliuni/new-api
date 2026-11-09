@@ -185,6 +185,13 @@ describe('VideoChannelSettings address and control plane signing', () => {
       'type',
       'password'
     )
+    expect(within(signing).getByLabelText('Secret Key (SK)')).toHaveAttribute(
+      'autocomplete',
+      'new-password'
+    )
+    expect(
+      within(signing).getByRole('textbox', { name: 'Access Key (AK)' })
+    ).toHaveAttribute('autocomplete', 'off')
     expect(
       within(signing).getByRole('spinbutton', { name: 'Asset Quota Limit' })
     ).toHaveValue(200)
