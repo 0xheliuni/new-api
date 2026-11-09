@@ -7810,6 +7810,7 @@
     "Task plugin configuration is empty": "任务插件配置为空",
     "e.g., 1000": "例如，1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "该 IAM 账号最多可持有的素材数量。官方没有查询接口，需手动填写；留空或填 0 表示未知/不限。仅用于素材管理页对账。",
-    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "透传的数据面地址。下方签名地区留空时，也据此推导控制面签名地区。"
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "透传的数据面地址。下方签名地区留空时，也据此推导控制面签名地区。",
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "格式：SubAppId|SecretId|SecretKey[|Region]，或直接填写 API Key（如 sk-xxx）"
   }
 }

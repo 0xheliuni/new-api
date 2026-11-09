@@ -7810,6 +7810,7 @@
     "Task plugin configuration is empty": "Cấu hình plugin tác vụ đang trống",
     "e.g., 1000": "ví dụ, 1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "Số lượng tài nguyên tối đa mà tài khoản IAM này có thể lưu giữ. Không có API chính thức để tra cứu nên cần nhập thủ công; để trống hoặc 0 nghĩa là không rõ hoặc không giới hạn. Chỉ dùng để đối soát trên trang quản lý tài nguyên.",
-    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Máy chủ mặt phẳng dữ liệu cho truyền thẳng. Khi vùng ký bên dưới để trống, vùng ký của mặt phẳng điều khiển cũng được suy ra từ đây."
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Máy chủ mặt phẳng dữ liệu cho truyền thẳng. Khi vùng ký bên dưới để trống, vùng ký của mặt phẳng điều khiển cũng được suy ra từ đây.",
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "Định dạng: SubAppId|SecretId|SecretKey[|Region], hoặc API key như sk-xxx"
   }
 }

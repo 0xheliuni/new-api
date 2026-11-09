@@ -34,7 +34,7 @@ import {
   transformChannelToFormDefaults,
   transformFormDataToUpdatePayload,
 } from '../channel-form'
-import { getChannelTypeIcon } from '../channel-utils'
+import { getChannelTypeIcon, getKeyPromptForType } from '../channel-utils'
 import {
   ARK_CN_BASE_URL,
   VIDEO_CHANNEL_SETTINGS_DEFAULTS,
@@ -372,4 +372,12 @@ describe('channel form wiring for video channels', () => {
     })
     expect(result.error?.issues ?? []).toEqual([])
   })
+})
+
+test('the key field prompts OpenAI Video channels for their key format', () => {
+  expect(getKeyPromptForType(64)).toBe(
+    'Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx'
+  )
+  expect(getKeyPromptForType(15)).toBe('Format: APIKey|SecretKey')
+  expect(getKeyPromptForType(1)).toBe('Enter API key for this channel')
 })

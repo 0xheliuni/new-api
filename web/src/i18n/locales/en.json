@@ -7810,6 +7810,7 @@
     "Task plugin configuration is empty": "Task plugin configuration is empty",
     "e.g., 1000": "e.g., 1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.",
-    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Data plane host for passthrough. Also determines the control plane signing region when left unset below."
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Data plane host for passthrough. Also determines the control plane signing region when left unset below.",
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx"
   }
 }

@@ -7810,6 +7810,7 @@
     "Task plugin configuration is empty": "Конфигурация плагина задач пуста",
     "e.g., 1000": "например, 1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "Максимальное число ресурсов, которое может хранить этот IAM-аккаунт. Официального API для проверки нет, поэтому укажите значение вручную; оставьте пустым или 0, если лимит неизвестен или отсутствует. Используется только для сверки на странице управления ресурсами.",
-    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Хост плоскости данных для сквозной передачи. Если регион подписи ниже не указан, по нему также определяется регион подписи плоскости управления."
+    "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Хост плоскости данных для сквозной передачи. Если регион подписи ниже не указан, по нему также определяется регион подписи плоскости управления.",
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "Формат: SubAppId|SecretId|SecretKey[|Region] или API-ключ, например sk-xxx"
   }
 }

@@ -263,6 +263,7 @@ export const STATIC_I18N_KEYS = [
   'Successfully created {{count}} API Key(s)',
   'Successfully deleted {{count}} API key(s)',
   'Enter API key for this channel',
+  'Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx',
 
   // Users
   'Root',

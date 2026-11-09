@@ -28,6 +28,7 @@ import {
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
 import type { Channel, ChannelSettings, ChannelOtherSettings } from '../types'
+import { getVideoChannelKeyPrompt } from './video-channel-extensions'
 
 // ============================================================================
 // Channel Type Utilities
@@ -780,5 +781,9 @@ export function deduplicateKeys(keysText: string): {
  * Get key prompt based on channel type
  */
 export function getKeyPromptForType(type: number): string {
-  return TYPE_TO_KEY_PROMPT[type] || 'Enter API key for this channel'
+  return (
+    TYPE_TO_KEY_PROMPT[type] ||
+    getVideoChannelKeyPrompt(type) ||
+    'Enter API key for this channel'
+  )
 }
