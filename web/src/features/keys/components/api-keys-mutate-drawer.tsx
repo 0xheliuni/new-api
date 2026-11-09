@@ -423,10 +423,10 @@ export function ApiKeysMutateDrawer({
 
               <FormField
                 control={form.control}
-                name='groups'
+                name='group'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Groups')}</FormLabel>
+                    <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox
                         options={groups}
