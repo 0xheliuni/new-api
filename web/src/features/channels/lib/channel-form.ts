@@ -22,8 +22,10 @@ import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
+  CHANNEL_TYPE_SEEDANCE_3RD,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_VOLC_PASSTHROUGH,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
@@ -323,12 +325,12 @@ export const channelFormSchema = z
     byteplus_region: z.string().optional(),
     byteplus_moderation_skip: z.boolean().optional(),
     asset_provider: z.enum(['byteplus', 'cloudwise']).optional(),
-    // 字节火山透传 (type 60): control-plane signing region / endpoint override
+    // 字节火山透传 (type 66): control-plane signing region / endpoint override
     volc_sign_region: z.string().optional(),
     volc_openapi_endpoint: z.string().optional(),
     // 素材库条数上限，仅用于管理页对账展示；0 表示未知/不限
     volc_asset_quota_limit: z.number().optional(),
-    // Seedance(第三方) asset pre-upload (stored in settings JSON; channel type 59)
+    // Seedance(第三方) asset pre-upload (stored in settings JSON; channel type 65)
     seedance3rd_asset_enabled: z.boolean().optional(),
     expose_upstream_task_id: z.boolean().optional(),
   })
@@ -967,8 +969,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     'byteplus_moderation_skip',
     'asset_provider',
   ]
-  if (formData.type === 60) {
-    // type 60 的 AK/SK/项目名在上面的透传分支里已写入，这里不再重复处理，
+  if (formData.type === CHANNEL_TYPE_VOLC_PASSTHROUGH) {
+    // type 66 的 AK/SK/项目名在下面的透传分支里写入，这里不再重复处理，
     // 也不能走 else 分支把它们删掉。
   } else if ([45, 54].includes(formData.type)) {
     settingsObj.byteplus_asset_enabled =
@@ -995,7 +997,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     }
   }
 
-  // 字节火山透传 (type 60)：控制面签名 region 与 endpoint 覆盖。
+  // 字节火山透传 (type 66)：控制面签名 region 与 endpoint 覆盖。
   // 两者均可留空 —— 后端按渠道 BaseURL 推导（见 dto.ResolveVolcSignRegion）。
   // 控制面（?Action=）走 AK/SK 签名，与数据面的 Bearer 密钥独立，
   // 复用 byteplus_access_key / byteplus_secret_key / byteplus_project_name 三个键，
@@ -1005,7 +1007,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     'volc_openapi_endpoint',
     'volc_asset_quota_limit',
   ]
-  if (formData.type === 60) {
+  if (formData.type === CHANNEL_TYPE_VOLC_PASSTHROUGH) {
     // 素材库上限官方查不到，只能手填；0/空一律存 0，管理页据此显示「未知/不限」。
     settingsObj.volc_asset_quota_limit = Math.max(
       0,
@@ -1029,8 +1031,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     }
   }
 
-  // Seedance(第三方) asset pre-upload for channel type 59.
-  if (formData.type === 59) {
+  // Seedance(第三方) asset pre-upload for channel type 65.
+  if (formData.type === CHANNEL_TYPE_SEEDANCE_3RD) {
     settingsObj.seedance3rd_asset_enabled =
       formData.seedance3rd_asset_enabled === true
   } else if ('seedance3rd_asset_enabled' in settingsObj) {
@@ -1038,8 +1040,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   // Upstream task id passthrough for all Seedance channels:
-  // VolcEngine (45) / DoubaoVideo (54) / Seedance 3rd-party (59).
-  if ([45, 54, 59].includes(formData.type)) {
+  // VolcEngine (45) / DoubaoVideo (54) / Seedance 3rd-party (65).
+  if ([45, 54, CHANNEL_TYPE_SEEDANCE_3RD].includes(formData.type)) {
     settingsObj.expose_upstream_task_id =
       formData.expose_upstream_task_id === true
   } else if ('expose_upstream_task_id' in settingsObj) {

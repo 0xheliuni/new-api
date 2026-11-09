@@ -133,9 +133,9 @@ export interface ChannelOtherSettings {
   byteplus_project_name?: string
   byteplus_region?: string
   byteplus_moderation_skip?: boolean
-  // Seedance(第三方) asset pre-upload (channel type 59)
+  // Seedance(第三方) asset pre-upload (channel type 65)
   seedance3rd_asset_enabled?: boolean
-  // 字节火山透传 (channel type 60) control-plane signing
+  // 字节火山透传 (channel type 66) control-plane signing
   volc_sign_region?: string
   volc_openapi_endpoint?: string
   // 素材库条数上限：官方无查限额接口，只能由管理员手填；0 表示未知/不限

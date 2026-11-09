@@ -157,7 +157,7 @@ function type2secretPrompt(type) {
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
       return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
-    case 58:  // OpenAI Video
+    case 64:  // OpenAI Video
       return '按照如下格式输入：SubAppId|SecretId|SecretKey[|Region]，或直接输入 API Key（如 sk-xxx）';
     default:
       return '请输入渠道对应的鉴权密钥';
@@ -230,14 +230,14 @@ const EditChannelModal = (props) => {
     byteplus_region: 'ap-southeast-1',
     byteplus_moderation_skip: true,
     asset_provider: 'byteplus',
-    // 第三方 Seedance 渠道（渠道类型 59）素材库预上传总开关
+    // 第三方 Seedance 渠道（渠道类型 65）素材库预上传总开关
     seedance3rd_asset_enabled: false,
-    // 字节火山透传（渠道类型 60）：控制面签名 region / endpoint 覆盖，
+    // 字节火山透传（渠道类型 66）：控制面签名 region / endpoint 覆盖，
     // 以及素材库条数上限（官方无查询接口，仅管理员手填，0 表示未知/不限）
     volc_sign_region: '',
     volc_openapi_endpoint: '',
     volc_asset_quota_limit: 0,
-    // 上游任务 ID 透传（仅火山方舟 45 / 豆包视频 54 / 第三方 Seedance 59）
+    // 上游任务 ID 透传（仅火山方舟 45 / 豆包视频 54 / 第三方 Seedance 65）
     expose_upstream_task_id: false,
     // 供应商设置（仅 root 可见/编辑，非 root 通过 originalChannelSettingRef 保留原值）
     cost_ratio: 0,
@@ -693,7 +693,7 @@ const EditChannelModal = (props) => {
         case 36:
           localModels = ['suno_music', 'suno_lyrics'];
           break;
-        case 58:  // OpenAI Video
+        case 64:  // OpenAI Video
           localModels = [
             'Vidu-q2', 'Vidu-q2-pro', 'Vidu-q2-turbo', 'Vidu-q3-pro', 'Vidu-q3-turbo', 'Vidu-template',
             'Kling-1.6', 'Kling-2.0', 'Kling-2.1', 'Kling-2.5', 'Kling-2.6', 'Kling-3.0', 'Kling-3.0-Omni', 'Kling-O1',
@@ -704,7 +704,7 @@ const EditChannelModal = (props) => {
             'JV-3.0-pro',
           ];
           break;
-        case 59:
+        case 65:
           localModels = [
             'dreamina-seedance-2-0-260128',
             'dreamina-seedance-2-0-fast-260128',
@@ -721,7 +721,7 @@ const EditChannelModal = (props) => {
           break;
         // 字节火山透传：模型名由客户自填，模型列表保持为空；
         // 但 BaseURL 决定数据面 host 与签名区域推导，必须给国内默认值。
-        case 60:
+        case 66:
           localModels = getChannelModels(value);
           setInputs((prevInputs) => ({
             ...prevInputs,
@@ -1989,7 +1989,7 @@ const EditChannelModal = (props) => {
       });
     }
 
-    // type === 60 (字节火山透传): 控制面 AK/SK 与数据面 Bearer 密钥独立，
+    // type === 66 (字节火山透传): 控制面 AK/SK 与数据面 Bearer 密钥独立，
     // 复用 byteplus_access_key / byteplus_secret_key / byteplus_project_name 三个键，
     // 后端 buildPassthroughCredentials 从同一处读取。
     const volcPassthroughKeys = [
@@ -1997,7 +1997,7 @@ const EditChannelModal = (props) => {
       'volc_openapi_endpoint',
       'volc_asset_quota_limit',
     ];
-    if (localInputs.type === 60) {
+    if (localInputs.type === 66) {
       settings.byteplus_access_key = (localInputs.byteplus_access_key || '').trim();
       settings.byteplus_secret_key = (localInputs.byteplus_secret_key || '').trim();
       settings.byteplus_project_name =
@@ -2016,16 +2016,16 @@ const EditChannelModal = (props) => {
       });
     }
 
-    // type === 59 (Seedance 第三方): 保存素材库预上传总开关到 settings
-    if (localInputs.type === 59) {
+    // type === 65 (Seedance 第三方): 保存素材库预上传总开关到 settings
+    if (localInputs.type === 65) {
       settings.seedance3rd_asset_enabled =
         localInputs.seedance3rd_asset_enabled === true;
     } else if ('seedance3rd_asset_enabled' in settings) {
       delete settings.seedance3rd_asset_enabled;
     }
 
-    // type === 45 / 54 / 59: 保存上游任务 ID 透传开关到 settings
-    if ([45, 54, 59].includes(localInputs.type)) {
+    // type === 45 / 54 / 65: 保存上游任务 ID 透传开关到 settings
+    if ([45, 54, 65].includes(localInputs.type)) {
       settings.expose_upstream_task_id =
         localInputs.expose_upstream_task_id === true;
     } else if ('expose_upstream_task_id' in settings) {
@@ -3113,8 +3113,8 @@ const EditChannelModal = (props) => {
                       </>
                     )}
 
-                    {/* Seedance(第三方) 素材库预上传（渠道类型 59） */}
-                    {[59].includes(inputs.type) && (
+                    {/* Seedance(第三方) 素材库预上传（渠道类型 65） */}
+                    {[65].includes(inputs.type) && (
                       <Form.Switch
                         field='seedance3rd_asset_enabled'
                         label={t('Seedance第三方素材预上传')}
@@ -3133,9 +3133,9 @@ const EditChannelModal = (props) => {
                       />
                     )}
 
-                    {/* 上游任务 ID 透传（火山方舟 45 / 豆包视频 54 / 第三方 Seedance 59）：
+                    {/* 上游任务 ID 透传（火山方舟 45 / 豆包视频 54 / 第三方 Seedance 65）：
                         字段名 expose_upstream_task_id 是已落库的 settings key，不可改名。 */}
-                    {[45, 54, 59].includes(inputs.type) && (
+                    {[45, 54, 65].includes(inputs.type) && (
                       <Form.Switch
                         field='expose_upstream_task_id'
                         label={t('向客户端透传上游任务 ID')}
@@ -3154,11 +3154,11 @@ const EditChannelModal = (props) => {
                       />
                     )}
 
-                    {/* 字节火山透传（渠道类型 60）：控制面签名配置。
+                    {/* 字节火山透传（渠道类型 66）：控制面签名配置。
                         数据面 host 取渠道 BaseURL；控制面（?Action=）host 与签名
                         CredentialScope 必须独立配置——海外数据面用 ap-southeast，
                         控制面用 ap-southeast-1，二者不可互推。 */}
-                    {inputs.type === 60 && (
+                    {inputs.type === 66 && (
                       <>
                         <Form.Input
                           field='byteplus_access_key'
@@ -3879,7 +3879,7 @@ const EditChannelModal = (props) => {
                         inputs.type !== 22 &&
                         inputs.type !== 36 &&
                         inputs.type !== 45 &&
-                        inputs.type !== 60 && (
+                        inputs.type !== 66 && (
                           <div>
                             <Form.Input
                               field='base_url'
@@ -3971,11 +3971,11 @@ const EditChannelModal = (props) => {
                         </div>
                       )}
 
-                      {/* 字节火山透传（60）：BaseURL 既是数据面 host，
+                      {/* 字节火山透传（66）：BaseURL 既是数据面 host，
                           也是后端推导控制面签名区域的依据（dto.ResolveVolcSignRegion：
                           含 volces.com → cn-beijing，否则 ap-southeast-1），
                           不能落到通用「此项可选」输入框。 */}
-                      {inputs.type === 60 && (
+                      {inputs.type === 66 && (
                         <div>
                           <Form.Select
                             field='base_url'

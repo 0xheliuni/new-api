@@ -190,13 +190,13 @@ export const CHANNEL_OPTIONS = [
     label: 'ChatGPT Subscription (Codex)',
   },
   {
-    value: 58,
+    value: 64,
     color: 'violet',
     label: 'OpenAI Video',
   },
-  { value: 59, color: 'purple', label: 'seedance(第三方)' },
-  { value: 60, color: 'orange', label: '字节火山透传' },
-  { value: 61, color: 'teal', label: 'MiniMax Image' },
+  { value: 65, color: 'purple', label: 'seedance(第三方)' },
+  { value: 66, color: 'orange', label: '字节火山透传' },
+  { value: 67, color: 'teal', label: 'MiniMax Image' },
 ];
 
 // Channel types that support upstream model list fetching in UI.
