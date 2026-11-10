@@ -45,6 +45,7 @@ describe('log cost display', () => {
       Subscription: 'Subscription',
       Wallet: 'Wallet',
       'Includes tool-call surcharge': 'Includes tool-call surcharge',
+      'Includes SVG authoring cost': 'Includes SVG authoring cost',
     })
   })
 
@@ -205,6 +206,59 @@ describe('log cost display', () => {
 
     expect(screen.getByText('$0.01')).toBeVisible()
     expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
+    expect(
+      screen.getByRole('img', { name: 'Includes tool-call surcharge' })
+    ).toHaveAttribute('data-tool-surcharge-indicator', 'true')
+  })
+
+  const svgAuthor = {
+    model: 'gpt-6-astra',
+    priced_as: 'gpt-6-astra',
+    input_tokens: 1000,
+    output_tokens: 200,
+    reasoning_tokens: 50,
+  }
+
+  test('adds an accessible SVG authoring marker when author tokens were charged', () => {
+    renderCost({
+      quota: 12500,
+      other: { svg_author: { ...svgAuthor, quota: 3200 } },
+    })
+
+    expect(screen.getByText('$0.025')).toBeVisible()
+    const marker = screen.getByRole('img', {
+      name: 'Includes SVG authoring cost',
+    })
+    expect(marker).toHaveAttribute('data-svg-author-indicator', 'true')
+    expect(marker).toHaveAttribute('tabindex', '0')
+    expect(
+      screen.queryByRole('img', { name: 'Includes tool-call surcharge' })
+    ).not.toBeInTheDocument()
+  })
+
+  test('hides the SVG authoring marker when the author charged nothing', () => {
+    renderCost({
+      quota: 12500,
+      other: { svg_author: { ...svgAuthor, priced_as: '', quota: 0 } },
+    })
+
+    expect(
+      screen.queryByRole('img', { name: 'Includes SVG authoring cost' })
+    ).not.toBeInTheDocument()
+  })
+
+  test('shows the SVG authoring and tool surcharge markers together', () => {
+    renderCost({
+      quota: 12500,
+      other: {
+        svg_author: { ...svgAuthor, quota: 3200 },
+        tool_surcharges: [{ name: 'lookup_customer', count: 1, price: 5 }],
+      },
+    })
+
+    expect(
+      screen.getByRole('img', { name: 'Includes SVG authoring cost' })
+    ).toBeVisible()
     expect(
       screen.getByRole('img', { name: 'Includes tool-call surcharge' })
     ).toHaveAttribute('data-tool-surcharge-indicator', 'true')

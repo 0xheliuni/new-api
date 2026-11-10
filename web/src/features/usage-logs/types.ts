@@ -114,6 +114,16 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+export interface SvgAuthorCharge {
+  model: string
+  // Model whose price was applied; empty when the tokens went unbilled.
+  priced_as: string
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  quota: number
+}
+
 export type ImageDetectionStepResult =
   | 'pass'
   | 'fail'
@@ -154,6 +164,8 @@ export interface LogOtherData {
     }
     // Reject / intercept reason (admin only)
     reject_reason?: string
+    // SVG author model that had no price, so its tokens went unbilled
+    svg_author_unpriced?: string
     task_plugin?: TaskPluginInfo
   }
   root_info?: {
@@ -244,6 +256,7 @@ export interface LogOtherData {
   file_search_call_count?: number
   file_search_price?: number
   tool_surcharges?: ToolSurchargeItem[]
+  svg_author?: SvgAuthorCharge
   audio_input_seperate_price?: boolean
   audio_input_token_count?: number
   audio_input_price?: number
