@@ -69,8 +69,9 @@ type textQuotaSummary struct {
 
 // hasBillableUsage reports whether this request should incur any charge.
 // A request can carry zero tokens yet still be billable via a tool-call
-// surcharge (e.g. /v1/alpha/search returns no usage but bills one web_search
-// call), so token count alone is not sufficient to decide.
+// surcharge or an SVG author charge (e.g. /v1/alpha/search returns no usage
+// but bills one web_search call), so token count alone is not sufficient to
+// decide.
 func (s *textQuotaSummary) hasBillableUsage() bool {
 	return s.FixedPriceBilling || s.TotalTokens > 0 || !s.additionalQuota().IsZero()
 }
