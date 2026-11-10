@@ -632,6 +632,7 @@
   "invalid image stream response": "图片流式响应无效",
   "invalid request policy: %s": "请求策略无效: %s",
   "invalid response or response body": "上游响应为空或没有响应体",
+  "invalid svg_usage in image response: %v": "图片响应里的 svg_usage 无效: %v",
   "invalid task artifact store configuration: %s; using upstream mode": "任务制品存储配置无效: %s，改用 upstream 模式",
   "invalid thinking_model_blacklist regex %q: %v": "thinking_model_blacklist 正则 %q 无效: %v",
   "invalid thinking_model_blacklist regex %q: pattern is empty": "thinking_model_blacklist 正则 %q 无效: 表达式为空",

@@ -99,6 +99,7 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 				reservation.held = 80000
 				info.PriceData.AddOtherRatio("n", 4)
 				info.BillingImageCount = common.GetPointer(3)
+				info.SvgUsage = &dto.ImageSvgUsage{Model: "previous-attempt", InputTokens: 1}
 			}
 			apiErr := ImageHelper(c, info)
 			require.NotNil(t, apiErr)
@@ -114,6 +115,7 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			assert.Equal(t, tc.count*20000, info.PriceData.QuotaToPreConsume)
 			assert.GreaterOrEqual(t, reservation.held, info.PriceData.QuotaToPreConsume)
 			assert.Nil(t, info.BillingImageCount)
+			assert.Nil(t, info.SvgUsage)
 			if tc.tiered {
 				assert.Equal(t, tc.body, string(info.BillingRequestInput.Body))
 				assert.Equal(t, 1, *info.BillingRequestInput.ImageCount)

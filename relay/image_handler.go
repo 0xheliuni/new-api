@@ -32,6 +32,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	info.InitChannelMeta(c)
 	info.BillingImageCount = nil
 	info.ImageRequestCount = 0
+	info.SvgUsage = nil
 
 	imageReq, ok := info.Request.(*dto.ImageRequest)
 	if !ok {

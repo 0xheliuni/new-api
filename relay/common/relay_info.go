@@ -188,6 +188,10 @@ type RelayInfo struct {
 	// ImageQuotaBeforeGroup is the frozen legacy estimate before request ratios.
 	ImageRequestCount     int
 	ImageQuotaBeforeGroup float64
+	// SvgUsage is the upstream's svg_usage, the token usage of the model that
+	// authored an SVG output. Settlement bills it at that model's own rates.
+	// Reset before each channel attempt.
+	SvgUsage *dto.ImageSvgUsage
 
 	Request dto.Request
 

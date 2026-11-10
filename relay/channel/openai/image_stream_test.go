@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -630,4 +631,55 @@ func TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent(t *testing.T) {
 	// is still forwarded in the data: payload (stream ID 77).
 	require.Contains(t, recorder.Body.String(), `event: upstream_error`)
 	require.Contains(t, recorder.Body.String(), `stream ID 77`)
+}
+
+func TestOpenaiImageHandlersCaptureSvgUsage(t *testing.T) {
+	const svgUsage = `{"model":"gpt-6-astra","input_tokens":1200,"output_tokens":800,"total_tokens":2000,"reasoning_tokens":300}`
+	want := &dto.ImageSvgUsage{Model: "gpt-6-astra", InputTokens: 1200, OutputTokens: 800, TotalTokens: 2000, ReasoningTokens: 300}
+	for _, tc := range []struct {
+		name, body string
+		stream     bool
+		want       *dto.ImageSvgUsage
+	}{
+		{"JSON response", `{"data":[{"b64_json":"PHN2Zz4="}],"output_format":"svg","svg_usage":` + svgUsage + `}`, false, want},
+		{"JSON wrapped as SSE", `{"data":[{"b64_json":"PHN2Zz4="}],"output_format":"svg","svg_usage":` + svgUsage + `}`, true, want},
+		{"response without svg_usage", `{"data":[{"b64_json":"aW1n"}]}`, false, nil},
+		{"null svg_usage", `{"data":[{"b64_json":"aW1n"}],"svg_usage":null}`, false, nil},
+		{"malformed svg_usage", `{"data":[{"b64_json":"aW1n"}],"svg_usage":{"input_tokens":"many"}}`, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, resp, info := newImageTestContext(t, tc.body, "application/json", tc.stream)
+			if tc.stream {
+				_, err := OpenaiImageStreamHandler(c, info, resp)
+				require.Nil(t, err)
+			} else {
+				_, err := OpenaiImageHandler(c, info, resp)
+				require.Nil(t, err)
+			}
+			assert.Equal(t, tc.want, info.SvgUsage)
+		})
+	}
+}
+
+// SynthID reads only raster PNG, JPEG and WebP images, so a sampled SVG or GIF
+// would only ever record a detection error.
+func TestSampleImagePayloadSkipsVectorAndAnimatedOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, requestFormat string
+		wantSampled               bool
+	}{
+		{"svg in response", `{"output_format":"svg","data":[{"b64_json":"PHN2Zz4="}]}`, "", false},
+		{"gif in response", `{"output_format":"gif","data":[{"b64_json":"R0lGODlh"}]}`, "", false},
+		{"svg only in request", `{"data":[{"b64_json":"PHN2Zz4="}]}`, `"svg"`, false},
+		{"png in response", `{"output_format":"png","data":[{"b64_json":"iVBORw=="}]}`, "", true},
+		{"format stated nowhere", `{"data":[{"b64_json":"iVBORw=="}]}`, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{Request: &dto.ImageRequest{OutputFormat: json.RawMessage(tc.requestFormat)}}
+
+			sampleImagePayload(info, []byte(tc.body))
+
+			assert.Equal(t, tc.wantSampled, len(info.SampledImageBytes) > 0)
+		})
+	}
 }
