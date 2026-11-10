@@ -67,8 +67,14 @@ import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatNumber,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -185,7 +191,8 @@ function BillingBreakdown(props: {
   other: LogOtherData
   isAdmin: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { log, other, isAdmin } = props
   const isPerCall = isPerCallBilling(other.model_price)
   const isClaude = other.claude === true
@@ -335,6 +342,18 @@ function BillingBreakdown(props: {
     rows.push({
       label: t('Image Generation'),
       value: fmtPrice(other.image_generation_call_price),
+    })
+  }
+
+  if (other.svg_author) {
+    rows.push({ label: t('SVG author model'), value: other.svg_author.model })
+    rows.push({
+      label: t('SVG author tokens (input / output)'),
+      value: `${formatNumber(other.svg_author.input_tokens, locale)} / ${formatNumber(other.svg_author.output_tokens, locale)}`,
+    })
+    rows.push({
+      label: t('SVG author cost'),
+      value: formatLogQuota(other.svg_author.quota),
     })
   }
 

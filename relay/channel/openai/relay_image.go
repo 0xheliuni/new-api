@@ -43,6 +43,7 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	}
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
+	captureImageSvgUsage(c, info, responseBody)
 	sampleImagePayload(info, responseBody) // passive detection capture (first image only)
 	info.SetFirstResponseTime()            // mark TTFB for non-streaming image responses
 
@@ -91,6 +92,24 @@ func openaiImageResponseCount(responseBody []byte) int64 {
 func openaiImageDataHasField(item gjson.Result, field string) bool {
 	value := item.Get(field)
 	return value.Type == gjson.String && value.Raw != `""`
+}
+
+// captureImageSvgUsage keeps svg_usage, the SVG author model's token usage, for
+// settlement. A malformed object is reported because its tokens cannot be billed.
+func captureImageSvgUsage(c *gin.Context, info *relaycommon.RelayInfo, responseBody []byte) {
+	if info == nil {
+		return
+	}
+	raw := gjson.GetBytes(responseBody, "svg_usage")
+	if !raw.IsObject() {
+		return
+	}
+	var usage dto.ImageSvgUsage
+	if err := common.UnmarshalJsonStr(raw.Raw, &usage); err != nil {
+		logger.LogWarn(c, common.LogText("invalid svg_usage in image response: %v", err))
+		return
+	}
+	info.SvgUsage = &usage
 }
 
 // normalizeOpenAIUsage maps the OpenAI Images usage shape (input_tokens /
@@ -282,6 +301,7 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
+	captureImageSvgUsage(c, info, responseBody)
 
 	helper.SetEventStreamHeaders(c)
 	c.Status(http.StatusOK)
@@ -374,6 +394,15 @@ func writeOpenaiImageStreamDone(c *gin.Context) error {
 // Only the first payload is retained. Failures are silently discarded.
 func sampleImagePayload(info *relaycommon.RelayInfo, responseBody []byte) {
 	if info == nil {
+		return
+	}
+	// SynthID reads only raster PNG, JPEG and WebP images, so sampling an SVG
+	// or GIF would only record a detection error.
+	format := gjson.GetBytes(responseBody, "output_format").String()
+	if request, ok := info.Request.(*dto.ImageRequest); ok && format == "" && len(request.OutputFormat) > 0 {
+		_ = common.Unmarshal(request.OutputFormat, &format)
+	}
+	if format == "svg" || format == "gif" {
 		return
 	}
 	const maxBytes = 10 * 1024 * 1024

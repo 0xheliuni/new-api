@@ -18,10 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   CrownIcon,
+  SvgIcon,
   Wallet01Icon,
   Wrench01Icon,
 } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -34,7 +35,7 @@ import {
 } from '@/components/ui/tooltip'
 import { formatLogQuota } from '@/lib/format'
 
-import { hasToolSurcharge } from '../lib/format'
+import { hasSvgAuthorCharge, hasToolSurcharge } from '../lib/format'
 import type { LogOtherData } from '../types'
 
 interface LogCostDisplayProps {
@@ -43,10 +44,11 @@ interface LogCostDisplayProps {
   showBillingSource?: boolean
 }
 
-function ToolSurchargeMarker() {
-  const { t } = useTranslation()
-  const label = t('Includes tool-call surcharge')
-
+function AdditionalChargeMarker(props: {
+  kind: 'tool-surcharge' | 'svg-author'
+  label: string
+  icon: IconSvgElement
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -55,12 +57,17 @@ function ToolSurchargeMarker() {
             variant='warning'
             className='h-5 min-w-5 cursor-help gap-0 rounded-full px-1'
             role='img'
-            aria-label={label}
+            aria-label={props.label}
             tabIndex={0}
-            data-tool-surcharge-indicator='true'
+            data-tool-surcharge-indicator={
+              props.kind === 'tool-surcharge' ? 'true' : undefined
+            }
+            data-svg-author-indicator={
+              props.kind === 'svg-author' ? 'true' : undefined
+            }
           >
             <HugeiconsIcon
-              icon={Wrench01Icon}
+              icon={props.icon}
               strokeWidth={2}
               aria-hidden='true'
             />
@@ -73,7 +80,7 @@ function ToolSurchargeMarker() {
           </Badge>
         }
       />
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{props.label}</TooltipContent>
     </Tooltip>
   )
 }
@@ -82,6 +89,7 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
   const { t } = useTranslation()
   const isSubscription = props.other?.billing_source === 'subscription'
   const showToolSurcharge = hasToolSurcharge(props.other)
+  const showSvgAuthorCharge = hasSvgAuthorCharge(props.other)
   const quota = isSubscription
     ? (props.other?.subscription_consumed ?? props.quota)
     : props.quota
@@ -134,7 +142,20 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
           ) : null}
           <span className='whitespace-nowrap'>{formatLogQuota(quota)}</span>
         </StatusBadge>
-        {showToolSurcharge ? <ToolSurchargeMarker /> : null}
+        {showToolSurcharge ? (
+          <AdditionalChargeMarker
+            kind='tool-surcharge'
+            label={t('Includes tool-call surcharge')}
+            icon={Wrench01Icon}
+          />
+        ) : null}
+        {showSvgAuthorCharge ? (
+          <AdditionalChargeMarker
+            kind='svg-author'
+            label={t('Includes SVG authoring cost')}
+            icon={SvgIcon}
+          />
+        ) : null}
       </div>
     </TooltipProvider>
   )

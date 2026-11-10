@@ -69,6 +69,13 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			info.BillingModelName = matched
 		}
 	}
+	// An SVG output is also billed at its author model's rates, so an author
+	// named by the client without a price is refused before the upstream runs.
+	if request, image := info.Request.(*dto.ImageRequest); image && !info.UserSetting.AcceptUnsetRatioModel {
+		if author := request.SvgAuthorModel(); author != "" && !HasModelBillingConfig(author) {
+			return hosttypes.PriceData{}, modelPriceNotConfiguredError(c, author, info.UserId)
+		}
+	}
 	billingModelName := info.GetBillingModelName()
 	modelPrice, usePrice := ratio_setting.GetModelPrice(billingModelName, false)
 

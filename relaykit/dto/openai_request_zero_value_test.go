@@ -327,3 +327,34 @@ func TestSGLangRequestExtensionsRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// 契约:gpt-image-2.6 新增的请求字段是已知字段,不能落进 Extra 被序列化丢掉。
+func TestImageRequestPreserveGPTImage26Fields(t *testing.T) {
+	raw := []byte(`{"model":"gpt-image-2.6-flare","prompt":"p","complexity":"low","markup":{"image_url":"https://x/o.png"},"svg":{"model":"m"},"frame_count":2,"frame_duration_ms":0,"safety_identifier":"user-hash"}`)
+
+	var req ImageRequest
+	require.NoError(t, kitutil.Unmarshal(raw, &req))
+
+	encoded, err := kitutil.Marshal(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(raw), string(encoded))
+}
+
+// The request names the SVG author model in svg.model; anything else means
+// the client did not choose one.
+func TestImageRequestSvgAuthorModel(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, want string
+	}{
+		{"named author", `{"model":"gpt-image-2.6-flare","prompt":"p","svg":{"model":" gpt-6-astra ","reasoning":{"effort":"low"}}}`, "gpt-6-astra"},
+		{"no svg object", `{"model":"gpt-image-2.6-flare","prompt":"p"}`, ""},
+		{"null svg object", `{"model":"gpt-image-2.6-flare","prompt":"p","svg":null}`, ""},
+		{"model is not a string", `{"model":"gpt-image-2.6-flare","prompt":"p","svg":{"model":1}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req ImageRequest
+			require.NoError(t, kitutil.Unmarshal([]byte(tc.raw), &req))
+			assert.Equal(t, tc.want, req.SvgAuthorModel())
+		})
+	}
+}

@@ -7811,6 +7811,11 @@
     "e.g., 1000": "例如，1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "此 IAM 帳號最多可持有的素材數量。官方沒有查詢介面，需手動填寫；留空或填 0 表示未知/不限。僅用於素材管理頁對帳。",
     "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "透傳的資料面位址。下方簽章地區留空時，也據此推導控制面簽章地區。",
-    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "格式：SubAppId|SecretId|SecretKey[|Region]，或直接填寫 API Key（如 sk-xxx）"
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "格式：SubAppId|SecretId|SecretKey[|Region]，或直接填寫 API Key（如 sk-xxx）",
+    "SVG author {{model}}: {{input}} input tokens, {{output}} output tokens, cost {{quota}}": "SVG 描圖模型 {{model}}：輸入 {{input}} Token，輸出 {{output}} Token，花費 {{quota}}",
+    "SVG author model": "SVG 描圖模型",
+    "SVG author tokens (input / output)": "SVG 描圖 Token（輸入 / 輸出）",
+    "SVG author cost": "SVG 描圖費用",
+    "Includes SVG authoring cost": "包含 SVG 描圖費用"
   }
 }

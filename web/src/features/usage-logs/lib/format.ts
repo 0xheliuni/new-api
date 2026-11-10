@@ -112,6 +112,13 @@ function hasLegacySearchSurcharge(
 }
 
 /**
+ * Check whether a consume log includes a charged SVG authoring cost.
+ */
+export function hasSvgAuthorCharge(other: LogOtherData | null): boolean {
+  return isPositiveFiniteNumber(other?.svg_author?.quota)
+}
+
+/**
  * Check whether a consume log includes an actual tool-call surcharge.
  * Structured surcharge items cover current logs, while the legacy fields keep
  * historical Web Search, File Search, and Image Generation logs visible.

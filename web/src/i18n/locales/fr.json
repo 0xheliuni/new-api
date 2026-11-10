@@ -7811,6 +7811,11 @@
     "e.g., 1000": "p. ex., 1000",
     "Maximum number of assets this IAM account may hold. There is no official API to query it, so fill it in manually; leave blank or 0 for unknown / unlimited. Used only by the asset management page for reconciliation.": "Nombre maximal de ressources que ce compte IAM peut détenir. Aucune API officielle ne permet de le consulter : saisissez-le manuellement ; laissez vide ou 0 si inconnu ou illimité. Sert uniquement au rapprochement dans la page de gestion des ressources.",
     "Data plane host for passthrough. Also determines the control plane signing region when left unset below.": "Hôte du plan de données pour le relais. Détermine aussi la région de signature du plan de contrôle lorsque celle-ci est laissée vide ci-dessous.",
-    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "Format : SubAppId|SecretId|SecretKey[|Region], ou une clé API comme sk-xxx"
+    "Format: SubAppId|SecretId|SecretKey[|Region], or an API key such as sk-xxx": "Format : SubAppId|SecretId|SecretKey[|Region], ou une clé API comme sk-xxx",
+    "SVG author {{model}}: {{input}} input tokens, {{output}} output tokens, cost {{quota}}": "Modèle de création SVG {{model}} : {{input}} tokens d'entrée, {{output}} tokens de sortie, coût {{quota}}",
+    "SVG author model": "Modèle de création SVG",
+    "SVG author tokens (input / output)": "Tokens de création SVG (entrée / sortie)",
+    "SVG author cost": "Coût de création SVG",
+    "Includes SVG authoring cost": "Inclut le coût de création SVG"
   }
 }

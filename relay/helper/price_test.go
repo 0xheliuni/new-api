@@ -1,12 +1,14 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -745,3 +747,51 @@ func (s *priceTestReservation) Refund(*gin.Context)      {}
 func (s *priceTestReservation) NeedsRefund() bool        { return false }
 func (s *priceTestReservation) GetPreConsumedQuota() int { return s.held }
 func (s *priceTestReservation) Reserve(quota int) error  { s.held = max(s.held, quota); return nil }
+
+func TestModelPriceHelperRefusesUnpricedSvgAuthor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	savedPrices, savedRatios := ratio_setting.ModelPrice2JSONString(), ratio_setting.ModelRatio2JSONString()
+	oldSelfUse := operation_setting.SelfUseModeEnabled
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		operation_setting.SelfUseModeEnabled = oldSelfUse
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"svg-image-model":0.04}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"priced-author":2}`))
+
+	for _, tc := range []struct {
+		name, svg            string
+		selfUse, acceptUnset bool
+		wantRefused          bool
+	}{
+		{name: "unpriced author is refused", svg: `{"model":"unpriced-author"}`, wantRefused: true},
+		{name: "priced author proceeds", svg: `{"model":"priced-author"}`},
+		{name: "self-use mode proceeds", svg: `{"model":"unpriced-author"}`, selfUse: true},
+		{name: "user accepting unpriced models proceeds", svg: `{"model":"unpriced-author"}`, acceptUnset: true},
+		{name: "request naming no author proceeds", svg: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation_setting.SelfUseModeEnabled = tc.selfUse
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			ctx.Set("group", "default")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "svg-image-model",
+				UserGroup:       "default",
+				UsingGroup:      "default",
+				UserSetting:     dto.UserSetting{AcceptUnsetRatioModel: tc.acceptUnset},
+				Request:         &dto.ImageRequest{Model: "svg-image-model", Prompt: "logo", Svg: json.RawMessage(tc.svg)},
+			}
+
+			_, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{})
+
+			if tc.wantRefused {
+				require.ErrorContains(t, err, "unpriced-author")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

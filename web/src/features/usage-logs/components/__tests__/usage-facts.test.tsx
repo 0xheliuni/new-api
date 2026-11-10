@@ -36,6 +36,9 @@ const i18nKeys = {
   'Group Ratio': 'Group Ratio',
   'Total Cost': 'Total Cost',
   'Usage parameters': 'Usage parameters',
+  'SVG author model': 'SVG author model',
+  'SVG author tokens (input / output)': 'SVG author tokens (input / output)',
+  'SVG author cost': 'SVG author cost',
 }
 
 function makeLog(other: LogOtherData): UsageLog {
@@ -203,6 +206,33 @@ describe('usage facts billing details', () => {
       usageHeader.compareDocumentPosition(totalCost) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  test('shows the SVG author model, tokens and cost in the billing details', () => {
+    queryClients.push(
+      renderDetails({
+        group_ratio: 1,
+        svg_author: {
+          model: 'gpt-6-astra',
+          priced_as: 'gpt-6-astra',
+          input_tokens: 1000,
+          output_tokens: 200,
+          reasoning_tokens: 50,
+          quota: 3200,
+        },
+      })
+    )
+
+    expect(rowValue('SVG author model')).toBe('gpt-6-astra')
+    expect(rowValue('SVG author tokens (input / output)')).toBe('1,000 / 200')
+    expect(rowValue('SVG author cost')).toContain('0.0064')
+  })
+
+  test('does not render SVG author rows when the log has no author', () => {
+    queryClients.push(renderDetails({ group_ratio: 1 }))
+
+    expect(screen.queryByText('SVG author model')).toBeNull()
+    expect(screen.queryByText('SVG author cost')).toBeNull()
   })
 
   test('does not render usage parameter rows when usage_facts is absent', () => {
