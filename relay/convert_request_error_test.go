@@ -314,3 +314,55 @@ func TestImageHelperKeepsAdaptorClassifiedConvertError(t *testing.T) {
 	assert.True(t, types.IsSkipRetryError(apiErr), "other channels must not be asked to serve the same name")
 	assert.Contains(t, apiErr.Error(), "not served by the alibaba task plugin")
 }
+
+// The image relay re-encodes the request when the channel does not pass the
+// body through. Every gpt-image-2.6 field must survive that, including an
+// explicit zero.
+func TestImageRequestForwardsGPTImage26Fields(t *testing.T) {
+	service.InitHttpClient()
+	received := make(chan []byte, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			received <- body
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":{"message":"fixture upstream failure","type":"upstream_error"}}`)
+	}))
+	t.Cleanup(upstream.Close)
+
+	const body = `{"model":"gpt-image-2.6-flare","prompt":"bakery logo","n":1,"output_format":"svg",` +
+		`"svg":{"model":"gpt-6-astra","reasoning":{"effort":"low"}},"complexity":"low",` +
+		`"frame_count":0,"frame_duration_ms":200,"markup":{"image_url":"https://example.com/m.png"},` +
+		`"safety_identifier":"user-hash"}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{})
+	request, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{Request: request, OriginModelName: "gpt-image-2.6-flare", RelayMode: relayconstant.RelayModeImagesGenerations,
+		RequestURLPath: c.Request.URL.Path, Billing: &imageReservation{held: 20000, limit: 500000},
+		PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.04, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+	}
+
+	apiErr := ImageHelper(c, info)
+
+	require.NotNil(t, apiErr)
+	require.Len(t, received, 1)
+	forwarded := <-received
+	for path, want := range map[string]string{
+		"output_format":     `"svg"`,
+		"svg":               `{"model":"gpt-6-astra","reasoning":{"effort":"low"}}`,
+		"complexity":        `"low"`,
+		"frame_count":       `0`,
+		"frame_duration_ms": `200`,
+		"markup":            `{"image_url":"https://example.com/m.png"}`,
+		"safety_identifier": `"user-hash"`,
+	} {
+		assert.Equal(t, want, gjson.GetBytes(forwarded, path).Raw, path)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -45,6 +46,7 @@ type ImageRequest struct {
 	Svg               json.RawMessage `json:"svg,omitempty"`
 	FrameCount        json.RawMessage `json:"frame_count,omitempty"`
 	FrameDurationMs   json.RawMessage `json:"frame_duration_ms,omitempty"`
+	SafetyIdentifier  json.RawMessage `json:"safety_identifier,omitempty"`
 	Watermark         *bool           `json:"watermark,omitempty"`
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
@@ -191,6 +193,18 @@ func (i *ImageRequest) SetModelName(modelName string) {
 	}
 }
 
+// SvgAuthorModel returns svg.model, the model the client chose to author an
+// SVG output, or "" when the request names none.
+func (i *ImageRequest) SvgAuthorModel() string {
+	var svg struct {
+		Model string `json:"model"`
+	}
+	if len(i.Svg) == 0 || kitutil.Unmarshal(i.Svg, &svg) != nil {
+		return ""
+	}
+	return strings.TrimSpace(svg.Model)
+}
+
 type ImageResponse struct {
 	Data     []ImageData     `json:"data"`
 	Created  int64           `json:"created"`
@@ -200,4 +214,15 @@ type ImageData struct {
 	Url           string `json:"url"`
 	B64Json       string `json:"b64_json"`
 	RevisedPrompt string `json:"revised_prompt"`
+}
+
+// ImageSvgUsage is svg_usage, the token usage of the model that authored an
+// SVG output. OpenAI reports it beside the image model's usage and bills it at
+// the author model's rates.
+type ImageSvgUsage struct {
+	Model           string `json:"model"`
+	InputTokens     int    `json:"input_tokens"`
+	OutputTokens    int    `json:"output_tokens"`
+	TotalTokens     int    `json:"total_tokens"`
+	ReasoningTokens int    `json:"reasoning_tokens"`
 }
