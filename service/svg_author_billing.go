@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -12,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
+	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
 
@@ -117,4 +120,25 @@ func svgAuthorRatioQuota(name string, modelRatio float64, input, output int) dec
 	return decimal.NewFromInt(int64(input)).
 		Add(decimal.NewFromInt(int64(output)).Mul(decimal.NewFromFloat(ratio_setting.GetCompletionRatio(name)))).
 		Mul(decimal.NewFromFloat(modelRatio))
+}
+
+// appendSvgAuthorLogInfo records the author's tokens and cost on the consume
+// log. An author without a price is also reported to administrators, because
+// its tokens went unbilled.
+func appendSvgAuthorLogInfo(ctx *gin.Context, other *model.LogOther, author *svgAuthorCharge) {
+	if author == nil {
+		return
+	}
+	other.SetPublic("svg_author", map[string]any{
+		"model":            author.Model,
+		"priced_as":        author.PricedAs,
+		"input_tokens":     author.InputTokens,
+		"output_tokens":    author.OutputTokens,
+		"reasoning_tokens": author.ReasoningTokens,
+		"quota":            common.QuotaFromDecimal(author.Quota),
+	})
+	if author.PricedAs == "" {
+		other.SetAdmin("svg_author_unpriced", author.Model)
+		logger.LogWarn(ctx, common.LogText("SVG author model %s could not be priced; its tokens were not charged", author.Model))
+	}
 }

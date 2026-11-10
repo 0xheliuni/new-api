@@ -159,6 +159,7 @@
   "SSE ping goroutine stopped by defer": "SSE ping goroutine 已由 defer 停止",
   "SSE ping goroutine timeout, stopping": "SSE ping goroutine 超时，正在停止",
   "SSE ping ticker stopped": "SSE ping ticker 已停止",
+  "SVG author model %s could not be priced; its tokens were not charged": "SVG 描图模型 %s 没有配置价格，描图 token 未计费",
   "SYNC_FREQUENCY not set, use default value 60": "未设置 SYNC_FREQUENCY，使用默认值 60",
   "SetPayloadHash body: %s": "SetPayloadHash 请求体: %s",
   "Stripe Checkout payment not completed, waiting for async result trade_no=%s payment_status=%s client_ip=%s": "Stripe Checkout 支付未完成，等待异步结果 trade_no=%s payment_status=%s client_ip=%s",

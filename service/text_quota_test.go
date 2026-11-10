@@ -1659,6 +1659,60 @@ func TestCalculateSvgAuthorChargeBillableTokens(t *testing.T) {
 	assert.True(t, calculateSvgAuthorCharge(negativeGroup).Quota.IsZero(), "a negative group ratio must not credit the user")
 }
 
+func TestPostTextConsumeQuotaRecordsSvgAuthorCharge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svgAuthorPricingFixture(t)
+	for index, tc := range []struct {
+		name, author, wantPricedAs string
+		wantQuota                  int
+		wantAuthorQuota            float64
+		wantUnpriced               any
+	}{
+		{name: "priced author", author: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 3350, wantAuthorQuota: 3200},
+		{name: "unpriced author is reported to administrators", author: "mystery-author", wantQuota: 150, wantUnpriced: "mystery-author"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			truncate(t)
+			userID, channelID := 63+index, 63+index
+			seedUser(t, userID, 1_000_000)
+			seedChannel(t, channelID)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest("POST", "/v1/images/generations", nil)
+			info := &relaycommon.RelayInfo{
+				UserId:          userID,
+				UserQuota:       1_000_000,
+				IsPlayground:    true,
+				OriginModelName: "gpt-image-2.6-flare",
+				UsingGroup:      "default",
+				StartTime:       time.Now(),
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+				PriceData:       hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+				SvgUsage:        &dto.ImageSvgUsage{Model: tc.author, InputTokens: 1000, OutputTokens: 200, TotalTokens: 1200, ReasoningTokens: 50},
+			}
+
+			PostTextConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}, nil)
+
+			log := getLastLog(t)
+			require.NotNil(t, log)
+			assert.Equal(t, tc.wantQuota, log.Quota)
+			assert.Contains(t, log.Content, "SVG author "+tc.author+": 1000 input tokens, 200 output tokens, cost ")
+			var other map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+			assert.Equal(t, map[string]any{
+				"model":            tc.author,
+				"priced_as":        tc.wantPricedAs,
+				"input_tokens":     float64(1000),
+				"output_tokens":    float64(200),
+				"reasoning_tokens": float64(50),
+				"quota":            tc.wantAuthorQuota,
+			}, other["svg_author"])
+			adminInfo, ok := other["admin_info"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantUnpriced, adminInfo["svg_author_unpriced"])
+		})
+	}
+}
+
 func TestCalculateTextQuotaSummaryAddsSvgAuthorOutsideImageMultipliers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

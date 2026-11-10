@@ -454,6 +454,14 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		q := decimal.NewFromFloat(summary.AudioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(decimal.NewFromInt(int64(summary.AudioTokens))).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 		extraContent = append(extraContent, common.NewMessage("Audio input cost {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaFromDecimal(q))}))
 	}
+	if author := summary.SvgAuthor; author != nil {
+		extraContent = append(extraContent, common.NewMessage("SVG author {{model}}: {{input}} input tokens, {{output}} output tokens, cost {{quota}}", map[string]any{
+			"model":  author.Model,
+			"input":  author.InputTokens,
+			"output": author.OutputTokens,
+			"quota":  logger.FormatQuota(common.QuotaFromDecimal(author.Quota)),
+		}))
+	}
 
 	if !summary.hasBillableUsage() {
 		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"))
@@ -500,6 +508,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other.SetPublic("image_output", summary.ImageTokens)
 	}
 	appendToolSurchargeLogInfo(other, summary.ToolSurchargeItems)
+	appendSvgAuthorLogInfo(ctx, other, summary.SvgAuthor)
 	if summary.AudioInputPrice > 0 && summary.AudioTokens > 0 {
 		other.SetPublic("audio_input_seperate_price", true)
 		other.SetPublic("audio_input_token_count", summary.AudioTokens)
