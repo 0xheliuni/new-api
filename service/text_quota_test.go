@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http/httptest"
@@ -16,7 +17,9 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -1547,4 +1550,155 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 	assert.Equal(t, []any{
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
+}
+
+// svgAuthorPricingFixture installs one author model per pricing mode and
+// restores the global price tables afterwards.
+func svgAuthorPricingFixture(t *testing.T) {
+	t.Helper()
+	saved := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		saved[key] = value
+		return nil
+	}))
+	savedPrices, savedRatios, savedCompletions := ratio_setting.ModelPrice2JSONString(), ratio_setting.ModelRatio2JSONString(), ratio_setting.CompletionRatio2JSONString()
+	oldSelfUse := operation_setting.SelfUseModeEnabled
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(savedCompletions))
+		operation_setting.SelfUseModeEnabled = oldSelfUse
+	})
+	operation_setting.SelfUseModeEnabled = false
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"expr-author":"tiered_expr","fixed-author":"tiered_expr"}`,
+		"billing_setting.billing_expr": `{"expr-author":"tier(\"base\", p * 2 + c * 10)","fixed-author":"tier(\"request\", fixed(0.01))"}`,
+	}))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"price-author":0.02,"negative-author":-0.02}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"ratio-author":2}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"ratio-author":3,"mystery-author":1}`))
+}
+
+func TestCalculateSvgAuthorChargeUsesTheAuthorModelsOwnPrice(t *testing.T) {
+	svgAuthorPricingFixture(t)
+	for _, tc := range []struct {
+		name, reported, requested, wantPricedAs string
+		selfUse, acceptUnset                    bool
+		wantQuota                               int
+	}{
+		// 1000 input, 200 output, group ratio 1.5.
+		{name: "token expression", reported: "expr-author", wantPricedAs: "expr-author", wantQuota: 3000},
+		{name: "fixed expression charges once", reported: "fixed-author", wantPricedAs: "fixed-author", wantQuota: 7500},
+		{name: "per-call price", reported: "price-author", wantPricedAs: "price-author", wantQuota: 15000},
+		{name: "ratio", reported: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800},
+		{name: "reported name wins over the request", reported: "ratio-author", requested: "price-author", wantPricedAs: "ratio-author", wantQuota: 4800},
+		{name: "unpriced snapshot name falls back to the request", reported: "ratio-author-2026-11-01", requested: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800},
+		{name: "nothing priced charges zero", reported: "mystery-author", requested: "other-author"},
+		{name: "negative price is not usable", reported: "negative-author"},
+		{name: "self-use mode pays the fallback ratio", reported: "mystery-author", selfUse: true, wantPricedAs: "mystery-author", wantQuota: 67500},
+		{name: "accepted unpriced model pays the fallback ratio", reported: "mystery-author", acceptUnset: true, wantPricedAs: "mystery-author", wantQuota: 67500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation_setting.SelfUseModeEnabled = tc.selfUse
+			info := &relaycommon.RelayInfo{
+				SvgUsage:    &dto.ImageSvgUsage{Model: tc.reported, InputTokens: 1000, OutputTokens: 200, TotalTokens: 1200, ReasoningTokens: 50},
+				UserSetting: dto.UserSetting{AcceptUnsetRatioModel: tc.acceptUnset},
+				PriceData:   hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1.5}},
+			}
+			if tc.requested != "" {
+				info.Request = &dto.ImageRequest{Svg: json.RawMessage(`{"model":"` + tc.requested + `"}`)}
+			}
+
+			charge := calculateSvgAuthorCharge(info)
+
+			require.NotNil(t, charge)
+			assert.Equal(t, tc.reported, charge.Model)
+			assert.Equal(t, tc.wantPricedAs, charge.PricedAs)
+			assert.Equal(t, tc.wantQuota, common.QuotaFromDecimal(charge.Quota))
+			assert.Equal(t, 50, charge.ReasoningTokens)
+		})
+	}
+}
+
+func TestCalculateSvgAuthorChargeBillableTokens(t *testing.T) {
+	svgAuthorPricingFixture(t)
+	for _, tc := range []struct {
+		name                             string
+		usage                            dto.ImageSvgUsage
+		wantInput, wantOutput, wantQuota int
+	}{
+		// ratio-author: (input + output * 3) * 2, group ratio 1.
+		{"output already includes reasoning", dto.ImageSvgUsage{InputTokens: 1000, OutputTokens: 500, TotalTokens: 1500, ReasoningTokens: 300}, 1000, 500, 5000},
+		{"reasoning reported beside output", dto.ImageSvgUsage{InputTokens: 1000, OutputTokens: 200, TotalTokens: 1500, ReasoningTokens: 300}, 1000, 500, 5000},
+		{"total below input keeps output", dto.ImageSvgUsage{InputTokens: 1000, OutputTokens: 200, TotalTokens: 10}, 1000, 200, 3200},
+		{"negative counts become zero", dto.ImageSvgUsage{InputTokens: -5, OutputTokens: 10, TotalTokens: math.MinInt}, 0, 10, 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := tc.usage
+			usage.Model = "ratio-author"
+			info := &relaycommon.RelayInfo{SvgUsage: &usage, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+
+			charge := calculateSvgAuthorCharge(info)
+
+			require.NotNil(t, charge)
+			assert.Equal(t, tc.wantInput, charge.InputTokens)
+			assert.Equal(t, tc.wantOutput, charge.OutputTokens)
+			assert.Equal(t, tc.wantQuota, common.QuotaFromDecimal(charge.Quota))
+		})
+	}
+
+	for _, usage := range []*dto.ImageSvgUsage{nil, {Model: "ratio-author"}, {Model: "ratio-author", InputTokens: -1, OutputTokens: -2, TotalTokens: -3}} {
+		assert.Nil(t, calculateSvgAuthorCharge(&relaycommon.RelayInfo{SvgUsage: usage}))
+	}
+
+	negativeGroup := &relaycommon.RelayInfo{
+		SvgUsage:  &dto.ImageSvgUsage{Model: "ratio-author", InputTokens: 1000},
+		PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: -1}},
+	}
+	assert.True(t, calculateSvgAuthorCharge(negativeGroup).Quota.IsZero(), "a negative group ratio must not credit the user")
+}
+
+func TestCalculateTextQuotaSummaryAddsSvgAuthorOutsideImageMultipliers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svgAuthorPricingFixture(t)
+	// ratio-author at group ratio 1: (1000 + 200 * 3) * 2 = 3200.
+	svgUsage := &dto.ImageSvgUsage{Model: "ratio-author", InputTokens: 1000, OutputTokens: 200, TotalTokens: 1200}
+	usage := &dto.Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}
+	newInfo := func(priceData hosttypes.PriceData) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{OriginModelName: "gpt-image-2.6-flare", StartTime: time.Now(), SvgUsage: svgUsage, PriceData: priceData}
+	}
+
+	t.Run("ratio pricing", func(t *testing.T) {
+		info := newInfo(hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}})
+		assert.Equal(t, 3350, calculateTextQuotaSummary(ctx, info, usage).Quota)
+	})
+
+	t.Run("per-call pricing does not multiply the author by n", func(t *testing.T) {
+		priceData := hosttypes.PriceData{ModelPrice: 0.04, UsePrice: true, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}
+		priceData.AddOtherRatio("n", 3)
+		assert.Equal(t, 63200, calculateTextQuotaSummary(ctx, newInfo(priceData), usage).Quota)
+	})
+
+	t.Run("expression pricing", func(t *testing.T) {
+		info := newInfo(hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}})
+		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", GroupRatio: 1}
+		summary := calculateTextQuotaSummary(ctx, info, usage)
+		assert.Equal(t, 4200, composeTieredTextQuota(info, summary, 1000, &billingexpr.TieredResult{ActualQuotaBeforeGroup: 1000, ActualQuotaAfterGroup: 1000}))
+		assert.Equal(t, 5200, composeTieredTextQuota(info, summary, 2000, nil))
+	})
+
+	t.Run("author tokens alone are billable", func(t *testing.T) {
+		info := newInfo(hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}})
+		assert.Equal(t, 3200, calculateTextQuotaSummary(ctx, info, &dto.Usage{}).Quota)
+	})
+
+	t.Run("oversized usage saturates and is audited", func(t *testing.T) {
+		info := newInfo(hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}})
+		info.SvgUsage = &dto.ImageSvgUsage{Model: "ratio-author", InputTokens: math.MaxInt, OutputTokens: math.MaxInt}
+		assert.Equal(t, common.MaxQuota, calculateTextQuotaSummary(ctx, info, usage).Quota)
+		require.NotNil(t, info.QuotaClamp)
+		assert.Equal(t, common.QuotaClampOverflow, info.QuotaClamp.Kind)
+	})
 }
