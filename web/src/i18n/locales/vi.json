@@ -7816,6 +7816,9 @@
     "SVG author model": "Mô hình tạo SVG",
     "SVG author tokens (input / output)": "Token tạo SVG (đầu vào / đầu ra)",
     "SVG author cost": "Chi phí tạo SVG",
-    "Includes SVG authoring cost": "Bao gồm chi phí tạo SVG"
+    "Includes SVG authoring cost": "Bao gồm chi phí tạo SVG",
+    "Image cost": "Chi phí hình ảnh",
+    "SVG author input price": "Giá đầu vào tạo SVG",
+    "SVG author output price": "Giá đầu ra tạo SVG"
   }
 }

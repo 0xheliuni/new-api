@@ -257,6 +257,13 @@ export interface LogOtherData {
   file_search_price?: number
   tool_surcharges?: ToolSurchargeItem[]
   svg_author?: SvgAuthorCharge
+  // The author model's list prices per million tokens before the group ratio.
+  // Absent for per-request pricing, which has no per-token rate.
+  svg_author_input_price?: number
+  svg_author_output_price?: number
+  // The image model's own share of the charge, recorded when an SVG author
+  // adds tokens beside it.
+  image_quota?: number
   audio_input_seperate_price?: boolean
   audio_input_token_count?: number
   audio_input_price?: number

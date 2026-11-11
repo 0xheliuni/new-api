@@ -7816,6 +7816,9 @@
     "SVG author model": "SVG 作成モデル",
     "SVG author tokens (input / output)": "SVG 作成トークン（入力 / 出力）",
     "SVG author cost": "SVG 作成費用",
-    "Includes SVG authoring cost": "SVG 作成費用を含む"
+    "Includes SVG authoring cost": "SVG 作成費用を含む",
+    "Image cost": "画像費用",
+    "SVG author input price": "SVG 作成の入力価格",
+    "SVG author output price": "SVG 作成の出力価格"
   }
 }

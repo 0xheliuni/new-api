@@ -510,6 +510,14 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	appendToolSurchargeLogInfo(other, summary.ToolSurchargeItems)
 	appendSvgAuthorLogInfo(ctx, other, summary.SvgAuthor)
+	if summary.SvgAuthor != nil {
+		// The image model's own share of the charge: the total minus everything
+		// added beside it (tool surcharges and the SVG author's tokens). Only
+		// written when an SVG author makes the total differ from that share.
+		if imageQuota := summary.Quota - common.QuotaFromDecimal(summary.additionalQuota()); imageQuota > 0 {
+			other.SetPublic("image_quota", imageQuota)
+		}
+	}
 	if summary.AudioInputPrice > 0 && summary.AudioTokens > 0 {
 		other.SetPublic("audio_input_seperate_price", true)
 		other.SetPublic("audio_input_token_count", summary.AudioTokens)

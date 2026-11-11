@@ -212,6 +212,53 @@ describe('usage facts billing details', () => {
     queryClients.push(
       renderDetails({
         group_ratio: 1,
+        image_quota: 12403,
+        svg_author: {
+          model: 'gpt-6-astra',
+          priced_as: 'gpt-6-astra',
+          input_tokens: 1000,
+          output_tokens: 200,
+          reasoning_tokens: 50,
+          quota: 3200,
+        },
+        svg_author_input_price: 1,
+        svg_author_output_price: 6,
+      })
+    )
+
+    expect(rowValue('Image cost')).toContain('0.0248')
+    expect(rowValue('SVG author model')).toBe('gpt-6-astra')
+    expect(rowValue('SVG author input price')).toContain('1')
+    expect(rowValue('SVG author input price')).toContain('/M')
+    expect(rowValue('SVG author output price')).toContain('6')
+    expect(rowValue('SVG author tokens (input / output)')).toBe('1,000 / 200')
+    expect(rowValue('SVG author cost')).toContain('0.0064')
+  })
+
+  test('omits the SVG author price rows for per-request pricing', () => {
+    queryClients.push(
+      renderDetails({
+        group_ratio: 1,
+        svg_author: {
+          model: 'fixed-author',
+          priced_as: 'fixed-author',
+          input_tokens: 1000,
+          output_tokens: 200,
+          reasoning_tokens: 0,
+          quota: 5000,
+        },
+      })
+    )
+
+    expect(screen.queryByText('SVG author input price')).toBeNull()
+    expect(screen.queryByText('SVG author output price')).toBeNull()
+    expect(rowValue('SVG author model')).toBe('fixed-author')
+  })
+
+  test('omits the image cost row when the log did not record one', () => {
+    queryClients.push(
+      renderDetails({
+        group_ratio: 1,
         svg_author: {
           model: 'gpt-6-astra',
           priced_as: 'gpt-6-astra',
@@ -223,9 +270,8 @@ describe('usage facts billing details', () => {
       })
     )
 
+    expect(screen.queryByText('Image cost')).toBeNull()
     expect(rowValue('SVG author model')).toBe('gpt-6-astra')
-    expect(rowValue('SVG author tokens (input / output)')).toBe('1,000 / 200')
-    expect(rowValue('SVG author cost')).toContain('0.0064')
   })
 
   test('does not render SVG author rows when the log has no author', () => {

@@ -346,7 +346,25 @@ function BillingBreakdown(props: {
   }
 
   if (other.svg_author) {
+    if (other.image_quota != null) {
+      rows.push({
+        label: t('Image cost'),
+        value: formatLogQuota(other.image_quota),
+      })
+    }
     rows.push({ label: t('SVG author model'), value: other.svg_author.model })
+    if (other.svg_author_input_price != null) {
+      rows.push({
+        label: t('SVG author input price'),
+        value: `${fmtPrice(other.svg_author_input_price)}/M`,
+      })
+    }
+    if (other.svg_author_output_price != null) {
+      rows.push({
+        label: t('SVG author output price'),
+        value: `${fmtPrice(other.svg_author_output_price)}/M`,
+      })
+    }
     rows.push({
       label: t('SVG author tokens (input / output)'),
       value: `${formatNumber(other.svg_author.input_tokens, locale)} / ${formatNumber(other.svg_author.output_tokens, locale)}`,

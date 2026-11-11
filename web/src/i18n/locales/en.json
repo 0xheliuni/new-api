@@ -7816,6 +7816,9 @@
     "SVG author model": "SVG author model",
     "SVG author tokens (input / output)": "SVG author tokens (input / output)",
     "SVG author cost": "SVG author cost",
-    "Includes SVG authoring cost": "Includes SVG authoring cost"
+    "Includes SVG authoring cost": "Includes SVG authoring cost",
+    "Image cost": "Image cost",
+    "SVG author input price": "SVG author input price",
+    "SVG author output price": "SVG author output price"
   }
 }

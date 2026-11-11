@@ -1586,18 +1586,24 @@ func TestCalculateSvgAuthorChargeUsesTheAuthorModelsOwnPrice(t *testing.T) {
 		name, reported, requested, wantPricedAs string
 		selfUse, acceptUnset                    bool
 		wantQuota                               int
+		wantInputPrice, wantOutputPrice         *float64
 	}{
 		// 1000 input, 200 output, group ratio 1.5.
-		{name: "token expression", reported: "expr-author", wantPricedAs: "expr-author", wantQuota: 3000},
+		// expr-author is p * 2 + c * 10, so $2/M input and $10/M output.
+		{name: "token expression", reported: "expr-author", wantPricedAs: "expr-author", wantQuota: 3000, wantInputPrice: common.GetPointer(2.0), wantOutputPrice: common.GetPointer(10.0)},
+		// A request-priced author has no per-token rate.
 		{name: "fixed expression charges once", reported: "fixed-author", wantPricedAs: "fixed-author", wantQuota: 7500},
 		{name: "per-call price", reported: "price-author", wantPricedAs: "price-author", wantQuota: 15000},
-		{name: "ratio", reported: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800},
-		{name: "reported name wins over the request", reported: "ratio-author", requested: "price-author", wantPricedAs: "ratio-author", wantQuota: 4800},
-		{name: "unpriced snapshot name falls back to the request", reported: "ratio-author-2026-11-01", requested: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800},
+		// ratio-author: ratio 2 is $4/M input, completion ratio 3 makes $12/M output.
+		{name: "ratio", reported: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800, wantInputPrice: common.GetPointer(4.0), wantOutputPrice: common.GetPointer(12.0)},
+		{name: "reported name wins over the request", reported: "ratio-author", requested: "price-author", wantPricedAs: "ratio-author", wantQuota: 4800, wantInputPrice: common.GetPointer(4.0), wantOutputPrice: common.GetPointer(12.0)},
+		{name: "unpriced snapshot name falls back to the request", reported: "ratio-author-2026-11-01", requested: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 4800, wantInputPrice: common.GetPointer(4.0), wantOutputPrice: common.GetPointer(12.0)},
 		{name: "nothing priced charges zero", reported: "mystery-author", requested: "other-author"},
 		{name: "negative price is not usable", reported: "negative-author"},
-		{name: "self-use mode pays the fallback ratio", reported: "mystery-author", selfUse: true, wantPricedAs: "mystery-author", wantQuota: 67500},
-		{name: "accepted unpriced model pays the fallback ratio", reported: "mystery-author", acceptUnset: true, wantPricedAs: "mystery-author", wantQuota: 67500},
+		// The self-use fallback ratio applies to both tokens, so the shown price is
+		// that fallback's per-million rate.
+		{name: "self-use mode pays the fallback ratio", reported: "mystery-author", selfUse: true, wantPricedAs: "mystery-author", wantQuota: 67500, wantInputPrice: common.GetPointer(75.0), wantOutputPrice: common.GetPointer(75.0)},
+		{name: "accepted unpriced model pays the fallback ratio", reported: "mystery-author", acceptUnset: true, wantPricedAs: "mystery-author", wantQuota: 67500, wantInputPrice: common.GetPointer(75.0), wantOutputPrice: common.GetPointer(75.0)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			operation_setting.SelfUseModeEnabled = tc.selfUse
@@ -1617,6 +1623,8 @@ func TestCalculateSvgAuthorChargeUsesTheAuthorModelsOwnPrice(t *testing.T) {
 			assert.Equal(t, tc.wantPricedAs, charge.PricedAs)
 			assert.Equal(t, tc.wantQuota, common.QuotaFromDecimal(charge.Quota))
 			assert.Equal(t, 50, charge.ReasoningTokens)
+			require.Equal(t, tc.wantInputPrice, charge.InputPriceUSD)
+			require.Equal(t, tc.wantOutputPrice, charge.OutputPriceUSD)
 		})
 	}
 }
@@ -1666,10 +1674,11 @@ func TestPostTextConsumeQuotaRecordsSvgAuthorCharge(t *testing.T) {
 		name, author, wantPricedAs string
 		wantQuota                  int
 		wantAuthorQuota            float64
+		wantImageQuota             float64
 		wantUnpriced               any
 	}{
-		{name: "priced author", author: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 3350, wantAuthorQuota: 3200},
-		{name: "unpriced author is reported to administrators", author: "mystery-author", wantQuota: 150, wantUnpriced: "mystery-author"},
+		{name: "priced author", author: "ratio-author", wantPricedAs: "ratio-author", wantQuota: 3350, wantAuthorQuota: 3200, wantImageQuota: 150},
+		{name: "unpriced author is reported to administrators", author: "mystery-author", wantQuota: 150, wantImageQuota: 150, wantUnpriced: "mystery-author"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			truncate(t)
@@ -1709,6 +1718,9 @@ func TestPostTextConsumeQuotaRecordsSvgAuthorCharge(t *testing.T) {
 			adminInfo, ok := other["admin_info"].(map[string]any)
 			require.True(t, ok)
 			assert.Equal(t, tc.wantUnpriced, adminInfo["svg_author_unpriced"])
+			// The image model's own share, so the UI can show it beside the
+			// author's cost instead of deriving it by subtraction.
+			assert.Equal(t, tc.wantImageQuota, other["image_quota"])
 		})
 	}
 }

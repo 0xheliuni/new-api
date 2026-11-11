@@ -7816,6 +7816,9 @@
     "SVG author model": "SVG 描圖模型",
     "SVG author tokens (input / output)": "SVG 描圖 Token（輸入 / 輸出）",
     "SVG author cost": "SVG 描圖費用",
-    "Includes SVG authoring cost": "包含 SVG 描圖費用"
+    "Includes SVG authoring cost": "包含 SVG 描圖費用",
+    "Image cost": "圖片費用",
+    "SVG author input price": "SVG 描圖輸入價格",
+    "SVG author output price": "SVG 描圖輸出價格"
   }
 }

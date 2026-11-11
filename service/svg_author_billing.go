@@ -28,7 +28,12 @@ type svgAuthorCharge struct {
 	InputTokens     int
 	OutputTokens    int
 	ReasoningTokens int
-	Quota           decimal.Decimal
+	// InputPriceUSD and OutputPriceUSD are the author model's list prices per
+	// million tokens, before the group ratio. They stay nil when the model is
+	// priced per request, which has no per-token rate.
+	InputPriceUSD  *float64
+	OutputPriceUSD *float64
+	Quota          decimal.Decimal
 }
 
 // calculateSvgAuthorCharge prices the upstream's svg_usage at the group ratio of
@@ -59,8 +64,10 @@ func calculateSvgAuthorCharge(relayInfo *relaycommon.RelayInfo) *svgAuthorCharge
 	}
 	groupRatio := decimal.NewFromFloat(relayInfo.PriceData.GroupRatioInfo.GroupRatio)
 	for _, name := range []string{reported, requested} {
-		if quota, ok := svgAuthorQuotaBeforeGroup(name, input, output); ok {
+		if quota, inputPrice, outputPrice, ok := svgAuthorQuotaBeforeGroup(name, input, output); ok {
 			charge.PricedAs = name
+			charge.InputPriceUSD = inputPrice
+			charge.OutputPriceUSD = outputPrice
 			charge.Quota = quota.Mul(groupRatio)
 			break
 		}
@@ -70,6 +77,12 @@ func calculateSvgAuthorCharge(relayInfo *relaycommon.RelayInfo) *svgAuthorCharge
 	if charge.PricedAs == "" && charge.Model != "" && (operation_setting.SelfUseModeEnabled || relayInfo.UserSetting.AcceptUnsetRatioModel) {
 		fallbackRatio, _, _ := ratio_setting.GetModelRatio(charge.Model)
 		charge.PricedAs = charge.Model
+		charge.InputPriceUSD = ratioPricePerMillion(fallbackRatio)
+		if charge.InputPriceUSD != nil {
+			outputPrice, _ := decimal.NewFromFloat(*charge.InputPriceUSD).
+				Mul(decimal.NewFromFloat(ratio_setting.GetCompletionRatio(charge.Model))).Round(6).Float64()
+			charge.OutputPriceUSD = &outputPrice
+		}
 		charge.Quota = svgAuthorRatioQuota(charge.Model, fallbackRatio, input, output).Mul(groupRatio)
 	}
 	// A negative group ratio must not turn the author's tokens into a credit.
@@ -80,40 +93,96 @@ func calculateSvgAuthorCharge(relayInfo *relaycommon.RelayInfo) *svgAuthorCharge
 }
 
 // svgAuthorQuotaBeforeGroup prices the tokens the way a direct call to the model
-// is priced: expression, then per-call price, then ratio. The second result is
-// false when the name has no usable price; a negative price is not usable.
-func svgAuthorQuotaBeforeGroup(name string, input, output int) (decimal.Decimal, bool) {
+// is priced: expression, then per-call price, then ratio. The remaining results
+// are the model's list prices per million tokens before the group ratio, which
+// stay nil for per-request pricing. ok is false when the name has no usable
+// price; a negative price is not usable.
+func svgAuthorQuotaBeforeGroup(name string, input, output int) (quota decimal.Decimal, inputPrice, outputPrice *float64, ok bool) {
 	if name == "" {
-		return decimal.Zero, false
+		return decimal.Zero, nil, nil, false
 	}
 	if billing_setting.GetBillingMode(name) == billing_setting.BillingModeTieredExpr {
 		if expression, ok := billing_setting.GetBillingExpr(name); ok {
 			// The author call is not a client request, so request-dependent rules
 			// evaluate against an empty context.
-			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{
+			snapshot := &billingexpr.BillingSnapshot{
 				ExprString:   expression,
 				ExprHash:     billingexpr.ExprHashString(expression),
 				GroupRatio:   1,
 				QuotaPerUnit: common.QuotaPerUnit,
 				ExprVersion:  billingexpr.ExprVersion(expression),
-			}, billingexpr.TokenParams{P: float64(input), C: float64(output), Len: float64(input)})
-			quota := result.ActualQuotaBeforeGroup
-			if err != nil || math.IsNaN(quota) || math.IsInf(quota, 0) || quota < 0 {
-				return decimal.Zero, false
 			}
-			return decimal.NewFromFloat(quota), true
+			total, err := billingexpr.ComputeTieredQuota(snapshot, billingexpr.TokenParams{P: float64(input), C: float64(output), Len: float64(input)})
+			if err != nil || !isFiniteNonNegative(total.ActualQuotaBeforeGroup) {
+				return decimal.Zero, nil, nil, false
+			}
+			// A request-priced author has no per-token rate to show.
+			if total.BillingUnit == billingexpr.BillingUnitRequest {
+				return decimal.NewFromFloat(total.ActualQuotaBeforeGroup), nil, nil, true
+			}
+			// The expression has no per-token coefficients to read, so its input
+			// and output prices are recovered by running it twice: with the
+			// output tokens removed, and with no tokens at all (constant terms).
+			inputOnly, err := billingexpr.ComputeTieredQuota(snapshot, billingexpr.TokenParams{P: float64(input), Len: float64(input)})
+			if err != nil || !isFiniteNonNegative(inputOnly.ActualQuotaBeforeGroup) {
+				return decimal.Zero, nil, nil, false
+			}
+			constantOnly, err := billingexpr.ComputeTieredQuota(snapshot, billingexpr.TokenParams{})
+			if err != nil || !isFiniteNonNegative(constantOnly.ActualQuotaBeforeGroup) {
+				return decimal.Zero, nil, nil, false
+			}
+			return decimal.NewFromFloat(total.ActualQuotaBeforeGroup),
+				quotaPerMillion(inputOnly.ActualQuotaBeforeGroup-constantOnly.ActualQuotaBeforeGroup, input),
+				quotaPerMillion(total.ActualQuotaBeforeGroup-inputOnly.ActualQuotaBeforeGroup, output),
+				true
 		}
 	}
-	var quota decimal.Decimal
 	if price, ok := ratio_setting.GetModelPrice(name, false); ok {
 		quota = decimal.NewFromFloat(price).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 	} else if ratio_setting.HasConfiguredModelRatio(name) {
 		modelRatio, _, _ := ratio_setting.GetModelRatio(name)
 		quota = svgAuthorRatioQuota(name, modelRatio, input, output)
+		inputPrice = ratioPricePerMillion(modelRatio)
+		if inputPrice != nil {
+			completionRatio := ratio_setting.GetCompletionRatio(name)
+			price, _ := decimal.NewFromFloat(*inputPrice).
+				Mul(decimal.NewFromFloat(completionRatio)).Round(6).Float64()
+			outputPrice = &price
+		}
 	} else {
-		return decimal.Zero, false
+		return decimal.Zero, nil, nil, false
 	}
-	return quota, !quota.IsNegative()
+	return quota, inputPrice, outputPrice, !quota.IsNegative()
+}
+
+func isFiniteNonNegative(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+}
+
+// quotaPerMillion converts a quota amount for tokens into a USD price per
+// million tokens. It returns nil when tokens is not positive.
+func quotaPerMillion(quota float64, tokens int) *float64 {
+	if tokens <= 0 {
+		return nil
+	}
+	price, _ := decimal.NewFromFloat(quota).
+		Div(decimal.NewFromFloat(common.QuotaPerUnit)).
+		Mul(decimal.NewFromInt(1_000_000)).
+		Div(decimal.NewFromInt(int64(tokens))).
+		Round(6).Float64()
+	return &price
+}
+
+// ratioPricePerMillion converts a legacy model ratio into its USD price per
+// million input tokens: one ratio unit is two dollars per million.
+func ratioPricePerMillion(modelRatio float64) *float64 {
+	if modelRatio <= 0 {
+		return nil
+	}
+	price, _ := decimal.NewFromFloat(modelRatio).
+		Div(decimal.NewFromFloat(common.QuotaPerUnit / 1_000_000)).
+		Round(6).Float64()
+	return &price
 }
 
 func svgAuthorRatioQuota(name string, modelRatio float64, input, output int) decimal.Decimal {
@@ -137,6 +206,14 @@ func appendSvgAuthorLogInfo(ctx *gin.Context, other *model.LogOther, author *svg
 		"reasoning_tokens": author.ReasoningTokens,
 		"quota":            common.QuotaFromDecimal(author.Quota),
 	})
+	// List prices per million tokens, written only when the model is priced per
+	// token so the log can show how the author's cost was derived.
+	if author.InputPriceUSD != nil {
+		other.SetPublic("svg_author_input_price", *author.InputPriceUSD)
+	}
+	if author.OutputPriceUSD != nil {
+		other.SetPublic("svg_author_output_price", *author.OutputPriceUSD)
+	}
 	if author.PricedAs == "" {
 		other.SetAdmin("svg_author_unpriced", author.Model)
 		logger.LogWarn(ctx, common.LogText("SVG author model %s could not be priced; its tokens were not charged", author.Model))
