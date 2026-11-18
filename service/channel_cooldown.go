@@ -288,3 +288,17 @@ func ChannelCooldownStatuses() []ChannelCooldownStatus {
 	})
 	return statuses
 }
+
+// channelCooldownSnapshot copies the cooldown records of channels for one
+// selection.
+func channelCooldownSnapshot(channels []*model.Channel) map[int]channelCooldown {
+	channelCooldowns.Lock()
+	defer channelCooldowns.Unlock()
+	snapshot := make(map[int]channelCooldown)
+	for _, channel := range channels {
+		if entry := channelCooldowns.entries[channel.Id]; entry != nil {
+			snapshot[channel.Id] = *entry
+		}
+	}
+	return snapshot
+}

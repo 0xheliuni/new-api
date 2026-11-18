@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,7 @@ func setupChannelCooldownTest(t *testing.T, options map[string]string, channels 
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	previousAutoDisable, previousNow := common.AutomaticDisableChannelEnabled, cooldownNow
 	previousPolicy := model.CurrentRequestPolicy().Options
+	previousAffinity := *operation_setting.GetChannelAffinitySetting()
 	common.OptionMapRWMutex.Lock()
 	previousOptions := common.OptionMap
 	common.OptionMap = maps.Clone(previousPolicy)
@@ -57,6 +59,10 @@ func setupChannelCooldownTest(t *testing.T, options map[string]string, channels 
 	}
 	model.InitChannelCache()
 	require.NoError(t, model.UpdateRequestPolicyOptions(options))
+	// Option writes merge a rule JSON into the default rule objects, so publish
+	// the committed policy snapshot as the live affinity setting instead, as the
+	// options API does on reload.
+	*operation_setting.GetChannelAffinitySetting() = model.CurrentRequestPolicy().Affinity
 	clock := &cooldownTestClock{now: time.Unix(1_800_000_000, 0)}
 	cooldownNow = func() time.Time { return clock.now }
 	channelCooldowns.Lock()
@@ -69,6 +75,7 @@ func setupChannelCooldownTest(t *testing.T, options map[string]string, channels 
 			restore[key] = previousPolicy[key]
 		}
 		require.NoError(t, model.UpdateRequestPolicyOptions(restore))
+		*operation_setting.GetChannelAffinitySetting() = previousAffinity
 		channelCooldowns.Lock()
 		channelCooldowns.entries = make(map[int]*channelCooldown)
 		channelCooldowns.Unlock()
@@ -312,4 +319,149 @@ func TestChannelCooldownLimit(t *testing.T) {
 		assert.Len(t, RequestPolicy(c).Events(), before)
 		assert.Empty(t, ChannelCooldownStatuses())
 	})
+}
+
+func TestPickScheduledChannel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	var candidates []*model.Channel
+	for _, spec := range []struct {
+		id       int
+		priority int64
+	}{{101, 100}, {102, 100}, {103, 100}, {201, 10}} {
+		channel := cooldownTestChannel(spec.id, spec.priority, 10)
+		candidates = append(candidates, &channel)
+	}
+	cooling := channelCooldown{until: now.Add(time.Minute), weightFactor: cooldownRampStart}
+	coolingLonger := channelCooldown{until: now.Add(2 * time.Minute), weightFactor: cooldownRampStart}
+	for _, tc := range []struct {
+		name       string
+		tried      []int
+		health     map[int]channelCooldown
+		tierLimit  int
+		wantID     int
+		wantReason string
+	}{
+		{name: "an untried channel at the top priority", tierLimit: 1, wantID: 101},
+		{name: "one attempt per priority moves down after a try", tried: []int{101}, tierLimit: 1, wantID: 201, wantReason: "priority_limit_reached"},
+		{name: "three attempts per priority stay at the top", tried: []int{101}, tierLimit: 3, wantID: 102},
+		{name: "a fully tried priority moves down", tried: []int{101, 102, 103}, tierLimit: 3, wantID: 201, wantReason: "priority_limit_reached"},
+		{name: "cooling channels are skipped", health: map[int]channelCooldown{101: cooling, 102: cooling}, tierLimit: 3, wantID: 103},
+		{name: "a cooling priority falls through without the limit", health: map[int]channelCooldown{101: cooling, 102: cooling, 103: cooling}, tierLimit: 3, wantID: 201},
+		{name: "a used up lower priority goes back above the limit", tried: []int{101, 201}, tierLimit: 1, wantID: 102},
+		{name: "every untried channel cooling picks the earliest end", tried: []int{201}, health: map[int]channelCooldown{101: coolingLonger, 102: cooling, 103: coolingLonger}, tierLimit: 3, wantID: 102, wantReason: "cooldown_fallback"},
+		{name: "every channel tried reuses the top priority", tried: []int{101, 102, 103, 201}, tierLimit: 3, wantID: 101, wantReason: "tried_channel_reused"},
+		{name: "every channel tried and cooling reuses the earliest end", tried: []int{101, 102, 103, 201}, health: map[int]channelCooldown{101: coolingLonger, 102: coolingLonger, 103: coolingLonger, 201: cooling}, tierLimit: 3, wantID: 201, wantReason: "tried_channel_reused"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tried := make(map[int]bool)
+			for _, id := range tc.tried {
+				tried[id] = true
+			}
+			channel, reason := pickScheduledChannel(candidates, tried, tc.health, now, tc.tierLimit, func() float64 { return 0 })
+			require.NotNil(t, channel)
+			assert.Equal(t, tc.wantID, channel.Id)
+			assert.Equal(t, tc.wantReason, reason)
+		})
+	}
+}
+
+func TestPickWeightedChannelFollowsTheCooldownRamp(t *testing.T) {
+	ramping, full, idle := cooldownTestChannel(1, 0, 10), cooldownTestChannel(2, 0, 10), cooldownTestChannel(3, 0, 0)
+	health := map[int]channelCooldown{1: {weightFactor: cooldownRampStart}}
+	// The ramping channel weighs 2.5 against 10.
+	assert.Equal(t, 1, pickWeightedChannel([]*model.Channel{&ramping, &full}, health, func() float64 { return 0.1 }).Id)
+	assert.Equal(t, 2, pickWeightedChannel([]*model.Channel{&ramping, &full}, health, func() float64 { return 0.3 }).Id)
+	assert.Equal(t, 1, pickWeightedChannel([]*model.Channel{&idle, &ramping}, nil, func() float64 { return 0 }).Id, "a channel of weight 0 only runs when every weight is 0")
+	assert.Equal(t, 3, pickWeightedChannel([]*model.Channel{&idle}, nil, func() float64 { return 0.9 }).Id)
+}
+
+func TestScheduledSelectionFollowsTheTiers(t *testing.T) {
+	setupChannelCooldownTest(t, map[string]string{
+		"channel_scheduling_setting.cooldown_enabled":   "true",
+		"channel_scheduling_setting.tier_attempt_limit": "3",
+	}, cooldownTestChannel(501, 100, 10), cooldownTestChannel(502, 100, 10), cooldownTestChannel(503, 100, 10), cooldownTestChannel(601, 10, 10))
+	previousRand := schedulerRandFloat
+	schedulerRandFloat = func() float64 { return 0 }
+	t.Cleanup(func() { schedulerRandFloat = previousRand })
+	limited := types.WithOpenAIError(types.OpenAIError{Message: "slow down", Code: "rate_limit_exceeded"}, http.StatusTooManyRequests)
+	RecordChannelCooldownFailure(cooldownAttempt(502), types.ChannelError{ChannelId: 502, ChannelName: "channel-502", AutoBan: true}, limited)
+
+	c := cooldownAttempt(501)
+	AppendUsedChannel(c, 501)
+	retry := 1
+	param := &RetryParam{Ctx: c, TokenGroup: "default", ModelName: cooldownTestModel, Retry: &retry}
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	assert.Equal(t, "default", group)
+	assert.Equal(t, 503, channel.Id, "the retry skips the tried channel and the cooling one at the same priority")
+
+	AppendUsedChannel(c, 503)
+	retry = 2
+	channel, _, err = CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	assert.Equal(t, 601, channel.Id, "no usable channel left at the top moves the retry down")
+
+	full := cooldownAttempt(501)
+	for _, id := range []int{501, 502, 503} {
+		AppendUsedChannel(full, id)
+	}
+	fullRetry := 3
+	channel, _, err = CacheGetRandomSatisfiedChannel(&RetryParam{Ctx: full, TokenGroup: "default", ModelName: cooldownTestModel, Retry: &fullRetry})
+	require.NoError(t, err)
+	require.Equal(t, 601, channel.Id)
+	RequestPolicy(full).BeginAttempt(channel, "default")
+	events := RequestPolicy(full).Events()
+	route := events[len(events)-2]
+	assert.Equal(t, PolicyDecision{Action: "route", Reason: "priority_limit_reached", Source: "routing"}, route.Decision)
+	assert.Equal(t, 2, route.Attempt, "the selection event carries the number of the attempt it starts")
+	assert.Equal(t, "channel_selected", events[len(events)-1].Decision.Reason)
+}
+
+func TestSessionAffinityWithACoolingChannel(t *testing.T) {
+	limited := types.WithOpenAIError(types.OpenAIError{Message: "slow down", Code: "rate_limit_exceeded"}, http.StatusTooManyRequests)
+	for _, tc := range []struct {
+		mode   string
+		wantID int
+	}{
+		{mode: "prefer", wantID: 702},
+		{mode: "strict", wantID: 701},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			setupChannelCooldownTest(t, map[string]string{
+				"channel_scheduling_setting.cooldown_enabled": "true",
+				"channel_affinity_setting.enabled":            "true",
+				"channel_affinity_setting.session_mode":       tc.mode,
+				"channel_affinity_setting.rules":              `[{"name":"session","model_regex":[".*"],"key_sources":[{"type":"request_header","key":"X-Session"}],"session_mode":"inherit"}]`,
+			}, cooldownTestChannel(701, 0, 10), cooldownTestChannel(702, 0, 10))
+			newSession := func() *gin.Context {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+				c.Request.Header.Set("X-Session", "session-1")
+				return c
+			}
+			seed := newSession()
+			_, found := GetPreferredChannelByAffinity(seed, cooldownTestModel, "default")
+			require.False(t, found)
+			seed.Set("channel_id", 701)
+			RecordChannelAffinity(seed, 701)
+			t.Cleanup(func() { ClearCurrentChannelAffinityCache(seed) })
+			RecordChannelCooldownFailure(cooldownAttempt(701), types.ChannelError{ChannelId: 701, ChannelName: "channel-701", AutoBan: true}, limited)
+
+			c := newSession()
+			retry := 0
+			channel, _, selectErr := SelectChannelForRequest(c, cooldownTestModel, &RetryParam{Ctx: c, TokenGroup: "default", ModelName: cooldownTestModel, Retry: &retry})
+			require.Nil(t, selectErr)
+			assert.Equal(t, tc.wantID, channel.Id)
+			c.Set("channel_id", channel.Id)
+			RecordChannelAffinity(c, channel.Id)
+			bound, found := GetPreferredChannelByAffinity(newSession(), cooldownTestModel, "default")
+			require.True(t, found)
+			assert.Equal(t, 701, bound, "skipping a cooling channel keeps the session binding")
+			if tc.mode == "prefer" {
+				RequestPolicy(c).BeginAttempt(channel, "default")
+				events := RequestPolicy(c).Events()
+				assert.Equal(t, PolicyDecision{Action: "route", Reason: "session_channel_cooling", Source: "session_rule"}, events[len(events)-2].Decision)
+			}
+		})
+	}
 }

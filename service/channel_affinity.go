@@ -727,6 +727,10 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if channelID <= 0 {
 		return
 	}
+	// A request that skipped its cooling session channel keeps the binding.
+	if c != nil && c.GetBool(ginKeyChannelAffinityCooldownSkip) {
+		return
+	}
 	setting := operation_setting.GetChannelAffinitySetting()
 	if RequestPolicy(c).SessionMode == "off" {
 		return
