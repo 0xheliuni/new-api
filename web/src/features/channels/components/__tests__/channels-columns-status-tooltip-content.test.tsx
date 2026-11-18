@@ -26,10 +26,13 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
+import { toast } from 'sonner'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { createAppQueryClient } from '@/lib/query-client'
 
+import { channelsQueryKeys } from '../../lib'
 import { channelSchema, type Channel } from '../../types'
 import { useChannelsColumns } from '../channels-columns'
 import { ChannelsProvider } from '../channels-provider'
@@ -108,7 +111,10 @@ function mockCooldowns(items: unknown[]) {
 }
 
 // Interpolates like the app does (escapeValue off), so "1/2" stays readable.
-async function renderStatusCell(channel: Channel) {
+async function renderStatusCell(
+  channel: Channel,
+  queryClient: QueryClient = new QueryClient()
+) {
   const i18n = createInstance()
   await i18n.init({
     lng: 'en',
@@ -118,7 +124,7 @@ async function renderStatusCell(channel: Channel) {
   })
   render(
     <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={new QueryClient()}>
+      <QueryClientProvider client={queryClient}>
         <ChannelsProvider>
           <ExampleAutoDisabledStatusCell channel={channel} />
         </ChannelsProvider>
@@ -127,7 +133,7 @@ async function renderStatusCell(channel: Channel) {
   )
 }
 
-test('an enabled channel in a cooldown shows the cooldown details on hover', async () => {
+test('an enabled channel in a cooldown shows the cooldown details on hover and keyboard focus', async () => {
   mockCooldowns([
     {
       channel_id: 1,
@@ -140,7 +146,18 @@ test('an enabled channel in a cooldown shows the cooldown details on hover', asy
     },
   ])
   await renderStatusCell(enabledChannel())
-  await userEvent.setup().hover(await screen.findByText('Cooling down'))
+  const user = userEvent.setup()
+  const trigger = await screen.findByRole('button', { name: 'Cooling down' })
+  await user.hover(trigger)
+  expect(await screen.findByText('Cooldowns in a row: 2')).toBeVisible()
+  expect(screen.getByText('Last status code: 429')).toBeVisible()
+
+  await user.unhover(trigger)
+  await waitFor(() =>
+    expect(screen.queryByText('Cooldowns in a row: 2')).not.toBeInTheDocument()
+  )
+  await user.tab()
+  expect(trigger).toHaveFocus()
   expect(await screen.findByText('Cooldowns in a row: 2')).toBeVisible()
   expect(screen.getByText('Last status code: 429')).toBeVisible()
 })
@@ -172,4 +189,52 @@ test('a healthy channel shows no cooldown badge', async () => {
   )
   expect(screen.queryByText('Cooling down')).not.toBeInTheDocument()
   expect(screen.getByText('Enabled')).toBeVisible()
+})
+
+test('a channel that is not enabled shows no cooldown badge even with a matching payload item', async () => {
+  mockCooldowns([
+    {
+      channel_id: 1,
+      state: 'cooling',
+      cooldown_until: Math.floor(Date.now() / 1000) + 120,
+      cooldown_count: 2,
+      weight_factor: 0.25,
+      last_status_code: 429,
+      last_error_code: 'rate_limit_exceeded',
+    },
+  ])
+  const autoDisabled = channelSchema.parse({
+    id: 1,
+    type: 1,
+    key: 'test-key',
+    name: 'Auto-Disabled-Channel',
+    status: 3,
+    created_time: 1,
+    test_time: 0,
+    response_time: 0,
+    balance_updated_time: 0,
+  })
+  await renderStatusCell(autoDisabled)
+  expect(await screen.findByText('Auto Disabled')).toBeVisible()
+  expect(screen.queryByText('Cooling down')).not.toBeInTheDocument()
+  expect(screen.queryByText('Cooldowns in a row: 2')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Cooling down' })).toBeNull()
+})
+
+test('a failed cooldowns request shows no badge, keeps the status, and does not toast', async () => {
+  vi.spyOn(api, 'get').mockRejectedValue(new Error('cooldowns unavailable'))
+  const toastError = vi.spyOn(toast, 'error')
+  const queryClient = createAppQueryClient()
+  await renderStatusCell(enabledChannel(), queryClient)
+  expect(await screen.findByText('Enabled')).toBeVisible()
+  // Waiting for the error state proves QueryCache.onError already ran, so the
+  // no-toast assertion below is not vacuous.
+  await waitFor(() =>
+    expect(
+      queryClient.getQueryState(channelsQueryKeys.cooldowns())?.status
+    ).toBe('error')
+  )
+  expect(toastError).not.toHaveBeenCalled()
+  expect(screen.queryByText('Cooling down')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Cooling down' })).toBeNull()
 })

@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 import {
   Tooltip,
   TooltipContent,
@@ -44,6 +45,8 @@ export function ChannelCooldownBadge(props: { channelId: number }) {
     queryKey: channelsQueryKeys.cooldowns(),
     queryFn: getChannelCooldowns,
     staleTime: 15_000,
+    // Auxiliary endpoint: an outage must not toast over the channel list.
+    meta: { errorToast: false },
   })
   const item = query.data?.items.find(
     (entry) => entry.channel_id === props.channelId
@@ -57,7 +60,15 @@ export function ChannelCooldownBadge(props: { channelId: number }) {
   return (
     <TooltipProvider delay={100}>
       <Tooltip>
-        <TooltipTrigger render={<span />}>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='sm'
+              className='h-auto rounded-full p-0'
+            />
+          }
+        >
           <StatusBadge
             label={
               cooling ? t('Cooling down') : t('Recovering {{share}}', { share })
