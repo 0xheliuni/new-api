@@ -63,6 +63,30 @@ export function RetrySection() {
         />
         <FormField
           control={form.control}
+          name='channel_scheduling_setting.tier_attempt_limit'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Attempts per priority level')}</FormLabel>
+              <FormControl>
+                <Input
+                  type='number'
+                  min={1}
+                  max={100}
+                  step={1}
+                  {...safeNumberFieldProps(field)}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Channels tried at one priority before moving to the next. 1 moves down a level on every retry; the lowest priority has no limit.'
+                )}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
           name='AutomaticRetryStatusCodes'
           render={({ field }) => (
             <FormItem>

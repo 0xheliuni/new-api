@@ -49,6 +49,7 @@ const options = {
     },
   ]),
   AutomaticRetryStatusCodes: '429,500-503',
+  'channel_scheduling_setting.tier_attempt_limit': '1',
 }
 let currentOptions: Record<string, string>
 let client: QueryClient
@@ -795,3 +796,29 @@ it.each([
     expect(api.patch).not.toHaveBeenCalled()
   }
 )
+
+it('changing the attempts per priority level saves only that option', async () => {
+  show()
+  fireEvent.change(
+    await screen.findByRole('spinbutton', {
+      name: 'Attempts per priority level',
+    }),
+    { target: { value: '3' } }
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(api.patch).mock.calls[0][1]).toEqual({
+    options: { 'channel_scheduling_setting.tier_attempt_limit': '3' },
+  })
+})
+
+it('an attempts per priority level of 0 is rejected before saving', async () => {
+  show()
+  const limit = await screen.findByRole('spinbutton', {
+    name: 'Attempts per priority level',
+  })
+  fireEvent.change(limit, { target: { value: '0' } })
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(limit).toHaveAttribute('aria-invalid', 'true'))
+  expect(api.patch).not.toHaveBeenCalled()
+})
