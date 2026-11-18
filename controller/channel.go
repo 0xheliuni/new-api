@@ -973,6 +973,7 @@ func DisableTagChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.ClearChannelCooldowns(ids...)
 	model.InitChannelCache()
 	recordManageAudit(c, "channel.tag_disable", map[string]any{
 		"tag": channelTag.Tag,
@@ -992,11 +993,17 @@ func EnableTagChannels(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	channels, err := model.GetChannelsByTag(channelTag.Tag, false, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	err = model.EnableChannelByTag(channelTag.Tag)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	service.ClearChannelCooldowns(channelIDsFromChannels(channels)...)
 	model.InitChannelCache()
 	recordManageAudit(c, "channel.tag_enable", map[string]any{
 		"tag": channelTag.Tag,
@@ -1267,6 +1274,8 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// An edited channel starts over at its configured weight.
+	service.ClearChannelCooldowns(channel.Id)
 	model.InitChannelCache()
 	service.ResetProxyClientCache()
 	// 成本计价字段变化时追加一条 effective_from=now 的版本，让改价之后的日志按新价
@@ -1331,6 +1340,7 @@ func UpdateChannelStatus(c *gin.Context) {
 		return
 	}
 	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
+	service.ClearChannelCooldowns(id)
 	if changed {
 		model.InitChannelCache()
 		if req.Status != common.ChannelStatusEnabled {
@@ -1365,6 +1375,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 			}
 		}
 	}
+	service.ClearChannelCooldowns(req.Ids...)
 	if changedCount > 0 {
 		model.InitChannelCache()
 	}

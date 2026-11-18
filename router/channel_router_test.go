@@ -25,6 +25,7 @@ func TestChannelDefaultBaseURLsRequireReadPermission(t *testing.T) {
 }
 
 func TestChannelStatusRoutesUseExpectedPermissions(t *testing.T) {
+	assertChannelRoutePermission(t, http.MethodGet, "/cooldowns", authz.ChannelRead, controller.GetChannelCooldowns)
 	assertChannelRoutePermission(t, http.MethodGet, "/:id/vllm/status", authz.ChannelRead, controller.GetVLLMChannelStatus)
 	assertChannelRoutePermission(t, http.MethodGet, "/:id/sglang/status", authz.ChannelRead, controller.GetSGLangChannelStatus)
 	assertChannelRoutePermission(t, http.MethodPost, "/:id/status", authz.ChannelOperate, controller.UpdateChannelStatus)
