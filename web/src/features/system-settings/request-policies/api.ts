@@ -17,6 +17,8 @@ export type PolicyEvent = {
   elapsed_ms: number
   decision: PolicyDecision
   health?: string
+  cooldown_count?: number
+  cooldown_seconds?: number
 }
 type Response<T> = { success: boolean; message?: string; data: T }
 export async function getPolicyConfig() {

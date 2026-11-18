@@ -66,6 +66,28 @@ export function policyLabel(t: TFunction, value: string): string {
       return t('Channel disable requested')
     case 'key_disable_requested':
       return t('Current key disable requested')
+    case 'priority_limit_reached':
+      return t('Priority level fully tried; moved to the next priority')
+    case 'cooldown_fallback':
+      return t('All channels are cooling down; picked the one that recovers first')
+    case 'tried_channel_reused':
+      return t('No untried channels left; reused a tried channel')
+    case 'session_channel_cooling':
+      return t(
+        'The session channel is cooling down; switched channels for this request'
+      )
+    case 'cooldown_started':
+      return t('Cooldown started')
+    case 'already_cooling':
+      return t('Already cooling down; not counted')
+    case 'cooldown_disable_requested':
+      return t('Too many cooldowns in a row; channel disable requested')
+    case 'cooldown_upstream_wide':
+      return t(
+        'Most channels at this priority are cooling down; kept the channel enabled'
+      )
+    case 'cooldown':
+      return t('Channel cooldown')
     case 'off':
     case '':
       return t('Do not keep sessions')

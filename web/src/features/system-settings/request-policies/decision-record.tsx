@@ -42,6 +42,15 @@ export function PolicyDecisionRecord(props: {
             {event.group ? ` · ${event.group}` : ''}
             {event.rule ? ` · ${event.rule}` : ''}
             {event.status ? ` · HTTP ${event.status}` : ''}
+            {event.cooldown_count && event.cooldown_seconds
+              ? ` · ${t('Cooldown #{{number}}, {{seconds}} s', {
+                  number: event.cooldown_count,
+                  seconds: event.cooldown_seconds,
+                })}`
+              : ''}
+            {event.cooldown_count && !event.cooldown_seconds
+              ? ` · ${t('Cooldown #{{number}}', { number: event.cooldown_count })}`
+              : ''}
           </p>
           <p className='text-muted-foreground text-xs'>
             {t('Source')}: {policyLabel(t, event.decision.source)}
