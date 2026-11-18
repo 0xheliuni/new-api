@@ -33,14 +33,20 @@ type PolicyEvent struct {
 	ElapsedMS   int64          `json:"elapsed_ms"`
 	Decision    PolicyDecision `json:"decision"`
 	Health      string         `json:"health,omitempty"`
+	// CooldownCount and CooldownSeconds describe the cooldown a failure started.
+	CooldownCount   int `json:"cooldown_count,omitempty"`
+	CooldownSeconds int `json:"cooldown_seconds,omitempty"`
 }
 
 // RequestPolicyState records how one request was routed so administrators can
 // read the decision flow in the log details. Channel selection and the retry
 // decision stay in the relay flows; this state only records them.
 type RequestPolicyState struct {
-	FinalLogged       bool
-	StartedAt         time.Time
+	FinalLogged bool
+	StartedAt   time.Time
+	// AttemptStartedAt is when the current attempt began. Cooldowns ignore the
+	// results of attempts that began before the latest cooldown.
+	AttemptStartedAt  time.Time
 	Attempts          int
 	SelectedGroup     string
 	SessionMode       string
@@ -50,6 +56,9 @@ type RequestPolicyState struct {
 	OutcomeRecorded   bool
 	mu                sync.Mutex
 	events            []PolicyEvent
+	// queued holds channel selection events until BeginAttempt numbers the
+	// attempt that uses the selected channel.
+	queued []PolicyEvent
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {
@@ -86,11 +95,27 @@ func (s *RequestPolicyState) Events() []PolicyEvent {
 	return slices.Clone(s.events)
 }
 
+// QueueEvent keeps a channel selection event until the attempt that uses the
+// selected channel begins, so the event carries that attempt's number.
+func (s *RequestPolicyState) QueueEvent(event PolicyEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queued = append(s.queued, event)
+}
+
 func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) {
 	s.Attempts++
 	s.Successful = false
 	s.OutcomeRecorded = false
 	s.SelectedGroup = group
+	s.AttemptStartedAt = cooldownNow()
+	s.mu.Lock()
+	queued := s.queued
+	s.queued = nil
+	s.mu.Unlock()
+	for _, event := range queued {
+		s.AddEvent(event)
+	}
 	s.AddEvent(PolicyEvent{ChannelID: channel.Id, Decision: PolicyDecision{Action: "attempt", Reason: "channel_selected", Source: "routing"}})
 }
 
@@ -140,6 +165,9 @@ func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) 
 	channelID := 0
 	if c != nil {
 		channelID = c.GetInt("channel_id")
+	}
+	if state.Successful {
+		RecordChannelCooldownSuccess(c, channelID)
 	}
 	state.AddEvent(PolicyEvent{ChannelID: channelID, Decision: decision})
 }

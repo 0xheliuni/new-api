@@ -73,6 +73,13 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if !common.AutomaticDisableChannelEnabled {
 		return false
 	}
+	return IsChannelDisableError(err)
+}
+
+// IsChannelDisableError reports whether err matches the automatic disable
+// rules: a channel error, a disable status code, a failure error code or a
+// failure keyword. It does not look at the global automatic disable switch.
+func IsChannelDisableError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
@@ -85,7 +92,9 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
 		return true
 	}
-
+	if _, ok := model.CurrentRequestPolicy().Scheduling.DisableErrorCodes[strings.ToLower(string(err.GetErrorCode()))]; ok {
+		return true
+	}
 	lowerMessage := strings.ToLower(err.Error())
 	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
 	return search

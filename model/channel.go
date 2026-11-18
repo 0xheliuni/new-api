@@ -65,6 +65,10 @@ type Channel struct {
 
 const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
 
+// ChannelStatusReasonRepeatedCooldowns is the disable reason of a channel that
+// cooled down too many times in a row. The frontends translate it.
+const ChannelStatusReasonRepeatedCooldowns = "Disabled after repeated temporary failures"
+
 const (
 	ChannelSupplyTypeKey  = "key"
 	ChannelSupplyTypePool = "pool"
