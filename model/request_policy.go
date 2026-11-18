@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
@@ -30,7 +31,22 @@ type RequestPolicySnapshot struct {
 	CheckText       bool
 	TextKeywords    []string
 	AutoDisable     bool
+	Scheduling      ChannelSchedulingPolicy
 	Options         map[string]string
+}
+
+// ChannelSchedulingPolicy is the parsed channel_scheduling_setting group:
+// temporary failure cooldowns, attempts per priority level and the upstream
+// error codes that disable a channel.
+type ChannelSchedulingPolicy struct {
+	CooldownEnabled       bool
+	CooldownCodes         []operation_setting.StatusCodeRange
+	CooldownBase          time.Duration
+	CooldownMax           time.Duration
+	DisableAfterCooldowns int
+	// DisableErrorCodes holds lower-cased upstream error codes.
+	DisableErrorCodes map[string]struct{}
+	TierAttemptLimit  int
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
@@ -40,8 +56,9 @@ var requestPolicyDefaults = requestPolicyDefaultOptions()
 func requestPolicyDefaultOptions() map[string]string {
 	defaults := make(map[string]string)
 	for prefix, value := range map[string]any{
-		"channel_affinity_setting.": operation_setting.GetChannelAffinitySetting(),
-		"monitor_setting.":          operation_setting.GetMonitorSetting(),
+		"channel_affinity_setting.":   operation_setting.GetChannelAffinitySetting(),
+		"monitor_setting.":            operation_setting.GetMonitorSetting(),
+		"channel_scheduling_setting.": operation_setting.GetChannelSchedulingSetting(),
 	} {
 		fields, err := config.ConfigToMap(value)
 		if err != nil {
@@ -65,7 +82,7 @@ func requestPolicyDefaultOptions() map[string]string {
 }
 
 func IsRequestPolicyOption(key string) bool {
-	if strings.HasPrefix(key, "channel_affinity_setting.") {
+	if strings.HasPrefix(key, "channel_affinity_setting.") || strings.HasPrefix(key, "channel_scheduling_setting.") {
 		return true
 	}
 	switch key {
@@ -143,7 +160,7 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		return nil, err
 	}
 	snapshot.DisableKeywords = strings.Split(raw["AutomaticDisableKeywords"], "\n")
-	for _, key := range []string{"CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "AutomaticEnableChannelEnabled", "monitor_setting.auto_test_channel_enabled"} {
+	for _, key := range []string{"CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "AutomaticEnableChannelEnabled", "monitor_setting.auto_test_channel_enabled", "channel_scheduling_setting.cooldown_enabled"} {
 		if _, err := strconv.ParseBool(raw[key]); err != nil {
 			return nil, fmt.Errorf("invalid boolean: %s", key)
 		}
@@ -170,6 +187,53 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	case "scheduled_all", "auto_ban_only", "passive_recovery":
 	default:
 		return nil, fmt.Errorf("invalid channel test mode")
+	}
+
+	for key := range raw {
+		field, ok := strings.CutPrefix(key, "channel_scheduling_setting.")
+		if !ok {
+			continue
+		}
+		switch field {
+		case "cooldown_enabled", "cooldown_status_codes", "cooldown_base_seconds", "cooldown_max_seconds", "disable_after_cooldowns", "disable_error_codes", "tier_attempt_limit":
+		default:
+			return nil, fmt.Errorf("unknown scheduling option: %s", key)
+		}
+	}
+	scheduling := &snapshot.Scheduling
+	scheduling.CooldownEnabled = raw["channel_scheduling_setting.cooldown_enabled"] == "true"
+	scheduling.CooldownCodes, err = operation_setting.ParseHTTPStatusCodeRanges(raw["channel_scheduling_setting.cooldown_status_codes"])
+	if err != nil {
+		return nil, err
+	}
+	integers := make(map[string]int)
+	for _, bound := range []struct {
+		key      string
+		min, max int
+	}{
+		{"channel_scheduling_setting.cooldown_base_seconds", 1, 3600},
+		{"channel_scheduling_setting.cooldown_max_seconds", 1, 3600},
+		{"channel_scheduling_setting.disable_after_cooldowns", 0, 100},
+		{"channel_scheduling_setting.tier_attempt_limit", 1, 100},
+	} {
+		value, err := strconv.Atoi(raw[bound.key])
+		if err != nil || value < bound.min || value > bound.max {
+			return nil, common.NewMessage("{{field}} must be an integer from {{min}} to {{max}}", map[string]any{"field": bound.key, "min": bound.min, "max": bound.max})
+		}
+		integers[bound.key] = value
+	}
+	baseSeconds := integers["channel_scheduling_setting.cooldown_base_seconds"]
+	scheduling.CooldownBase = time.Duration(baseSeconds) * time.Second
+	// A maximum below the initial cooldown caps every cooldown at the initial
+	// one, so saving the two fields one at a time never fails in between.
+	scheduling.CooldownMax = time.Duration(max(baseSeconds, integers["channel_scheduling_setting.cooldown_max_seconds"])) * time.Second
+	scheduling.DisableAfterCooldowns = integers["channel_scheduling_setting.disable_after_cooldowns"]
+	scheduling.TierAttemptLimit = integers["channel_scheduling_setting.tier_attempt_limit"]
+	scheduling.DisableErrorCodes = make(map[string]struct{})
+	for code := range strings.SplitSeq(raw["channel_scheduling_setting.disable_error_codes"], "\n") {
+		if code = strings.ToLower(strings.TrimSpace(code)); code != "" {
+			scheduling.DisableErrorCodes[code] = struct{}{}
+		}
 	}
 
 	if snapshot.Affinity.MaxEntries < 0 || snapshot.Affinity.DefaultTTLSeconds < 0 {

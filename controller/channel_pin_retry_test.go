@@ -118,6 +118,7 @@ func TestRequestPolicyConfigReturnsSettingsWithoutMigration(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	assert.Contains(t, response.Data, "options")
+	assert.Contains(t, response.Data, "memory_cache_enabled")
 	assert.NotContains(t, response.Data, "migration")
 	assert.NotContains(t, response.Data, "differences")
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -119,4 +120,46 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode, "a failed save keeps the persisted global mode")
 		})
 	}
+}
+
+func TestBuildRequestPolicyChannelScheduling(t *testing.T) {
+	defaults, err := BuildRequestPolicy(nil)
+	require.NoError(t, err)
+	assert.Equal(t, ChannelSchedulingPolicy{
+		CooldownEnabled:       false,
+		CooldownCodes:         []operation_setting.StatusCodeRange{{Start: 429, End: 429}, {Start: 500, End: 503}, {Start: 505, End: 523}, {Start: 525, End: 599}},
+		CooldownBase:          30 * time.Second,
+		CooldownMax:           600 * time.Second,
+		DisableAfterCooldowns: 5,
+		DisableErrorCodes:     map[string]struct{}{},
+		TierAttemptLimit:      1,
+	}, defaults.Scheduling)
+
+	configured, err := BuildRequestPolicy(map[string]string{
+		"channel_scheduling_setting.cooldown_enabled":      "true",
+		"channel_scheduling_setting.cooldown_base_seconds": "60",
+		"channel_scheduling_setting.cooldown_max_seconds":  "10",
+		"channel_scheduling_setting.disable_error_codes":   " Insufficient_Quota \n\naccount_deactivated",
+		"channel_scheduling_setting.tier_attempt_limit":    "3",
+	})
+	require.NoError(t, err)
+	assert.True(t, configured.Scheduling.CooldownEnabled)
+	assert.Equal(t, 60*time.Second, configured.Scheduling.CooldownMax, "a maximum below the initial cooldown is raised to it")
+	assert.Equal(t, map[string]struct{}{"insufficient_quota": {}, "account_deactivated": {}}, configured.Scheduling.DisableErrorCodes)
+	assert.Equal(t, 3, configured.Scheduling.TierAttemptLimit)
+
+	for _, invalid := range []map[string]string{
+		{"channel_scheduling_setting.cooldown_enabled": "yes"},
+		{"channel_scheduling_setting.cooldown_status_codes": "429-200"},
+		{"channel_scheduling_setting.cooldown_base_seconds": "0"},
+		{"channel_scheduling_setting.cooldown_max_seconds": "3601"},
+		{"channel_scheduling_setting.disable_after_cooldowns": "-1"},
+		{"channel_scheduling_setting.tier_attempt_limit": "101"},
+		{"channel_scheduling_setting.tier_attempt_limit": "1.5"},
+		{"channel_scheduling_setting.unknown": "1"},
+	} {
+		_, err := BuildRequestPolicy(invalid)
+		assert.Error(t, err, invalid)
+	}
+	assert.True(t, IsRequestPolicyOption("channel_scheduling_setting.tier_attempt_limit"))
 }

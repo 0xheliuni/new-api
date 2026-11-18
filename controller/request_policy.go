@@ -3,12 +3,17 @@ package controller
 import (
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
 
 func GetRequestPolicy(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"options": model.CurrentRequestPolicy().Options}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"options": model.CurrentRequestPolicy().Options,
+		// Cooldowns and tiered attempts need the in-memory channel cache.
+		"memory_cache_enabled": common.MemoryCacheEnabled,
+	}})
 }
 
 func UpdateRequestPolicy(c *gin.Context) {
@@ -20,7 +25,7 @@ func UpdateRequestPolicy(c *gin.Context) {
 		return
 	}
 	if err := model.UpdateRequestPolicyOptions(request.Options); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
 		return
 	}
 	GetRequestPolicy(c)
