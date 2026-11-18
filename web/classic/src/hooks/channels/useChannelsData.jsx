@@ -46,6 +46,8 @@ export const useChannelsData = () => {
 
   // Basic states
   const [channels, setChannels] = useState([]);
+  // Cooldown records of the listed channels, keyed by channel id
+  const [channelCooldowns, setChannelCooldowns] = useState({});
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [idSort, setIdSort] = useState(false);
@@ -328,6 +330,17 @@ export const useChannelsData = () => {
     return searchSupplyType ? `&supply_type=${searchSupplyType}` : '';
   };
 
+  const loadChannelCooldowns = async () => {
+    const res = await API.get('/api/channel/cooldowns');
+    const { success, data } = res?.data || {};
+    if (!success || !data) return;
+    setChannelCooldowns(
+      Object.fromEntries(
+        (data.items || []).map((item) => [item.channel_id, item]),
+      ),
+    );
+  };
+
   // Load channels
   const loadChannels = async (
     page,
@@ -378,6 +391,7 @@ export const useChannelsData = () => {
       }
       setChannelFormat(items, enableTagMode);
       setChannelCount(total);
+      loadChannelCooldowns();
     } else {
       showError(message);
     }
@@ -424,6 +438,7 @@ export const useChannelsData = () => {
         setChannelFormat(items, enableTagMode);
         setChannelCount(total);
         setActivePage(page);
+        loadChannelCooldowns();
       } else {
         showError(message);
       }
@@ -728,8 +743,7 @@ export const useChannelsData = () => {
     }
   };
 
-  const [showBatchImageDetection, setShowBatchImageDetection] =
-    useState(false);
+  const [showBatchImageDetection, setShowBatchImageDetection] = useState(false);
 
   const batchRunImageDetection = async () => {
     if (selectedChannels.length === 0) {
@@ -1195,6 +1209,7 @@ export const useChannelsData = () => {
   return {
     // Basic states
     channels,
+    channelCooldowns,
     loading,
     searching,
     activePage,

@@ -188,6 +188,47 @@ const renderStatus = (status, channelInfo = undefined, t) => {
   }
 };
 
+const COOLDOWN_WEIGHT_SHARES = { 0.25: '1/4', 0.5: '1/2' };
+
+const renderCooldownTag = (cooldown, t) => {
+  const cooling = cooldown.state === 'cooling';
+  const share =
+    COOLDOWN_WEIGHT_SHARES[cooldown.weight_factor] ||
+    `${Math.round(cooldown.weight_factor * 100)}%`;
+  const lines = [
+    cooling
+      ? t('冷却结束：{{time}}', {
+          time: timestamp2string(cooldown.cooldown_until),
+        })
+      : t('请求成功后权重会逐步恢复'),
+  ];
+  if (cooldown.cooldown_count > 0) {
+    lines.push(
+      t('连续冷却次数：{{number}}', { number: cooldown.cooldown_count }),
+    );
+  }
+  if (cooldown.last_status_code > 0) {
+    lines.push(
+      t('最后一次错误状态码：{{code}}', { code: cooldown.last_status_code }),
+    );
+  }
+  return (
+    <Tooltip
+      content={
+        <div>
+          {lines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </div>
+      }
+    >
+      <Tag color={cooling ? 'orange' : 'cyan'} shape='circle'>
+        {cooling ? t('冷却中') : t('恢复中 {{share}}', { share })}
+      </Tag>
+    </Tooltip>
+  );
+};
+
 const renderMultiKeyStatus = (status, keySize, enabledKeySize, t) => {
   switch (status) {
     case 1:
@@ -322,6 +363,7 @@ export const getChannelsColumns = ({
   refresh,
   activePage,
   channels,
+  channelCooldowns = {},
   checkOllamaVersion,
   setShowMultiKeyManageModal,
   setCurrentMultiKeyChannel,
@@ -516,6 +558,9 @@ export const getChannelsColumns = ({
           }
           let otherInfo = JSON.parse(record.other_info);
           let reason = otherInfo['status_reason'];
+          if (reason === 'Disabled after repeated temporary failures') {
+            reason = t(reason);
+          }
           let time = otherInfo['status_time'];
           return (
             <div>
@@ -528,9 +573,20 @@ export const getChannelsColumns = ({
               </Tooltip>
             </div>
           );
-        } else {
+        }
+        const cooldown =
+          text === 1 && record.children === undefined
+            ? channelCooldowns[record.id]
+            : undefined;
+        if (!cooldown) {
           return renderStatus(text, record.channel_info, t);
         }
+        return (
+          <Space spacing={4}>
+            {renderStatus(text, record.channel_info, t)}
+            {renderCooldownTag(cooldown, t)}
+          </Space>
+        );
       },
     },
     {

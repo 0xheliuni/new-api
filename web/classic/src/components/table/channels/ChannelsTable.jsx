@@ -29,6 +29,7 @@ import { getChannelsColumns } from './ChannelsColumnDefs';
 const ChannelsTable = (channelsData) => {
   const {
     channels,
+    channelCooldowns,
     loading,
     searching,
     activePage,
@@ -85,6 +86,7 @@ const ChannelsTable = (channelsData) => {
       refresh,
       activePage,
       channels,
+      channelCooldowns,
       checkOllamaVersion,
       setShowMultiKeyManageModal,
       setCurrentMultiKeyChannel,
@@ -109,6 +111,7 @@ const ChannelsTable = (channelsData) => {
     refresh,
     activePage,
     channels,
+    channelCooldowns,
     checkOllamaVersion,
     setShowMultiKeyManageModal,
     setCurrentMultiKeyChannel,
