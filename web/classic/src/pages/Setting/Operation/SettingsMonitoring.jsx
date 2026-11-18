@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Banner, Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
   compareObjects,
   API,
@@ -44,6 +44,13 @@ export default function SettingsMonitoring(props) {
       '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
     'monitor_setting.auto_test_channel_enabled': false,
     'monitor_setting.auto_test_channel_minutes': 10,
+    'channel_scheduling_setting.cooldown_enabled': false,
+    'channel_scheduling_setting.cooldown_status_codes':
+      '429,500-503,505-523,525-599',
+    'channel_scheduling_setting.cooldown_base_seconds': 30,
+    'channel_scheduling_setting.cooldown_max_seconds': 600,
+    'channel_scheduling_setting.disable_after_cooldowns': 5,
+    'channel_scheduling_setting.disable_error_codes': '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -52,6 +59,9 @@ export default function SettingsMonitoring(props) {
   );
   const parsedAutoRetryStatusCodes = parseHttpStatusCodeRules(
     inputs.AutomaticRetryStatusCodes || '',
+  );
+  const parsedCooldownStatusCodes = parseHttpStatusCodeRules(
+    inputs['channel_scheduling_setting.cooldown_status_codes'] || '',
   );
 
   function onSubmit() {
@@ -73,6 +83,20 @@ export default function SettingsMonitoring(props) {
           : '';
       return showError(`${t('自动重试状态码格式不正确')}${details}`);
     }
+    if (!parsedCooldownStatusCodes.ok) {
+      const details =
+        parsedCooldownStatusCodes.invalidTokens &&
+        parsedCooldownStatusCodes.invalidTokens.length > 0
+          ? `: ${parsedCooldownStatusCodes.invalidTokens.join(', ')}`
+          : '';
+      return showError(`${t('冷却状态码格式不正确')}${details}`);
+    }
+    if (
+      Number(inputs['channel_scheduling_setting.cooldown_max_seconds']) <
+      Number(inputs['channel_scheduling_setting.cooldown_base_seconds'])
+    ) {
+      return showError(t('最长冷却时长不能小于首次冷却时长'));
+    }
     const requestQueue = updateArray.map((item) => {
       let value = '';
       if (typeof inputs[item.key] === 'boolean') {
@@ -81,6 +105,8 @@ export default function SettingsMonitoring(props) {
         const normalizedMap = {
           AutomaticDisableStatusCodes: parsedAutoDisableStatusCodes.normalized,
           AutomaticRetryStatusCodes: parsedAutoRetryStatusCodes.normalized,
+          'channel_scheduling_setting.cooldown_status_codes':
+            parsedCooldownStatusCodes.normalized,
         };
         value = normalizedMap[item.key] ?? inputs[item.key];
       }
@@ -274,6 +300,125 @@ export default function SettingsMonitoring(props) {
                   onChange={(value) =>
                     setInputs({ ...inputs, AutomaticDisableKeywords: value })
                   }
+                />
+                <Form.TextArea
+                  label={t('失效错误码')}
+                  placeholder={t('一行一个，不区分大小写')}
+                  extraText={t(
+                    '上游返回的错误码与其中任意一个完全一致时（不区分大小写），自动禁用通道，例如 insufficient_quota',
+                  )}
+                  field={'channel_scheduling_setting.disable_error_codes'}
+                  autosize={{ minRows: 3, maxRows: 8 }}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.disable_error_codes': value,
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+          </Form.Section>
+          <Form.Section text={t('临时故障冷却')}>
+            <Banner
+              type='info'
+              description={t(
+                '冷却与分层尝试需要开启内存缓存（开启 Redis 或设置 MEMORY_CACHE_ENABLED=true），未开启时按原方式选择渠道',
+              )}
+              style={{ marginBottom: 16 }}
+            />
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'channel_scheduling_setting.cooldown_enabled'}
+                  label={t('临时故障时冷却通道')}
+                  extraText={t(
+                    '限流、上游服务器错误和连接失败时暂停通道一段时间，而不是立即禁用',
+                  )}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.cooldown_enabled': value,
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('首次冷却时长')}
+                  step={1}
+                  min={1}
+                  max={3600}
+                  suffix={t('秒')}
+                  extraText={t('连续失败时冷却时长逐次翻倍')}
+                  field={'channel_scheduling_setting.cooldown_base_seconds'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.cooldown_base_seconds':
+                        String(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('最长冷却时长')}
+                  step={1}
+                  min={1}
+                  max={3600}
+                  suffix={t('秒')}
+                  extraText={t('单次冷却的上限，最多 3600 秒')}
+                  field={'channel_scheduling_setting.cooldown_max_seconds'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.cooldown_max_seconds':
+                        String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('连续冷却几次后禁用')}
+                  step={1}
+                  min={0}
+                  max={100}
+                  extraText={t(
+                    '填 0 表示只冷却、不禁用；转为禁用还需开启“失败时自动禁用通道”',
+                  )}
+                  field={'channel_scheduling_setting.disable_after_cooldowns'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.disable_after_cooldowns':
+                        String(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={16}>
+                <HttpStatusCodeRulesInput
+                  label={t('冷却状态码')}
+                  placeholder={t('例如：401, 403, 429, 500-599')}
+                  extraText={t(
+                    '支持填写单个状态码或范围（含首尾），使用逗号分隔',
+                  )}
+                  field={'channel_scheduling_setting.cooldown_status_codes'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'channel_scheduling_setting.cooldown_status_codes': value,
+                    })
+                  }
+                  parsed={parsedCooldownStatusCodes}
+                  invalidText={t('冷却状态码格式不正确')}
                 />
               </Col>
             </Row>
