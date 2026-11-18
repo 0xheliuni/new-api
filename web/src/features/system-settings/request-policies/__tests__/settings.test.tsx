@@ -52,6 +52,7 @@ type PolicyBeforeLoad = (context: { params: { section: string } }) => void
 
 let queryClient: QueryClient
 let settings: RequestPolicySettings
+let memoryCacheEnabled: boolean
 
 function optionsResponse() {
   return {
@@ -112,6 +113,7 @@ async function renderPolicies(path: string) {
 }
 
 beforeEach(() => {
+  memoryCacheEnabled = true
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -160,6 +162,7 @@ beforeEach(() => {
                 String(value),
               ])
             ),
+            memory_cache_enabled: memoryCacheEnabled,
           },
         },
       }
@@ -211,6 +214,13 @@ describe('request policy settings', () => {
       '4',
       'monitor_setting.channel_test_concurrency',
       4,
+    ],
+    [
+      'health',
+      'Initial cooldown (seconds)',
+      '45',
+      'channel_scheduling_setting.cooldown_base_seconds',
+      45,
     ],
   ])(
     'saving a changed %s field writes only that original option key',
@@ -364,5 +374,70 @@ describe('request policy settings', () => {
       )
     )
     expect(api.put).not.toHaveBeenCalled()
+  })
+
+  it('saving failure error codes writes only that option', async () => {
+    await renderPolicies('/system-settings/request-policies/health')
+    fireEvent.change(
+      await screen.findByRole('textbox', { name: 'Failure error codes' }),
+      { target: { value: 'insufficient_quota' } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'channel_scheduling_setting.disable_error_codes':
+              'insufficient_quota',
+          },
+        }
+      )
+    )
+  })
+
+  it('a maximum cooldown shorter than the initial cooldown blocks saving', async () => {
+    await renderPolicies('/system-settings/request-policies/health')
+    fireEvent.change(
+      await screen.findByRole('spinbutton', {
+        name: 'Maximum cooldown (seconds)',
+      }),
+      { target: { value: '10' } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(
+      await screen.findByText(
+        'Maximum cooldown must not be shorter than the initial cooldown'
+      )
+    ).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('turning cooldowns on without automatic disabling explains that channels keep cooling down', async () => {
+    await renderPolicies('/system-settings/request-policies/health')
+    await userEvent.click(
+      await screen.findByRole('switch', {
+        name: 'Cool down on temporary failures',
+      })
+    )
+    await userEvent.click(
+      screen.getByRole('switch', { name: 'Disable on failure' })
+    )
+    expect(
+      screen.getByText(
+        'Channels keep cooling down instead of being disabled until Disable on failure is turned on.'
+      )
+    ).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('cooldown settings say the in-memory cache is required when it is off', async () => {
+    memoryCacheEnabled = false
+    await renderPolicies('/system-settings/request-policies/health')
+    expect(
+      await screen.findByText(
+        'Cooldowns and tiered attempts need the in-memory cache. Enable Redis or set MEMORY_CACHE_ENABLED=true; until then channels are selected as before.'
+      )
+    ).toBeVisible()
   })
 })

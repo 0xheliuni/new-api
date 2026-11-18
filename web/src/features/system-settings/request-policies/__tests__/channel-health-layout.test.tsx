@@ -98,4 +98,24 @@ describe('channel health layout', () => {
       expect(formItemOf(control)?.parentElement).toBe(grid)
     }
   })
+
+  it('nests the cooldown inputs under the cooldown switch', () => {
+    show()
+    const options = screen.getByRole('group', { name: 'Cooldown options' })
+    for (const name of [
+      'Initial cooldown (seconds)',
+      'Maximum cooldown (seconds)',
+      'Disable after consecutive cooldowns',
+    ]) {
+      expect(within(options).getByRole('spinbutton', { name })).toBeVisible()
+    }
+    expect(
+      within(options).getByRole('textbox', { name: 'Cooldown status codes' })
+    ).toBeVisible()
+    expect(
+      formItemOf(
+        screen.getByRole('switch', { name: 'Cool down on temporary failures' })
+      )
+    ).toHaveAttribute('data-settings-form-span', 'full')
+  })
 })

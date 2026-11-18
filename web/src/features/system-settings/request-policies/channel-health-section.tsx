@@ -59,6 +59,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import { CooldownSettings } from './cooldown-settings'
 import type { HealthSettings } from './defaults'
 import { useSavePolicy } from './use-save-policy'
 
@@ -102,6 +103,26 @@ const createChannelHealthSchema = (
           ),
         channel_test_mode: z.enum(channelTestModes),
       }),
+      channel_scheduling_setting: z.object({
+        cooldown_enabled: z.boolean(),
+        cooldown_status_codes: z.string(),
+        cooldown_base_seconds: z.coerce
+          .number()
+          .int(t('Enter a positive integer'))
+          .min(1, t('Cooldown must be between 1 and 3600 seconds'))
+          .max(3600, t('Cooldown must be between 1 and 3600 seconds')),
+        cooldown_max_seconds: z.coerce
+          .number()
+          .int(t('Enter a positive integer'))
+          .min(1, t('Cooldown must be between 1 and 3600 seconds'))
+          .max(3600, t('Cooldown must be between 1 and 3600 seconds')),
+        disable_after_cooldowns: z.coerce
+          .number()
+          .int(t('Enter an integer from 0 to 100'))
+          .min(0, t('Enter an integer from 0 to 100'))
+          .max(100, t('Enter an integer from 0 to 100')),
+        disable_error_codes: z.string(),
+      }),
     })
     .superRefine((values, ctx) => {
       const disableParsed = parseHttpStatusCodeRules(
@@ -116,11 +137,33 @@ const createChannelHealthSchema = (
           }),
         })
       }
+      const scheduling = values.channel_scheduling_setting
+      const cooldownParsed = parseHttpStatusCodeRules(
+        scheduling.cooldown_status_codes
+      )
+      if (!cooldownParsed.ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['channel_scheduling_setting', 'cooldown_status_codes'],
+          message: t('Invalid status code rules: {{tokens}}', {
+            tokens: cooldownParsed.invalidTokens.join(', '),
+          }),
+        })
+      }
+      if (scheduling.cooldown_max_seconds < scheduling.cooldown_base_seconds) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['channel_scheduling_setting', 'cooldown_max_seconds'],
+          message: t(
+            'Maximum cooldown must not be shorter than the initial cooldown'
+          ),
+        })
+      }
     })
 
 type ChannelHealthSchema = ReturnType<typeof createChannelHealthSchema>
 type ChannelHealthFormValues = z.output<ChannelHealthSchema>
-type ChannelHealthFormInput = z.input<ChannelHealthSchema>
+export type ChannelHealthFormInput = z.input<ChannelHealthSchema>
 
 type ChannelHealthSectionProps = {
   defaultValues: HealthSettings
@@ -140,6 +183,12 @@ type NormalizedChannelHealthValues = {
   'monitor_setting.auto_test_channel_minutes': number
   'monitor_setting.channel_test_concurrency': number
   'monitor_setting.channel_test_mode': ChannelTestMode
+  'channel_scheduling_setting.cooldown_enabled': boolean
+  'channel_scheduling_setting.cooldown_status_codes': string
+  'channel_scheduling_setting.cooldown_base_seconds': number
+  'channel_scheduling_setting.cooldown_max_seconds': number
+  'channel_scheduling_setting.disable_after_cooldowns': number
+  'channel_scheduling_setting.disable_error_codes': string
 }
 
 function normalizeChannelTestMode(value?: string): ChannelTestMode {
@@ -170,6 +219,20 @@ const buildFormDefaults = (
       defaults['monitor_setting.channel_test_mode']
     ),
   },
+  channel_scheduling_setting: {
+    cooldown_enabled: defaults['channel_scheduling_setting.cooldown_enabled'],
+    cooldown_status_codes:
+      defaults['channel_scheduling_setting.cooldown_status_codes'] ?? '',
+    cooldown_base_seconds:
+      defaults['channel_scheduling_setting.cooldown_base_seconds'],
+    cooldown_max_seconds:
+      defaults['channel_scheduling_setting.cooldown_max_seconds'],
+    disable_after_cooldowns:
+      defaults['channel_scheduling_setting.disable_after_cooldowns'],
+    disable_error_codes: normalizeLineEndings(
+      defaults['channel_scheduling_setting.disable_error_codes'] ?? ''
+    ),
+  },
 })
 
 const normalizeDefaults = (
@@ -193,6 +256,20 @@ const normalizeDefaults = (
   'monitor_setting.channel_test_mode': normalizeChannelTestMode(
     defaults['monitor_setting.channel_test_mode']
   ),
+  'channel_scheduling_setting.cooldown_enabled':
+    defaults['channel_scheduling_setting.cooldown_enabled'],
+  'channel_scheduling_setting.cooldown_status_codes': parseHttpStatusCodeRules(
+    defaults['channel_scheduling_setting.cooldown_status_codes'] ?? ''
+  ).normalized,
+  'channel_scheduling_setting.cooldown_base_seconds':
+    defaults['channel_scheduling_setting.cooldown_base_seconds'],
+  'channel_scheduling_setting.cooldown_max_seconds':
+    defaults['channel_scheduling_setting.cooldown_max_seconds'],
+  'channel_scheduling_setting.disable_after_cooldowns':
+    defaults['channel_scheduling_setting.disable_after_cooldowns'],
+  'channel_scheduling_setting.disable_error_codes': normalizeLineEndings(
+    defaults['channel_scheduling_setting.disable_error_codes'] ?? ''
+  ),
 })
 
 const normalizeFormValues = (
@@ -214,6 +291,20 @@ const normalizeFormValues = (
   'monitor_setting.channel_test_concurrency':
     values.monitor_setting.channel_test_concurrency,
   'monitor_setting.channel_test_mode': values.monitor_setting.channel_test_mode,
+  'channel_scheduling_setting.cooldown_enabled':
+    values.channel_scheduling_setting.cooldown_enabled,
+  'channel_scheduling_setting.cooldown_status_codes': parseHttpStatusCodeRules(
+    values.channel_scheduling_setting.cooldown_status_codes
+  ).normalized,
+  'channel_scheduling_setting.cooldown_base_seconds':
+    values.channel_scheduling_setting.cooldown_base_seconds,
+  'channel_scheduling_setting.cooldown_max_seconds':
+    values.channel_scheduling_setting.cooldown_max_seconds,
+  'channel_scheduling_setting.disable_after_cooldowns':
+    values.channel_scheduling_setting.disable_after_cooldowns,
+  'channel_scheduling_setting.disable_error_codes': normalizeLineEndings(
+    values.channel_scheduling_setting.disable_error_codes
+  ),
 })
 
 export function ChannelHealthSection({
@@ -594,8 +685,36 @@ export function ChannelHealthSection({
                   </FormItem>
                 )}
               />
+
+              <FormField
+                control={form.control}
+                name='channel_scheduling_setting.disable_error_codes'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Failure error codes')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={4}
+                        placeholder={t('one error code per line')}
+                        value={field.value}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'If an upstream error code exactly matches one of these codes (case insensitive), the channel will be disabled automatically, for example insufficient_quota.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </SettingsFormGrid>
           </div>
+
+          <Separator />
+
+          <CooldownSettings />
         </SettingsForm>
       </Form>
     </SettingsSection>

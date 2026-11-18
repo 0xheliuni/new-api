@@ -3,6 +3,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 export type PolicyConfig = {
   options: Record<string, string>
+  memory_cache_enabled?: boolean
 }
 export type PolicyDecision = { action: string; reason: string; source: string }
 export type PolicyEvent = {

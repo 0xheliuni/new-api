@@ -22,6 +22,7 @@ import type { SecuritySettings } from '../types'
 export type RetrySettings = {
   RetryTimes: number
   AutomaticRetryStatusCodes: string
+  'channel_scheduling_setting.tier_attempt_limit': number
 }
 export type HealthSettings = {
   ChannelDisableThreshold: string
@@ -36,6 +37,12 @@ export type HealthSettings = {
     | 'scheduled_all'
     | 'auto_ban_only'
     | 'passive_recovery'
+  'channel_scheduling_setting.cooldown_enabled': boolean
+  'channel_scheduling_setting.cooldown_status_codes': string
+  'channel_scheduling_setting.cooldown_base_seconds': number
+  'channel_scheduling_setting.cooldown_max_seconds': number
+  'channel_scheduling_setting.disable_after_cooldowns': number
+  'channel_scheduling_setting.disable_error_codes': string
 }
 export type FilteringSettings = Pick<
   SecuritySettings,
@@ -59,6 +66,14 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'monitor_setting.auto_test_channel_minutes': 10,
   'monitor_setting.channel_test_concurrency': 1,
   'monitor_setting.channel_test_mode': 'scheduled_all',
+  'channel_scheduling_setting.cooldown_enabled': false,
+  'channel_scheduling_setting.cooldown_status_codes':
+    '429,500-503,505-523,525-599',
+  'channel_scheduling_setting.cooldown_base_seconds': 30,
+  'channel_scheduling_setting.cooldown_max_seconds': 600,
+  'channel_scheduling_setting.disable_after_cooldowns': 5,
+  'channel_scheduling_setting.disable_error_codes': '',
+  'channel_scheduling_setting.tier_attempt_limit': 1,
   'channel_affinity_setting.enabled': false,
   'channel_affinity_setting.session_mode': '',
   'channel_affinity_setting.switch_on_success': true,
