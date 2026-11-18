@@ -103,13 +103,23 @@ func (s *RequestPolicyState) QueueEvent(event PolicyEvent) {
 	s.queued = append(s.queued, event)
 }
 
+// attemptStartedAt is when the current attempt of the request began.
+func (s *RequestPolicyState) attemptStartedAt() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.AttemptStartedAt.IsZero() {
+		return s.StartedAt
+	}
+	return s.AttemptStartedAt
+}
+
 func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) {
 	s.Attempts++
 	s.Successful = false
 	s.OutcomeRecorded = false
 	s.SelectedGroup = group
-	s.AttemptStartedAt = cooldownNow()
 	s.mu.Lock()
+	s.AttemptStartedAt = cooldownNow()
 	queued := s.queued
 	s.queued = nil
 	s.mu.Unlock()

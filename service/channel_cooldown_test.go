@@ -258,9 +258,12 @@ func TestChannelCooldownLimit(t *testing.T) {
 			}
 			return false
 		}, 5*time.Second, 20*time.Millisecond)
+		require.Eventually(t, func() bool {
+			stored, err := model.GetChannelById(401, false)
+			return err == nil && stored.Status == common.ChannelStatusAutoDisabled
+		}, 5*time.Second, 20*time.Millisecond)
 		stored, err := model.GetChannelById(401, false)
 		require.NoError(t, err)
-		assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
 		assert.Equal(t, model.ChannelStatusReasonRepeatedCooldowns, stored.GetOtherInfo()["status_reason"])
 		assert.Equal(t, []ChannelCooldownStatus{{
 			ChannelID: 401, State: "recovering", WeightFactor: 0.25,

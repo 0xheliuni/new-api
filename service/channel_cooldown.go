@@ -106,17 +106,10 @@ func classifyChannelFailure(c *gin.Context, err *types.NewAPIError, policy *mode
 	return channelFailureIgnored
 }
 
-// attemptStartedAt is when the current attempt of the request began.
-func attemptStartedAt(state *RequestPolicyState) time.Time {
-	if state.AttemptStartedAt.IsZero() {
-		return state.StartedAt
-	}
-	return state.AttemptStartedAt
-}
-
 // RecordChannelCooldownFailure counts a failed attempt against the cooldown
 // record of a single-key channel. ProcessChannelError calls it before the
-// error log is written, so the log carries the cooldown decision.
+// persisted error log is recorded, so the log row's request_policy events
+// include the cooldown decision.
 func RecordChannelCooldownFailure(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	policy := &model.CurrentRequestPolicy().Scheduling
 	if !channelCooldownActive(policy) || channelError.IsMultiKey || channelError.ChannelId <= 0 {
@@ -132,7 +125,7 @@ func RecordChannelCooldownFailure(c *gin.Context, channelError types.ChannelErro
 		return
 	}
 	state := RequestPolicy(c)
-	attemptStart := attemptStartedAt(state)
+	attemptStart := state.attemptStartedAt()
 	limitEnabled := disableAllowed && policy.DisableAfterCooldowns > 0
 	// The priority level of the failed channel decides whether the upstream
 	// as a whole is failing.
@@ -193,14 +186,17 @@ func RecordChannelCooldownFailure(c *gin.Context, channelError types.ChannelErro
 		})
 		return
 	}
+	// The loader keeps the maximum at or above the base; the guard keeps the
+	// state machine self-contained, so a zero maximum cannot zero the cooldown.
+	maxCooldown := max(policy.CooldownMax, policy.CooldownBase)
 	duration := policy.CooldownBase
 	for range count - 1 {
-		if duration >= policy.CooldownMax {
+		if duration >= maxCooldown {
 			break
 		}
 		duration *= 2
 	}
-	duration = min(duration, policy.CooldownMax)
+	duration = min(duration, maxCooldown)
 	entry.startedAt, entry.until, entry.weightFactor = now, now.Add(duration), cooldownRampStart
 	channelCooldowns.Unlock()
 
@@ -221,7 +217,7 @@ func RecordChannelCooldownSuccess(c *gin.Context, channelID int) {
 	if channelID <= 0 || !channelCooldownActive(&model.CurrentRequestPolicy().Scheduling) {
 		return
 	}
-	attemptStart := attemptStartedAt(RequestPolicy(c))
+	attemptStart := RequestPolicy(c).attemptStartedAt()
 	now := cooldownNow()
 	channelCooldowns.Lock()
 	defer channelCooldowns.Unlock()
