@@ -3873,6 +3873,7 @@
     "连续冷却次数：{{number}}": "Pauses consécutives : {{number}}",
     "最后一次错误状态码：{{code}}": "Dernier code d'état : {{code}}",
     "请求成功后权重会逐步恢复": "Le poids revient progressivement à sa valeur complète à mesure que les requêtes réussissent",
-    "Disabled after repeated temporary failures": "Désactivé après des échecs temporaires répétés"
+    "Disabled after repeated temporary failures": "Désactivé après des échecs temporaires répétés",
+    "恢复中": "Reprise"
   }
 }

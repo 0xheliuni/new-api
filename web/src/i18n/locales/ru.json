@@ -7860,6 +7860,7 @@
     "Cooldowns in a row: {{number}}": "Пауз подряд: {{number}}",
     "Last status code: {{code}}": "Последний код состояния: {{code}}",
     "Disabled after repeated temporary failures": "Отключён после повторяющихся временных сбоев",
-    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} должно быть целым числом от {{min}} до {{max}}"
+    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} должно быть целым числом от {{min}} до {{max}}",
+    "Recovering": "Восстановление"
   }
 }

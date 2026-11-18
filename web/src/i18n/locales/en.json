@@ -7860,6 +7860,7 @@
     "Cooldowns in a row: {{number}}": "Cooldowns in a row: {{number}}",
     "Last status code: {{code}}": "Last status code: {{code}}",
     "Disabled after repeated temporary failures": "Disabled after repeated temporary failures",
-    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} must be an integer from {{min}} to {{max}}"
+    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} must be an integer from {{min}} to {{max}}",
+    "Recovering": "Recovering"
   }
 }

@@ -4139,6 +4139,7 @@
     "连续冷却次数：{{number}}": "Cooldowns in a row: {{number}}",
     "最后一次错误状态码：{{code}}": "Last status code: {{code}}",
     "请求成功后权重会逐步恢复": "Weight grows back to full as requests succeed",
-    "Disabled after repeated temporary failures": "Disabled after repeated temporary failures"
+    "Disabled after repeated temporary failures": "Disabled after repeated temporary failures",
+    "恢复中": "Recovering"
   }
 }

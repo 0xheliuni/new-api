@@ -3866,6 +3866,7 @@
     "连续冷却次数：{{number}}": "連續冷卻次數：{{number}}",
     "最后一次错误状态码：{{code}}": "最後一次錯誤狀態碼：{{code}}",
     "请求成功后权重会逐步恢复": "請求成功後權重會逐步恢復",
-    "Disabled after repeated temporary failures": "連續臨時故障後自動禁用"
+    "Disabled after repeated temporary failures": "連續臨時故障後自動禁用",
+    "恢复中": "恢復中"
   }
 }

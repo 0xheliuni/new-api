@@ -192,9 +192,13 @@ const COOLDOWN_WEIGHT_SHARES = { 0.25: '1/4', 0.5: '1/2' };
 
 const renderCooldownTag = (cooldown, t) => {
   const cooling = cooldown.state === 'cooling';
+  const factor = cooldown.weight_factor;
+  // A share is only meaningful for a finite factor above zero; a zero or
+  // missing factor (e.g. a record that has not started its ramp) has none.
   const share =
-    COOLDOWN_WEIGHT_SHARES[cooldown.weight_factor] ||
-    `${Math.round(cooldown.weight_factor * 100)}%`;
+    Number.isFinite(factor) && factor > 0
+      ? COOLDOWN_WEIGHT_SHARES[factor] || `${Math.round(factor * 100)}%`
+      : undefined;
   const lines = [
     cooling
       ? t('冷却结束：{{time}}', {
@@ -223,7 +227,11 @@ const renderCooldownTag = (cooldown, t) => {
       }
     >
       <Tag color={cooling ? 'orange' : 'cyan'} shape='circle'>
-        {cooling ? t('冷却中') : t('恢复中 {{share}}', { share })}
+        {cooling
+          ? t('冷却中')
+          : share
+            ? t('恢复中 {{share}}', { share })
+            : t('恢复中')}
       </Tag>
     </Tooltip>
   );

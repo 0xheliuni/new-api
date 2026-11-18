@@ -178,6 +178,24 @@ test('a recovering channel shows its weight share', async () => {
   expect(await screen.findByText('Recovering 1/2')).toBeVisible()
 })
 
+test('a recovering channel without a weight share shows the plain label', async () => {
+  mockCooldowns([
+    {
+      channel_id: 1,
+      state: 'recovering',
+      cooldown_until: 0,
+      cooldown_count: 0,
+      weight_factor: 0,
+      last_status_code: 429,
+      last_error_code: 'rate_limit_exceeded',
+    },
+  ])
+  await renderStatusCell(enabledChannel())
+  const trigger = await screen.findByRole('button', { name: 'Recovering' })
+  expect(trigger).toBeVisible()
+  expect(screen.queryByText(/0%/)).not.toBeInTheDocument()
+})
+
 test('a healthy channel shows no cooldown badge', async () => {
   mockCooldowns([])
   await renderStatusCell(enabledChannel())

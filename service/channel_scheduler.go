@@ -112,9 +112,9 @@ func pickScheduledChannel(candidates []*model.Channel, tried map[int]bool, healt
 	if earliest != nil {
 		return earliest, "cooldown_fallback"
 	}
-
-	// Round 4 reuses a tried channel: the highest priority level with a
-	// channel that is not cooling down, else the cooldown that ends first.
+	// Round 4 reuses a channel, whether tried or not: the highest priority
+	// level with a channel that is not cooling down, picked by weight, else
+	// the channel whose cooldown ends first, ties going to the higher priority.
 	for _, tier := range tiers {
 		pool := slices.DeleteFunc(slices.Clone(tier), func(channel *model.Channel) bool {
 			_, cooling := coolingUntil(channel)
@@ -124,13 +124,15 @@ func pickScheduledChannel(candidates []*model.Channel, tried map[int]bool, healt
 			return pickWeightedChannel(pool, health, randFloat), "tried_channel_reused"
 		}
 	}
+	var coolingPick *model.Channel
+	var coolingPickUntil time.Time
 	for _, channel := range sorted {
-		until, _ := coolingUntil(channel)
-		if earliest == nil || until.Before(earliestUntil) {
-			earliest, earliestUntil = channel, until
+		until, cooling := coolingUntil(channel)
+		if cooling && (coolingPick == nil || until.Before(coolingPickUntil)) {
+			coolingPick, coolingPickUntil = channel, until
 		}
 	}
-	return earliest, "tried_channel_reused"
+	return coolingPick, "tried_channel_reused"
 }
 
 // pickWeightedChannel draws a channel by its configured weight times its

@@ -3842,6 +3842,7 @@
     "连续冷却次数：{{number}}": "連続クールダウン回数：{{number}}",
     "最后一次错误状态码：{{code}}": "最後のエラーのステータスコード：{{code}}",
     "请求成功后权重会逐步恢复": "リクエストが成功するたびに重みが徐々に元に戻ります",
-    "Disabled after repeated temporary failures": "一時的な障害が続いたため無効化"
+    "Disabled after repeated temporary failures": "一時的な障害が続いたため無効化",
+    "恢复中": "復帰中"
   }
 }

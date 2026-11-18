@@ -7860,6 +7860,7 @@
     "Cooldowns in a row: {{number}}": "连续冷却次数：{{number}}",
     "Last status code: {{code}}": "最后一次状态码：{{code}}",
     "Disabled after repeated temporary failures": "连续临时故障后自动禁用",
-    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} 必须是 {{min}} 到 {{max}} 之间的整数"
+    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} 必须是 {{min}} 到 {{max}} 之间的整数",
+    "Recovering": "恢复中"
   }
 }

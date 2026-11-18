@@ -7860,6 +7860,7 @@
     "Cooldowns in a row: {{number}}": "Số lần tạm dừng liên tiếp: {{number}}",
     "Last status code: {{code}}": "Mã trạng thái gần nhất: {{code}}",
     "Disabled after repeated temporary failures": "Bị vô hiệu hóa sau nhiều lỗi tạm thời liên tiếp",
-    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} phải là số nguyên từ {{min}} đến {{max}}"
+    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} phải là số nguyên từ {{min}} đến {{max}}",
+    "Recovering": "Đang phục hồi"
   }
 }

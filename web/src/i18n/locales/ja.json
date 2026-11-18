@@ -7860,6 +7860,7 @@
     "Cooldowns in a row: {{number}}": "連続クールダウン回数：{{number}}",
     "Last status code: {{code}}": "最後のステータスコード：{{code}}",
     "Disabled after repeated temporary failures": "一時的な障害が続いたため無効化",
-    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} は {{min}}〜{{max}} の整数である必要があります"
+    "{{field}} must be an integer from {{min}} to {{max}}": "{{field}} は {{min}}〜{{max}} の整数である必要があります",
+    "Recovering": "復帰中"
   }
 }

@@ -272,10 +272,7 @@ func TestChannelCooldownLimit(t *testing.T) {
 		stored, err := model.GetChannelById(401, false)
 		require.NoError(t, err)
 		assert.Equal(t, model.ChannelStatusReasonRepeatedCooldowns, stored.GetOtherInfo()["status_reason"])
-		assert.Equal(t, []ChannelCooldownStatus{{
-			ChannelID: 401, State: "recovering", WeightFactor: 0.25,
-			LastStatusCode: http.StatusTooManyRequests, LastErrorCode: "rate_limit_exceeded",
-		}}, ChannelCooldownStatuses(), "a channel enabled again starts at a quarter of its weight")
+		assert.Empty(t, ChannelCooldownStatuses(), "a disabled channel shows no cooldown; enabling it again starts at a quarter of its weight")
 	})
 
 	t.Run("most of the priority level cooling keeps the channel enabled", func(t *testing.T) {
@@ -318,6 +315,33 @@ func TestChannelCooldownLimit(t *testing.T) {
 		RecordChannelCooldownFailure(c, types.ChannelError{ChannelId: 431, ChannelName: "channel-431", AutoBan: true}, unauthorized)
 		assert.Len(t, RequestPolicy(c).Events(), before)
 		assert.Empty(t, ChannelCooldownStatuses())
+	})
+
+	t.Run("without the memory cache the list is empty and keeps the records", func(t *testing.T) {
+		setupChannelCooldownTest(t, options, cooldownTestChannel(441, 0, 10))
+		RecordChannelCooldownFailure(cooldownAttempt(441), types.ChannelError{ChannelId: 441, ChannelName: "channel-441", AutoBan: true}, limited)
+		common.MemoryCacheEnabled = false
+		statuses := ChannelCooldownStatuses()
+		require.NotNil(t, statuses)
+		assert.Empty(t, statuses)
+		common.MemoryCacheEnabled = true
+		assert.Len(t, ChannelCooldownStatuses(), 1, "the empty list does not drop the records")
+	})
+
+	t.Run("a channel disabled outside the channel API is pruned", func(t *testing.T) {
+		clock := setupChannelCooldownTest(t, options, cooldownTestChannel(451, 0, 10))
+		RecordChannelCooldownFailure(cooldownAttempt(451), types.ChannelError{ChannelId: 451, ChannelName: "channel-451", AutoBan: true}, limited)
+		require.Len(t, ChannelCooldownStatuses(), 1)
+		stored, err := model.GetChannelById(451, true)
+		require.NoError(t, err)
+		stored.Status = common.ChannelStatusManuallyDisabled
+		require.NoError(t, model.DB.Save(stored).Error)
+		model.InitChannelCache()
+		assert.Empty(t, ChannelCooldownStatuses(), "a disabled channel no longer shows a cooldown")
+		clock.now = clock.now.Add(31 * time.Second)
+		again := cooldownAttempt(451)
+		RecordChannelCooldownFailure(again, types.ChannelError{ChannelId: 451, ChannelName: "channel-451", AutoBan: true}, limited)
+		assert.Equal(t, 1, lastPolicyEvent(again).CooldownCount, "the pruned record does not carry the count over")
 	})
 }
 

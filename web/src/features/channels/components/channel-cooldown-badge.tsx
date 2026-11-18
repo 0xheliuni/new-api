@@ -54,9 +54,19 @@ export function ChannelCooldownBadge(props: { channelId: number }) {
   if (!item) return null
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const cooling = item.state === 'cooling'
+  // A share is only meaningful for a finite factor above zero; a zero or
+  // missing factor (e.g. a record that has not started its ramp) has none.
   const share =
-    WEIGHT_SHARES[item.weight_factor] ??
-    `${Math.round(item.weight_factor * 100)}%`
+    !Number.isFinite(item.weight_factor) || item.weight_factor <= 0
+      ? undefined
+      : (WEIGHT_SHARES[item.weight_factor] ??
+        `${Math.round(item.weight_factor * 100)}%`)
+  let label = t('Recovering')
+  if (cooling) {
+    label = t('Cooling down')
+  } else if (share) {
+    label = t('Recovering {{share}}', { share })
+  }
   return (
     <TooltipProvider delay={100}>
       <Tooltip>
@@ -70,9 +80,7 @@ export function ChannelCooldownBadge(props: { channelId: number }) {
           }
         >
           <StatusBadge
-            label={
-              cooling ? t('Cooling down') : t('Recovering {{share}}', { share })
-            }
+            label={label}
             variant={cooling ? 'warning' : 'info'}
             size='sm'
             copyable={false}

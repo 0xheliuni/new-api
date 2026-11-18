@@ -4404,6 +4404,7 @@
     "连续冷却次数：{{number}}": "Số lần tạm dừng liên tiếp: {{number}}",
     "最后一次错误状态码：{{code}}": "Mã trạng thái lỗi gần nhất: {{code}}",
     "请求成功后权重会逐步恢复": "Trọng số sẽ dần trở về mức đầy đủ khi các yêu cầu thành công",
-    "Disabled after repeated temporary failures": "Bị vô hiệu hóa sau nhiều lỗi tạm thời liên tiếp"
+    "Disabled after repeated temporary failures": "Bị vô hiệu hóa sau nhiều lỗi tạm thời liên tiếp",
+    "恢复中": "Đang phục hồi"
   }
 }

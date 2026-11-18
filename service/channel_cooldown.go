@@ -258,15 +258,22 @@ func IsChannelCoolingDown(channelID int) bool {
 	return entry != nil && now.Before(entry.until)
 }
 
-// ChannelCooldownStatuses lists the cooldown records for the channel list and
-// drops the records of channels that no longer exist.
+// ChannelCooldownStatuses lists the cooldown records for the channel list. It
+// drops the records of channels that no longer exist or are no longer enabled:
+// a disabled channel is not selected, so its cooldown is moot.
 func ChannelCooldownStatuses() []ChannelCooldownStatus {
+	// The records only exist while the in-memory cache does; the payload's
+	// memory_cache_enabled flag tells the frontend why the list is empty.
+	if !common.MemoryCacheEnabled {
+		return []ChannelCooldownStatus{}
+	}
 	now := cooldownNow()
 	channelCooldowns.Lock()
 	defer channelCooldowns.Unlock()
 	statuses := make([]ChannelCooldownStatus, 0, len(channelCooldowns.entries))
 	for id, entry := range channelCooldowns.entries {
-		if _, err := model.CacheGetChannel(id); err != nil {
+		channel, err := model.CacheGetChannel(id)
+		if err != nil || channel.Status != common.ChannelStatusEnabled {
 			delete(channelCooldowns.entries, id)
 			continue
 		}
