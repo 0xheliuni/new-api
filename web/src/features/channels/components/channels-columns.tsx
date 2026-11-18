@@ -88,6 +88,7 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
+import { ChannelCooldownBadge } from './channel-cooldown-badge'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
@@ -1065,6 +1066,20 @@ export function useChannelsColumns(
                 </TooltipProvider>
               )
             }
+          }
+
+          if (status === 1) {
+            return (
+              <span className='inline-flex items-center gap-1'>
+                <StatusBadge
+                  label={label}
+                  variant={config.variant}
+                  size='sm'
+                  copyable={false}
+                />
+                <ChannelCooldownBadge channelId={channel.id} />
+              </span>
+            )
           }
 
           return (

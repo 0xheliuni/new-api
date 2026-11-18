@@ -197,6 +197,34 @@ export async function getChannelOps(
   return res.data
 }
 
+export type ChannelCooldownItem = {
+  channel_id: number
+  state: 'cooling' | 'recovering'
+  cooldown_until: number
+  cooldown_count: number
+  weight_factor: number
+  last_status_code: number
+  last_error_code: string
+}
+
+export type ChannelCooldowns = {
+  enabled: boolean
+  memory_cache_enabled: boolean
+  items: ChannelCooldownItem[]
+}
+
+/**
+ * Get the channels that are cooling down or ramping their weight back up
+ */
+export async function getChannelCooldowns(): Promise<ChannelCooldowns> {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: ChannelCooldowns
+  }>('/api/channel/cooldowns', channelActionConfig())
+  return requireServerSuccess(res.data).data
+}
+
 export async function getChannelDefaultBaseURLs(): Promise<
   Partial<Record<number, string>>
 > {

@@ -59,6 +59,8 @@ export const channelsQueryKeys = {
   lists: () => [...channelsQueryKeys.all, 'list'] as const,
   list: (params: Record<string, unknown>) =>
     [...channelsQueryKeys.lists(), params] as const,
+  // Under lists() so every channel list refresh also refetches cooldowns.
+  cooldowns: () => [...channelsQueryKeys.lists(), 'cooldowns'] as const,
   details: () => [...channelsQueryKeys.all, 'detail'] as const,
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
 }
