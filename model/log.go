@@ -450,6 +450,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		ChannelId: params.ChannelId,
 		TokenId:   params.TokenId,
 		Group:     params.Group,
+		RequestId: params.RequestId,
 		Other:     other.JSONString(),
 	}
 	err := createLog(log)

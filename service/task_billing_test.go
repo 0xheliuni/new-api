@@ -1209,6 +1209,57 @@ func TestRefundTaskQuota_SetsRequestIdAndStage(t *testing.T) {
 	assert.Equal(t, "refund", other["billing_stage"])
 }
 
+// The dashboard mirrors each settlement as a net quota change equal to the
+// billing delta: a supplementary charge, a partial refund and a full refund
+// each move the user's dashboard quota exactly once.
+func TestTaskSettlementMirrorsDashboardQuotaOnce(t *testing.T) {
+	previousExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() { common.DataExportEnabled = previousExport })
+	dashboardQuota := func(userID int) int {
+		model.CacheQuotaDataLock.Lock()
+		defer model.CacheQuotaDataLock.Unlock()
+		total := 0
+		for _, quotaData := range model.CacheQuotaData {
+			if quotaData.UserID == userID {
+				total += quotaData.Quota
+			}
+		}
+		return total
+	}
+	cases := []struct {
+		name              string
+		userID            int
+		preConsumed       int
+		actualQuota       int
+		refund            bool
+		wantDashboardDiff int
+	}{
+		{name: "supplementary charge", userID: 31, preConsumed: 2000, actualQuota: 3000, wantDashboardDiff: 1000},
+		{name: "partial refund", userID: 32, preConsumed: 5000, actualQuota: 2000, wantDashboardDiff: -3000},
+		{name: "full refund", userID: 33, preConsumed: 4000, refund: true, wantDashboardDiff: -4000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncate(t)
+			seedUser(t, tc.userID, 10000)
+			seedToken(t, tc.userID, tc.userID, "sk-dashboard", 5000)
+			seedChannel(t, tc.userID)
+			seedChargedAccounting(t, tc.userID, tc.userID, tc.userID, tc.preConsumed, 1)
+			task := makeTask(tc.userID, tc.userID, tc.preConsumed, tc.userID, BillingSourceWallet, 0)
+			before := dashboardQuota(tc.userID)
+
+			if tc.refund {
+				require.True(t, RefundTaskQuota(context.Background(), task, "task failed"))
+			} else {
+				RecalculateTaskQuota(context.Background(), task, tc.actualQuota, common.NewMessage("adaptor adjustment"))
+			}
+
+			assert.Equal(t, tc.wantDashboardDiff, dashboardQuota(tc.userID)-before)
+		})
+	}
+}
+
 func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

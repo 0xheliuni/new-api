@@ -323,7 +323,6 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	model.LogQuotaDataAdjustment(task.UserId, username, taskModelName(task), -quota, common.GetTimestamp())
 	model.UpdateUserUsedQuotaDelta(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
-	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
 
 	// 4. 记录日志
 	other := taskBillingOther(task)
@@ -399,19 +398,16 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
-		// 补扣只调金额：请求计数在预扣时已计 1 次，结算不重复计数。
-		model.UpdateUserUsedQuotaDelta(task.UserId, quotaDelta)
-		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
-		// 退款冲抵 used_quota（请求计数不动，预扣时已计 1 次）。
-		model.UpdateUserUsedQuotaDelta(task.UserId, quotaDelta)
-		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	}
-	// 数据面板镜像：补扣为正、退款为负，保证柱状图为净额口径。
-	username, _ := model.GetUsernameById(task.UserId, false)
-	model.LogQuotaDataAdjustment(task.UserId, username, taskModelName(task), quotaDelta, common.GetTimestamp())
+	// 数据面板镜像退款冲抵，保证柱状图为净额口径。补扣写的是消费日志，
+	// RecordTaskBillingLog 已把它镜像进看板，这里再记一次就会重复。
+	if quotaDelta < 0 {
+		username, _ := model.GetUsernameById(task.UserId, false)
+		model.LogQuotaDataAdjustment(task.UserId, username, taskModelName(task), quotaDelta, common.GetTimestamp())
+	}
 	other := taskBillingOther(task)
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("pre_consumed_quota", preConsumedQuota)
