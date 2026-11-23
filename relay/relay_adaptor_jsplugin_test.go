@@ -8,30 +8,78 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relay/channel"
+	taskAigc "github.com/QuantumNous/new-api/relay/channel/task/aigc"
+	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
+	taskminimaximage "github.com/QuantumNous/new-api/relay/channel/task/minimaximage"
+	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
+	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
+	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
+	"github.com/QuantumNous/new-api/relay/channel/volcpassthrough"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetTaskAdaptorMapsMigratedPlatformsToFactoryPlugins(t *testing.T) {
-	platforms := []constant.TaskPlatform{
-		constant.TaskPlatformSuno,
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)),
-		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)),
+// Submission and background polling must resolve the same adaptor for a
+// legacy channel-type platform: plugin-era platforms run their factory plugin
+// and the fork's native channel types run their Go adaptors. An unpinned
+// submission pins the resolved plugin for its retries; a native adaptor pins
+// nothing, so billing never picks up a plugin key for it.
+func TestLegacyTaskPlatformsResolveTheSameAdaptorForSubmitAndPolling(t *testing.T) {
+	platformOf := func(channelType int) constant.TaskPlatform {
+		return constant.TaskPlatform(strconv.Itoa(channelType))
 	}
-	for _, platform := range platforms {
-		_, isJS := GetTaskAdaptor(platform).(*jspluginadaptor.TaskAdaptor)
-		assert.True(t, isJS, "platform %s should use its factory plugin", platform)
+	cases := []struct {
+		platform  constant.TaskPlatform
+		pluginKey string
+		native    channel.TaskAdaptor
+	}{
+		{platform: constant.TaskPlatformSuno, pluginKey: "sunoapi"},
+		{platform: platformOf(constant.ChannelTypeAli), pluginKey: "alibaba"},
+		{platform: platformOf(constant.ChannelTypeGemini), pluginKey: "google"},
+		{platform: platformOf(constant.ChannelTypeMiniMax), pluginKey: "hailuo"},
+		{platform: platformOf(constant.ChannelTypeJimeng), pluginKey: "jimeng"},
+		{platform: platformOf(constant.ChannelTypeKling), pluginKey: "kling"},
+		{platform: platformOf(constant.ChannelTypeVidu), pluginKey: "vidu"},
+		{platform: platformOf(constant.ChannelTypeVertexAi), native: &taskvertex.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeDoubaoVideo), native: &taskdoubao.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeVolcEngine), native: &taskdoubao.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeSora), native: &tasksora.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeOpenAI), native: &tasksora.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeAIGCVideo), native: &taskAigc.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeSeedance3rd), native: &taskSeedance3rd.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeVolcPassthrough), native: &volcpassthrough.TaskAdaptor{}},
+		{platform: platformOf(constant.ChannelTypeMinimaxImage), native: &taskminimaximage.TaskAdaptor{}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.platform), func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+
+			polled := GetTaskAdaptor(tc.platform)
+			platform, submitted := getTaskAdaptorForRequest(c, tc.platform)
+
+			require.NotNil(t, polled)
+			require.NotNil(t, submitted)
+			assert.Equal(t, tc.platform, platform)
+			pinnedValue, pinned := c.Get(pluginruntime.ContextKeyPinnedPlugin)
+			if tc.native != nil {
+				assert.IsType(t, tc.native, polled)
+				assert.IsType(t, tc.native, submitted)
+				assert.False(t, pinned, "a native adaptor pins no plugin")
+				return
+			}
+			assert.IsType(t, &jspluginadaptor.TaskAdaptor{}, polled)
+			assert.IsType(t, &jspluginadaptor.TaskAdaptor{}, submitted)
+			require.True(t, pinned)
+			pin, ok := pinnedValue.(pluginruntime.PinnedPlugin)
+			require.True(t, ok)
+			require.NotNil(t, pin.Plugin)
+			assert.Equal(t, tc.pluginKey, pin.Plugin.Meta.Key)
+			assert.Same(t, pluginruntime.DefaultRegistry.Generation(), pin.Generation)
+		})
 	}
 }
 
@@ -76,23 +124,4 @@ export function parseTaskResult() { return {status: "SUCCESS"}; }
 	require.NotNil(t, adaptor)
 	assert.Equal(t, constant.TaskPlatform("pinned-request"), platform)
 	assert.Equal(t, "Pinned Generation", adaptor.GetChannelName())
-}
-
-func TestGetTaskAdaptorForRequestPinsLegacyMappedPlugin(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/video_1/remix", nil)
-	legacyPlatform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora))
-
-	platform, adaptor := getTaskAdaptorForRequest(c, legacyPlatform)
-
-	require.NotNil(t, adaptor)
-	assert.Equal(t, legacyPlatform, platform)
-	pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin)
-	require.True(t, exists)
-	pinned, ok := pinnedValue.(pluginruntime.PinnedPlugin)
-	require.True(t, ok)
-	require.NotNil(t, pinned.Generation)
-	require.NotNil(t, pinned.Plugin)
-	assert.Equal(t, "sora", pinned.Plugin.Meta.Key)
-	assert.Same(t, pinned.Generation, pluginruntime.DefaultRegistry.Generation())
 }

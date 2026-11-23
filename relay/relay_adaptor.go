@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -16,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/cloudflare"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
-	"github.com/QuantumNous/new-api/relay/channel/minimaximage"
 	"github.com/QuantumNous/new-api/relay/channel/cohere"
 	"github.com/QuantumNous/new-api/relay/channel/coze"
 	"github.com/QuantumNous/new-api/relay/channel/deepseek"
@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/jina"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
+	"github.com/QuantumNous/new-api/relay/channel/minimaximage"
 	"github.com/QuantumNous/new-api/relay/channel/mistral"
 	"github.com/QuantumNous/new-api/relay/channel/mokaai"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
@@ -40,8 +41,8 @@ import (
 	taskAigc "github.com/QuantumNous/new-api/relay/channel/task/aigc"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
-	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
 	taskminimaximage "github.com/QuantumNous/new-api/relay/channel/task/minimaximage"
+	taskSeedance3rd "github.com/QuantumNous/new-api/relay/channel/task/seedance3rd"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
@@ -167,20 +168,10 @@ func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, p
 	if generation == nil {
 		return nil, false
 	}
-	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
-		switch channelType {
-		case constant.ChannelTypeVertexAi,
-			constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine,
-			constant.ChannelTypeSora, constant.ChannelTypeOpenAI,
-			constant.ChannelTypeAIGCVideo,
-			constant.ChannelTypeSeedance3rd,
-			constant.ChannelTypeVolcPassthrough,
-			constant.ChannelTypeMinimaxImage:
-			// Native Go adaptors — handled by GetTaskAdaptor directly.
-			return nil, false
-		case constant.ChannelTypeMiniMax:
-			return nil, false
-		}
+	// A channel type served by a native Go adaptor never resolves to the
+	// factory plugin that also declares it.
+	if nativeTaskAdaptor(platform) != nil {
+		return nil, false
 	}
 	if key, ok := taskPluginKeys[platform]; ok {
 		if plugin, found := generation.Get(key); found {
@@ -202,33 +193,44 @@ func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, strin
 	if mapped, ok := taskPluginKeys[platform]; ok {
 		key = mapped
 	}
-	for _, meta := range pluginruntime.DefaultRegistry.Snapshot().Factory {
-		if meta.Key == key {
-			return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
-		}
+	if slices.Contains(pluginruntime.DefaultRegistry.Snapshot().DisabledFactory, key) {
+		return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
 	}
 	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
 }
 
+// nativeTaskAdaptor returns the Go adaptor that serves a legacy channel-type
+// platform on this fork, for submission and polling alike. A factory plugin
+// that also declares one of these channel types serves only the requests its
+// routes or host protocols claim; those tasks record the plugin key as their
+// platform and keep polling through the plugin.
+func nativeTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	channelType, err := strconv.ParseInt(string(platform), 10, 64)
+	if err != nil {
+		return nil
+	}
+	switch channelType {
+	case constant.ChannelTypeVertexAi:
+		return &taskvertex.TaskAdaptor{}
+	case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
+		return &taskdoubao.TaskAdaptor{}
+	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+		return &tasksora.TaskAdaptor{}
+	case constant.ChannelTypeAIGCVideo:
+		return &taskAigc.TaskAdaptor{}
+	case constant.ChannelTypeSeedance3rd:
+		return &taskSeedance3rd.TaskAdaptor{}
+	case constant.ChannelTypeVolcPassthrough:
+		return &volcpassthrough.TaskAdaptor{}
+	case constant.ChannelTypeMinimaxImage:
+		return &taskminimaximage.TaskAdaptor{}
+	}
+	return nil
+}
+
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
-	// Check for native Go adaptors first.
-	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
-		switch channelType {
-		case constant.ChannelTypeVertexAi:
-			return &taskvertex.TaskAdaptor{}
-		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
-			return &taskdoubao.TaskAdaptor{}
-		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
-			return &tasksora.TaskAdaptor{}
-		case constant.ChannelTypeAIGCVideo:
-			return &taskAigc.TaskAdaptor{}
-		case constant.ChannelTypeSeedance3rd:
-			return &taskSeedance3rd.TaskAdaptor{}
-		case constant.ChannelTypeVolcPassthrough:
-			return &volcpassthrough.TaskAdaptor{}
-		case constant.ChannelTypeMinimaxImage:
-			return &taskminimaximage.TaskAdaptor{}
-		}
+	if adaptor := nativeTaskAdaptor(platform); adaptor != nil {
+		return adaptor
 	}
 	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
 	if !ok {
@@ -238,7 +240,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 }
 
 // getTaskAdaptorForRequest preserves the exact plugin object pinned by the
-// declarative or shared-endpoint router. Legacy task routes are pinned here
+// declarative or shared-endpoint router. Unpinned native channel types run
+// their Go adaptor and pin nothing. Other legacy task routes are pinned here
 // from one registry generation before the adaptor is returned.
 func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (constant.TaskPlatform, channel.TaskAdaptor) {
 	if c != nil {
@@ -263,6 +266,9 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (c
 			}
 			return platform, nil
 		}
+	}
+	if adaptor := nativeTaskAdaptor(platform); adaptor != nil {
+		return platform, adaptor
 	}
 	generation := pluginruntime.DefaultRegistry.Generation()
 	plugin, ok := ResolveTaskPluginForPlatform(generation, platform)

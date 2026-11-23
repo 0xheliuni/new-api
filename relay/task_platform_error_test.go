@@ -28,6 +28,14 @@ func TestTaskPlatformUnavailableError(t *testing.T) {
 		assert.Contains(t, message, `task plugin "alibaba" is disabled`)
 	})
 
+	// An administrator who sees "disabled" goes to re-enable the plugin, so the
+	// message must never blame a plugin that is still serving.
+	t.Run("enabled factory plugin is not reported as disabled", func(t *testing.T) {
+		code, message := TaskPlatformUnavailableError(constant.TaskPlatform("17"))
+		assert.Equal(t, "invalid_api_platform", code)
+		assert.NotContains(t, message, "disabled")
+	})
+
 	t.Run("unknown platform keeps the legacy message", func(t *testing.T) {
 		code, message := TaskPlatformUnavailableError(constant.TaskPlatform("no-such-platform"))
 		assert.Equal(t, "invalid_api_platform", code)
