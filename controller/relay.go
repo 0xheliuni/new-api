@@ -749,6 +749,13 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 			return
 		}
 	}
+	// Native Go adaptors build their own submit response; plugin submissions
+	// never set one and keep the host shape below.
+	if clientResponse := outcome.Result.ClientResponse; clientResponse != nil {
+		diagnostics.present(outcome.Task, "native_adaptor")
+		c.JSON(http.StatusOK, clientResponse)
+		return
+	}
 	createdAt := outcome.Task.CreatedAt
 	if createdAt == 0 {
 		createdAt = outcome.Task.SubmitTime
@@ -886,6 +893,7 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
 	}
 	return decideTaskRetry(c, taskErr, retryTimes).Action == "retry"
 }
+
 // reason is recorded in the request policy decision events of the log details.
 func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int) service.PolicyDecision {
 	stop := service.PolicyDecision{Action: "stop", Source: "system"}

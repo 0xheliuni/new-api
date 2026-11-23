@@ -13,11 +13,11 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/seedance"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -43,10 +43,10 @@ type MediaURL struct {
 }
 
 type requestPayload struct {
-	Model                 string         `json:"model"`
-	Content               []ContentItem  `json:"content,omitempty"`
-	CallbackURL           string         `json:"callback_url,omitempty"`
-	SafetyIdentifier      string         `json:"safety_identifier,omitempty"`
+	Model                 string            `json:"model"`
+	Content               []ContentItem     `json:"content,omitempty"`
+	CallbackURL           string            `json:"callback_url,omitempty"`
+	SafetyIdentifier      string            `json:"safety_identifier,omitempty"`
 	ReturnLastFrame       *kitdto.BoolValue `json:"return_last_frame,omitempty"`
 	ServiceTier           string            `json:"service_tier,omitempty"`
 	ExecutionExpiresAfter *kitdto.IntValue  `json:"execution_expires_after,omitempty"`
@@ -139,9 +139,9 @@ var (
 // resolveEndpoints 按渠道 other_settings.asset_provider 选择路径组。
 // 空值与未知值由 ResolveAssetProvider 归一到 byteplus,所以存量渠道行为不变。
 //
-// 注意:这里读的是 a.otherSettings,由 Init 填充。请求链路经 InitChannelMeta 天然带上
-// 该字段;轮询链路是自己手搓 RelayInfo 的,必须由构造方把 ChannelOtherSettings 一起带进来
-// (见 service.BuildVideoPollingRelayInfo),否则查询会退回官方路径而 404。
+// 注意:这里读的是 a.otherSettings,由 Init 从 ChannelHostOtherSettings 填充。请求链路经
+// InitChannelMeta 天然带上该字段;轮询链路是自己手搓 RelayInfo 的,必须由构造方把
+// ChannelHostOtherSettings 一起带进来(见 service.BuildVideoPollingRelayInfo),否则查询会退回官方路径而 404。
 func (a *TaskAdaptor) resolveEndpoints() seedanceEndpoints {
 	if a.otherSettings.ResolveAssetProvider() == dto.AssetProviderCloudwise {
 		return cloudwiseEndpoints
@@ -171,10 +171,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 	a.channelId = info.ChannelId
 	a.proxy = info.ChannelSetting.Proxy
-	// info.ChannelOtherSettings is relaykit/dto type; convert to dto type via JSON.
-	if data, err := common.Marshal(info.ChannelOtherSettings); err == nil {
-		_ = common.Unmarshal(data, &a.otherSettings)
-	}
+	a.otherSettings = info.ChannelHostOtherSettings
 }
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay/channel/volcpassthrough"
 	"github.com/QuantumNous/new-api/relay/channel/volcpassthrough/assetiso"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -109,8 +110,8 @@ func buildPassthroughCredentials(c *gin.Context) (volcpassthrough.ChannelCredent
 	if baseURL == "" {
 		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeVolcPassthrough]
 	}
-	other, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
-	setting, _ := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+	other, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelHostOtherSetting)
+	setting, _ := common.GetContextKeyType[kitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 
 	cred := volcpassthrough.ChannelCredentials{
 		BaseURL:       baseURL,

@@ -10,10 +10,54 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// The asset group id written after a bootstrap or rotation must not disturb
+// the rest of the channel's other_settings. The host settings type lacks the
+// relaykit-only keys, so persisting the group id by re-encoding it would drop
+// them from the channel.
+func TestPersistGroupIDKeepsChannelSettingsItDoesNotOwn(t *testing.T) {
+	previousDB := model.DB
+	previousDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousSQLitePath, previousMasterNode := common.SQLitePath, common.IsMasterNode
+	common.SQLitePath = t.TempDir() + "/persist-group.db"
+	common.IsMasterNode = false
+	t.Setenv("SQL_DSN", "")
+	require.NoError(t, model.InitDB())
+	database := model.DB
+	require.NoError(t, database.AutoMigrate(&model.Channel{}))
+	t.Cleanup(func() {
+		sqlDB, err := database.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
+		model.DB = previousDB
+		common.SetDatabaseTypes(previousDatabaseType, previousLogDatabaseType)
+		common.SQLitePath, common.IsMasterNode = previousSQLitePath, previousMasterNode
+	})
+	channel := &model.Channel{Id: 8301, Type: constant.ChannelTypeDoubaoVideo, Key: "ark-key", Status: common.ChannelStatusEnabled,
+		OtherSettings: `{"byteplus_asset_enabled":true,"byteplus_asset_group_id":"group-old","disable_task_polling_sleep":true,"tool_loss_policy":"strict"}`}
+	require.NoError(t, database.Create(channel).Error)
+
+	a := &TaskAdaptor{channelId: channel.Id, otherSettings: enabledSettings()}
+	a.persistGroupID("group-new")
+
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(stored.OtherSettings, &settings))
+	assert.Equal(t, "group-new", settings["byteplus_asset_group_id"])
+	assert.Equal(t, dto.AssetProviderBytePlus, settings["asset_group_provider"])
+	assert.Equal(t, true, settings["byteplus_asset_enabled"])
+	assert.Equal(t, true, settings["disable_task_polling_sleep"], "relaykit-only settings survive the group id write")
+	assert.Equal(t, "strict", settings["tool_loss_policy"])
+}
 
 // newAdaptorWithServer returns a TaskAdaptor configured to talk to the test
 // server, with BytePlus asset upload enabled. The asset client endpoint is

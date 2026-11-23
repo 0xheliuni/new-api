@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/samber/hot"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // assetClient uploads one media URL to an asset library and waits until it is
@@ -278,20 +280,23 @@ func (a *TaskAdaptor) persistGroupID(newGroupID string) {
 		return
 	}
 
-	// GetHostOtherSettings returns the host-specific dto type with BytePlus fields.
-	// Since SetOtherSettings takes relaykit/dto type, we update the JSON directly
-	// by re-reading the full relaykit-typed settings, marshalling the host portion
-	// back via JSON round-trip to avoid field loss.
-	hostSettings := ch.GetHostOtherSettings()
-	hostSettings.BytePlusAssetGroupId = newGroupID
-	hostSettings.AssetGroupProvider = provider
-	// Merge back: marshal hostSettings, then use the channel's raw OtherSettings
-	// field to persist the updated JSON so no fields from either type are lost.
-	if data, err := common.Marshal(hostSettings); err == nil {
-		if string(data) != "{}" {
-			ch.OtherSettings = string(data)
-		}
+	// Write only the two keys this path owns into the stored JSON. The host
+	// settings type lacks the relaykit-only keys (disable_task_polling_sleep,
+	// tool_loss_policy, ...), so re-encoding it would drop them from the channel.
+	stored := ch.OtherSettings
+	if !gjson.Valid(stored) {
+		stored = "{}"
 	}
+	updated, err := sjson.Set(stored, "byteplus_asset_group_id", newGroupID)
+	if err == nil {
+		updated, err = sjson.Set(updated, "asset_group_provider", provider)
+	}
+	if err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf(
+			"asset library: cannot write group_id into channel %d settings: %v", a.channelId, err))
+		return
+	}
+	ch.OtherSettings = updated
 
 	if err := ch.Save(); err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf(

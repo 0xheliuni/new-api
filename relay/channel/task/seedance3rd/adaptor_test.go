@@ -12,8 +12,11 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildRequestURL(t *testing.T) {
@@ -236,7 +239,7 @@ func TestParseTaskResult(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := a.ParseTaskResult([]byte(tc.body))
+			got, err := a.ParseTaskResult(nil, nil, []byte(tc.body))
 			if err != nil {
 				t.Fatalf("err: %v", err)
 			}
@@ -261,38 +264,30 @@ func newTestGinCtx() (*gin.Context, *httptest.ResponseRecorder) {
 	return c, w
 }
 
-func TestDoResponse_ExtractsTaskID(t *testing.T) {
+func TestParseResponse_ExtractsTaskID(t *testing.T) {
 	a := &TaskAdaptor{}
-	c, w := newTestGinCtx()
+	c, _ := newTestGinCtx()
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"}, OriginModelName: "dreamina-seedance-2-0-260128"}
 	body := `{"task":{"id":"mvt-179197ccca01401a","status":"pending"}}`
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
 
-	taskID, _, taskErr := a.DoResponse(c, resp, info)
-	if taskErr != nil {
-		t.Fatalf("taskErr: %+v", taskErr)
-	}
-	if taskID != "mvt-179197ccca01401a" {
-		t.Fatalf("taskID = %q, want upstream id", taskID)
-	}
+	parsed, taskErr := a.ParseResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "mvt-179197ccca01401a", parsed.UpstreamTaskID)
+	clientBody, err := common.Marshal(parsed.ClientResponse)
+	require.NoError(t, err)
 	// 客户端响应体只能看到公开任务 id,绝不能泄露上游 id(内部存储才用上游 id)。
-	if !strings.Contains(w.Body.String(), info.PublicTaskID) {
-		t.Fatalf("client response missing public task id: %s", w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), "mvt-179197ccca01401a") {
-		t.Fatalf("client response leaked upstream task id: %s", w.Body.String())
-	}
+	assert.Contains(t, string(clientBody), info.PublicTaskID)
+	assert.NotContains(t, string(clientBody), "mvt-179197ccca01401a")
 }
 
-func TestDoResponse_EmptyIDErrors(t *testing.T) {
+func TestParseResponse_EmptyIDErrors(t *testing.T) {
 	a := &TaskAdaptor{}
 	c, _ := newTestGinCtx()
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"}}
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"task":{"id":""}}`))}
-	_, _, taskErr := a.DoResponse(c, resp, info)
-	if taskErr == nil {
-		t.Fatalf("expected taskErr for empty id")
-	}
+	_, taskErr := a.ParseResponse(c, resp, info)
+	assert.NotNil(t, taskErr, "an empty upstream task id is an invalid response")
 }
 
 func TestConvertToOpenAIVideo(t *testing.T) {
@@ -338,9 +333,9 @@ func TestBuildRequestBody_UsesMappedModel(t *testing.T) {
 	a := &TaskAdaptor{}
 	info := &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
-			IsModelMapped:        true,
-			UpstreamModelName:    "dreamina-seedance-2-0-260128-hc",
-			ChannelOtherSettings: dto.ChannelOtherSettings{Seedance3rdAssetEnabled: false},
+			IsModelMapped:            true,
+			UpstreamModelName:        "dreamina-seedance-2-0-260128-hc",
+			ChannelHostOtherSettings: dto.ChannelOtherSettings{Seedance3rdAssetEnabled: false},
 		},
 		// TaskRelayInfo 必须非 nil:ValidateBasicTaskRequest -> storeTaskRequest 会写
 		// info.Action(定义在嵌入的 *TaskRelayInfo 里),否则运行时对 nil 指针写字段会 panic
@@ -383,31 +378,29 @@ func TestConvertToOpenAIVideo_MasksUpstreamErrorMessage(t *testing.T) {
 	}
 }
 
-// TestDoResponse_ExposeUpstreamTaskID 验证渠道开启 expose_upstream_task_id 后，
+// TestParseResponse_ExposeUpstreamTaskID 验证渠道开启 expose_upstream_task_id 后，
 // 上游 ID 以独立字段透传，而 id/task_id 仍是公开 ID——客户端的回查与取流都按
-// 公开 ID 寻址，一旦被替换就会查不到。
-func TestDoResponse_ExposeUpstreamTaskID(t *testing.T) {
-	a := &TaskAdaptor{otherSettings: dto.ChannelOtherSettings{ExposeUpstreamTaskId: true}}
-	c, w := newTestGinCtx()
+// 公开 ID 寻址，一旦被替换就会查不到。开关经 Init 从渠道配置读入。
+func TestParseResponse_ExposeUpstreamTaskID(t *testing.T) {
+	a := &TaskAdaptor{}
+	c, _ := newTestGinCtx()
 	info := &relaycommon.RelayInfo{
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_123"},
 		OriginModelName: "dreamina-seedance-2-0-260128",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelHostOtherSettings: dto.ChannelOtherSettings{ExposeUpstreamTaskId: true},
+		},
 	}
+	a.Init(info)
 	body := `{"task":{"id":"mvt-179197ccca01401a","status":"pending"}}`
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
 
-	if _, _, taskErr := a.DoResponse(c, resp, info); taskErr != nil {
-		t.Fatalf("taskErr: %+v", taskErr)
-	}
+	parsed, taskErr := a.ParseResponse(c, resp, info)
+	require.Nil(t, taskErr)
 
-	var got dto.OpenAIVideo
-	if err := common.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal response: %v (body: %s)", err, w.Body.String())
-	}
-	if got.UpstreamTaskID != "mvt-179197ccca01401a" {
-		t.Errorf("upstream_task_id = %q, want the upstream id", got.UpstreamTaskID)
-	}
-	if got.ID != "task_public_123" || got.TaskID != "task_public_123" {
-		t.Errorf("id/task_id must stay public, got id=%q task_id=%q", got.ID, got.TaskID)
-	}
+	got, ok := parsed.ClientResponse.(*kitdto.OpenAIVideo)
+	require.True(t, ok, "client response is %T, want *OpenAIVideo", parsed.ClientResponse)
+	assert.Equal(t, "mvt-179197ccca01401a", got.UpstreamTaskID)
+	assert.Equal(t, "task_public_123", got.ID, "id must stay public")
+	assert.Equal(t, "task_public_123", got.TaskID, "task_id must stay public")
 }

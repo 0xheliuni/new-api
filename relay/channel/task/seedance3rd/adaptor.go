@@ -43,14 +43,14 @@ type MediaURL struct {
 
 // requestPayload 对齐第三方 POST /v1/video/generate 顶层参数。
 type requestPayload struct {
-	Model           string             `json:"model"`
-	Content         []ContentItem      `json:"content,omitempty"`
-	Duration        *kitdto.IntValue   `json:"duration,omitempty"`
-	Resolution      string             `json:"resolution,omitempty"`
-	Ratio           string             `json:"ratio,omitempty"`
-	GenerateAudio   *kitdto.BoolValue  `json:"generate_audio,omitempty"`
-	Watermark       *kitdto.BoolValue  `json:"watermark,omitempty"`
-	ReturnLastFrame *kitdto.BoolValue  `json:"return_last_frame,omitempty"`
+	Model           string            `json:"model"`
+	Content         []ContentItem     `json:"content,omitempty"`
+	Duration        *kitdto.IntValue  `json:"duration,omitempty"`
+	Resolution      string            `json:"resolution,omitempty"`
+	Ratio           string            `json:"ratio,omitempty"`
+	GenerateAudio   *kitdto.BoolValue `json:"generate_audio,omitempty"`
+	Watermark       *kitdto.BoolValue `json:"watermark,omitempty"`
+	ReturnLastFrame *kitdto.BoolValue `json:"return_last_frame,omitempty"`
 }
 
 // submitResponse: { "task": { "id": ... } }
@@ -102,10 +102,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 	a.channelId = info.ChannelId
 	a.proxy = info.ChannelSetting.Proxy
-	// info.ChannelOtherSettings is relaykit/dto type; convert to dto type via JSON.
-	if data, err := common.Marshal(info.ChannelOtherSettings); err == nil {
-		_ = common.Unmarshal(data, &a.otherSettings)
-	}
+	a.otherSettings = info.ChannelHostOtherSettings
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {

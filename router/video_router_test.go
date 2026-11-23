@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,11 +19,13 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"gorm.io/gorm"
 )
 
 func TestGetOpenAIVideoRouteRendersJimengTask(t *testing.T) {
@@ -165,7 +168,11 @@ func TestGetOpenAIVideoRouteRendersJimengTask(t *testing.T) {
 const relayE2EConfig = `{"relay":{"submit":{"path":"/v1/aigc/video/generate","body":{"model":"$.model","prompt":"$.input.prompt","media":"$.input.media","resolution":"$.parameters.resolution","ratio":"$.parameters.ratio","duration":"$.parameters.duration"},"ok":{"path":"code","equals":200},"taskId":"data.id","error":"message"},` +
 	`"query":{"path":"/v1/aigc/tasks/{task_id}","ok":{"path":"code","equals":200},"status":"data.task_status","statusMap":{"PENDING":"PENDING","RUNNING":"RUNNING","COMPLETED":"SUCCEEDED","FAILED":"FAILED"},"videoUrl":"data.result.output","usage":{"seconds":"data.usage.duration","resolution":"data.usage.resolution"}}}}`
 
-func TestRelayChannelServesOpenAIAndNativeEntriesThroughPolling(t *testing.T) {
+// newTaskRelayDatabase opens an isolated SQLite database with the task relay
+// tables and wires background polling to the real task adaptors, restoring
+// every global it changes when the test ends.
+func newTaskRelayDatabase(t *testing.T) *gorm.DB {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	require.NoError(t, i18n.Init())
 	service.InitHttpClient()
@@ -175,25 +182,12 @@ func TestRelayChannelServesOpenAIAndNativeEntriesThroughPolling(t *testing.T) {
 	previousSQLitePath, previousMasterNode, previousRedisEnabled := common.SQLitePath, common.IsMasterNode, common.RedisEnabled
 	previousFactory := service.GetTaskAdaptorFunc
 	previousTaskQueryLimit := constant.TaskQueryLimit
-	fetchSetting := system_setting.GetFetchSetting()
-	previousFetchSetting := *fetchSetting
-	savedBilling := map[string]string{}
-	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
-		if strings.HasPrefix(key, "billing_setting.") {
-			savedBilling[key] = value
-		}
-		return nil
-	}))
-	common.SQLitePath = t.TempDir() + "/relay-e2e.db"
+	common.SQLitePath = t.TempDir() + "/task-relay.db"
 	common.IsMasterNode = false
 	common.RedisEnabled = false
 	// The env loader sets the production default; without it the poller reads
 	// LIMIT 0 unfinished tasks.
 	constant.TaskQueryLimit = 1000
-	// The mock relay serves the finished video on loopback. SSRF protection
-	// stays on; the operator setting admits private addresses on any port.
-	fetchSetting.AllowPrivateIp = true
-	fetchSetting.AllowedPorts = nil
 	t.Setenv("SQL_DSN", "")
 	require.NoError(t, model.InitDB())
 	database := model.DB
@@ -212,10 +206,30 @@ func TestRelayChannelServesOpenAIAndNativeEntriesThroughPolling(t *testing.T) {
 		common.SQLitePath, common.IsMasterNode, common.RedisEnabled = previousSQLitePath, previousMasterNode, previousRedisEnabled
 		service.GetTaskAdaptorFunc = previousFactory
 		constant.TaskQueryLimit = previousTaskQueryLimit
+		// SetPluginRouter installs a route preparer on the shared registry.
+		require.NoError(t, jsplugin.DefaultRegistry.SetGenerationPreparer(nil))
+	})
+	return database
+}
+
+func TestRelayChannelServesOpenAIAndNativeEntriesThroughPolling(t *testing.T) {
+	database := newTaskRelayDatabase(t)
+	fetchSetting := system_setting.GetFetchSetting()
+	previousFetchSetting := *fetchSetting
+	savedBilling := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		if strings.HasPrefix(key, "billing_setting.") {
+			savedBilling[key] = value
+		}
+		return nil
+	}))
+	// The mock relay serves the finished video on loopback. SSRF protection
+	// stays on; the operator setting admits private addresses on any port.
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = nil
+	t.Cleanup(func() {
 		*fetchSetting = previousFetchSetting
 		require.NoError(t, config.GlobalConfig.LoadFromDB(savedBilling))
-		// SetPluginRouter below installs a route preparer on the shared registry.
-		require.NoError(t, jsplugin.DefaultRegistry.SetGenerationPreparer(nil))
 	})
 	// $0.1 per second with group ratio 1: 5 requested seconds reserve 250000
 	// quota per task and 3 reported seconds settle at 150000.
@@ -351,4 +365,96 @@ func TestRelayChannelServesOpenAIAndNativeEntriesThroughPolling(t *testing.T) {
 	quota, err = model.GetUserQuota(1, true)
 	require.NoError(t, err)
 	assert.Equal(t, initialQuota-2*150_000, quota, "each task settles at 3 seconds")
+}
+
+// The fork's Seedance channels run native Go adaptors on the unclaimed
+// /v1/video/generations route. Submission must reach that adaptor, honor the
+// channel's fork-only settings (asset provider gateway paths, upstream task id
+// exposure) and answer with the adaptor's own response; polling must query the
+// same gateway the task was submitted to.
+func TestNativeDoubaoChannelSubmitsAndPollsThroughItsGateway(t *testing.T) {
+	database := newTaskRelayDatabase(t)
+	previousModelPrice := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousModelPrice))
+	})
+	// $0.5 per request with group ratio 1 reserves 250000 quota.
+	const seedanceModel = "doubao-seedance-2-0-260128"
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"`+seedanceModel+`":0.5}`))
+
+	var mu sync.Mutex
+	var upstreamCalls []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		upstreamCalls = append(upstreamCalls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		assert.Equal(t, "Bearer ark-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/aiproducts/video/seedance":
+			_, _ = w.Write([]byte(`{"id":"cgt-native-1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/aiproducts/video/seedance/tasks/cgt-native-1":
+			_, _ = w.Write([]byte(`{"id":"cgt-native-1","status":"succeeded","content":{"video_url":"https://cdn.example/seedance.mp4"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	const initialQuota = 10_000_000
+	require.NoError(t, database.Create(&model.User{Id: 1, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: initialQuota, Group: "default", AuthVersion: 1}).Error)
+	require.NoError(t, database.Create(&model.Token{Id: 1, UserId: 1, Key: "nativedoubao", Status: common.TokenStatusEnabled, Name: "native", ExpiredTime: -1, UnlimitedQuota: true}).Error)
+	baseURL := upstream.URL
+	seedanceChannel := &model.Channel{Id: 21, Type: constant.ChannelTypeDoubaoVideo, Key: "ark-key", Status: common.ChannelStatusEnabled, Name: "seedance",
+		Models: seedanceModel, Group: "default", BaseURL: &baseURL,
+		OtherSettings: `{"asset_provider":"cloudwise","expose_upstream_task_id":true,"disable_task_polling_sleep":true}`}
+	require.NoError(t, seedanceChannel.Insert())
+
+	engine := gin.New()
+	SetRelayRouter(engine)
+	SetTaskPluginProtocolRouter(engine)
+	SetVideoRouter(engine)
+	SetTaskRouter(engine)
+	engine.NoRoute(SetPluginRouter(engine))
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/video/generations",
+		bytes.NewBufferString(`{"model":"`+seedanceModel+`","prompt":"a cat","duration":5}`))
+	request.Header.Set("Authorization", "Bearer sk-nativedoubao")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	body := recorder.Body.String()
+	publicID := gjson.Get(body, "id").String()
+	require.NotEmpty(t, publicID)
+	assert.Equal(t, publicID, gjson.Get(body, "task_id").String())
+	assert.Equal(t, "video", gjson.Get(body, "object").String(), "the native adaptor's response reaches the client")
+	assert.Equal(t, "cgt-native-1", gjson.Get(body, "upstream_task_id").String(), "the channel exposes the upstream task id")
+	assert.Equal(t, seedanceModel, gjson.Get(body, "model").String())
+
+	var task model.Task
+	require.NoError(t, database.Where("task_id = ?", publicID).First(&task).Error)
+	assert.Equal(t, constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)), task.Platform, "the native adaptor owns the task")
+	assert.Equal(t, seedanceChannel.Id, task.ChannelId)
+	assert.Equal(t, "cgt-native-1", task.GetUpstreamTaskID())
+	assert.Equal(t, 250_000, task.Quota)
+	quota, err := model.GetUserQuota(1, true)
+	require.NoError(t, err)
+	assert.Equal(t, initialQuota-250_000, quota)
+
+	service.RunTaskPollingOnce(t.Context(), nil)
+
+	require.NoError(t, database.Where("task_id = ?", publicID).First(&task).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	assert.Equal(t, "https://cdn.example/seedance.mp4", task.GetResultURL())
+	mu.Lock()
+	assert.Equal(t, []string{
+		"POST /api/v1/aiproducts/video/seedance",
+		"GET /api/v1/aiproducts/video/seedance/tasks/cgt-native-1",
+	}, upstreamCalls, "submission and polling both use the channel's cloudwise gateway paths")
+	mu.Unlock()
+	quota, err = model.GetUserQuota(1, true)
+	require.NoError(t, err)
+	assert.Equal(t, initialQuota-250_000, quota, "a per-request price keeps its reservation")
 }

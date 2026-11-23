@@ -161,7 +161,7 @@ func TestParseTaskResultStatusMapping(t *testing.T) {
 		{`{"status":"brand_new_status"}`, string(model.TaskStatusInProgress), taskcommon.ProgressInProgress},
 	}
 	for _, tc := range cases {
-		info, err := a.ParseTaskResult([]byte(tc.body))
+		info, err := a.ParseTaskResult(nil, nil, []byte(tc.body))
 		require.NoError(t, err)
 		assert.Equal(t, tc.status, info.Status, tc.body)
 		assert.Equal(t, tc.progress, info.Progress, tc.body)
@@ -172,7 +172,7 @@ func TestParseTaskResultStatusMapping(t *testing.T) {
 // (service.settleTaskBillingOnComplete 的 token 分支)。丢了它就只按预扣价收费。
 func TestParseTaskResultSuccessCarriesUsage(t *testing.T) {
 	a := &TaskAdaptor{}
-	info, err := a.ParseTaskResult([]byte(`{
+	info, err := a.ParseTaskResult(nil, nil, []byte(`{
 		"status": "succeeded",
 		"content": {"video_url": "https://cdn.example.com/v.mp4"},
 		"usage": {"completion_tokens": 35100, "total_tokens": 35100}
@@ -187,12 +187,12 @@ func TestParseTaskResultSuccessCarriesUsage(t *testing.T) {
 
 func TestParseTaskResultFailureCarriesReason(t *testing.T) {
 	a := &TaskAdaptor{}
-	info, err := a.ParseTaskResult([]byte(`{"status":"failed","error":{"message":"content filter"}}`))
+	info, err := a.ParseTaskResult(nil, nil, []byte(`{"status":"failed","error":{"message":"content filter"}}`))
 	require.NoError(t, err)
 	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
 	assert.Equal(t, "content filter", info.Reason)
 
-	info, err = a.ParseTaskResult([]byte(`{"status":"expired"}`))
+	info, err = a.ParseTaskResult(nil, nil, []byte(`{"status":"expired"}`))
 	require.NoError(t, err)
 	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
 	assert.NotEmpty(t, info.Reason, "reason must never be empty, users need a cause")
@@ -200,9 +200,9 @@ func TestParseTaskResultFailureCarriesReason(t *testing.T) {
 
 func TestFetchTaskRejectsEmptyTaskID(t *testing.T) {
 	a := &TaskAdaptor{}
-	_, err := a.FetchTask("https://ark.cn-beijing.volces.com", "sk", map[string]any{}, "")
+	_, err := a.FetchTask("https://ark.cn-beijing.volces.com", "sk", &model.Task{}, "")
 	assert.Error(t, err)
-	_, err = a.FetchTask("https://ark.cn-beijing.volces.com", "sk", map[string]any{"task_id": ""}, "")
+	_, err = a.FetchTask("https://ark.cn-beijing.volces.com", "sk", &model.Task{TaskID: ""}, "")
 	assert.Error(t, err)
 }
 

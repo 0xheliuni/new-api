@@ -70,7 +70,6 @@ func TestEndpointRouting_ByAssetProvider(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var gotPath string
 			srv := newPathCapturingServer(t, &gotPath)
@@ -78,10 +77,10 @@ func TestEndpointRouting_ByAssetProvider(t *testing.T) {
 			a := &TaskAdaptor{}
 			a.Init(&relaycommon.RelayInfo{
 				ChannelMeta: &relaycommon.ChannelMeta{
-					ChannelType:          constant.ChannelTypeDoubaoVideo,
-					ChannelBaseUrl:       srv.URL,
-					ApiKey:               "sk-test",
-					ChannelOtherSettings: dto.ChannelOtherSettings{AssetProvider: tc.provider},
+					ChannelType:              constant.ChannelTypeDoubaoVideo,
+					ChannelBaseUrl:           srv.URL,
+					ApiKey:                   "sk-test",
+					ChannelHostOtherSettings: dto.ChannelOtherSettings{AssetProvider: tc.provider},
 				},
 			})
 
@@ -89,7 +88,7 @@ func TestEndpointRouting_ByAssetProvider(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, srv.URL+tc.wantGenerate, gotURL, "generate URL for provider %q", tc.provider)
 
-			resp, err := a.FetchTask(srv.URL, "sk-test", map[string]any{"task_id": testTaskID}, "")
+			resp, err := a.FetchTask(srv.URL, "sk-test", &model.Task{TaskID: testTaskID}, "")
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			require.Equal(t, tc.wantQuery, gotPath, "query path for provider %q", tc.provider)
@@ -119,7 +118,6 @@ func TestVideoPollingRelayInfoCarriesAssetProviderIntoQueryPath(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var gotPath string
 			srv := newPathCapturingServer(t, &gotPath)
@@ -146,13 +144,13 @@ func TestVideoPollingRelayInfoCarriesAssetProviderIntoQueryPath(t *testing.T) {
 			require.NotNil(t, info.ChannelMeta, "polling RelayInfo must carry ChannelMeta")
 			require.Equal(t, srv.URL, info.ChannelBaseUrl, "polling RelayInfo must carry base url")
 			require.Equal(t, "sk-test", info.ApiKey, "polling RelayInfo must carry api key")
-			require.Equal(t, tc.provider, info.ChannelOtherSettings.AssetProvider,
-				"polling RelayInfo must carry ChannelOtherSettings; dropping it silently sends queries to the wrong gateway")
+			require.Equal(t, tc.provider, info.ChannelHostOtherSettings.AssetProvider,
+				"polling RelayInfo must carry the channel's host settings; dropping them silently sends queries to the wrong gateway")
 
 			a := &TaskAdaptor{}
 			a.Init(info)
 
-			resp, err := a.FetchTask(ch.GetBaseURL(), ch.Key, map[string]any{"task_id": testTaskID}, "")
+			resp, err := a.FetchTask(ch.GetBaseURL(), ch.Key, &model.Task{TaskID: testTaskID}, "")
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			require.Equal(t, tc.wantQuery, gotPath, "polling query path for provider %q", tc.provider)

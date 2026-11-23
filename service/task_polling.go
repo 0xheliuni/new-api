@@ -436,12 +436,13 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 func BuildVideoPollingRelayInfo(ch *model.Channel) *relaycommon.RelayInfo {
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
-		ChannelType:          ch.Type,
-		ChannelId:            ch.Id,
-		ChannelBaseUrl:       ch.GetBaseURL(),
-		ChannelSetting:       ch.GetSetting(),
-		ChannelOtherSettings: ch.GetOtherSettings(),
-		ApiKey:               ch.Key,
+		ChannelType:              ch.Type,
+		ChannelId:                ch.Id,
+		ChannelBaseUrl:           ch.GetBaseURL(),
+		ChannelSetting:           ch.GetSetting(),
+		ChannelOtherSettings:     ch.GetOtherSettings(),
+		ChannelHostOtherSettings: ch.GetHostOtherSettings(),
+		ApiKey:                   ch.Key,
 	}
 	return info
 }

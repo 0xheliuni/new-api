@@ -39,17 +39,11 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	// info.ChannelOtherSettings is relaykit/dto.ChannelOtherSettings; convert to
-	// dto.ChannelOtherSettings via JSON round-trip so the Volc-specific methods are available.
-	var otherSettings dto.ChannelOtherSettings
-	if data, err := common.Marshal(info.ChannelOtherSettings); err == nil {
-		_ = common.Unmarshal(data, &otherSettings)
-	}
 	a.cred = ChannelCredentials{
 		BaseURL:       info.ChannelBaseUrl,
 		APIKey:        info.ApiKey,
 		Proxy:         info.ChannelSetting.Proxy,
-		OtherSettings: otherSettings,
+		OtherSettings: info.ChannelHostOtherSettings,
 	}
 }
 

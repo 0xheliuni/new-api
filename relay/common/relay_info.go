@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -73,6 +74,11 @@ type ChannelMeta struct {
 	UpstreamModelName    string
 	IsModelMapped        bool
 	SupportStreamOptions bool // 是否支持流式选项
+
+	// ChannelHostOtherSettings carries the fork-only channel settings (asset
+	// library, upstream task id exposure, volc passthrough signing) that the
+	// native Go task adaptors read and ChannelOtherSettings does not hold.
+	ChannelHostOtherSettings hostdto.ChannelOtherSettings
 }
 
 type TokenCountMeta struct {
@@ -330,6 +336,11 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelOtherSettings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
 	if ok {
 		channelMeta.ChannelOtherSettings = channelOtherSettings
+	}
+
+	channelHostOtherSettings, ok := common.GetContextKeyType[hostdto.ChannelOtherSettings](c, constant.ContextKeyChannelHostOtherSetting)
+	if ok {
+		channelMeta.ChannelHostOtherSettings = channelHostOtherSettings
 	}
 
 	if channelType == constant.ChannelTypeAdvancedCustom &&

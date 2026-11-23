@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -456,7 +456,7 @@ func TestConvert_SecondsTakesPrecedence(t *testing.T) {
 	assert.Equal(t, 9, int(*r.Duration), "req.Seconds=9 should win")
 }
 
-// 用例 15:确认 BoolValue 类型与 dto.BoolValue 一致
+// 用例 15:确认 BoolValue 类型与 kitdto.BoolValue 一致
 func TestConvert_BoolValueType(t *testing.T) {
 	a := newAdaptor()
 	req := &relaycommon.TaskSubmitReq{
@@ -472,6 +472,6 @@ func TestConvert_BoolValueType(t *testing.T) {
 	r, err := a.convertToRequestPayload(req)
 	require.NoError(t, err)
 	require.NotNil(t, r.GenerateAudio)
-	assert.IsType(t, (*dto.BoolValue)(nil), r.GenerateAudio)
+	assert.IsType(t, (*kitdto.BoolValue)(nil), r.GenerateAudio)
 	assert.Equal(t, false, bool(*r.GenerateAudio))
 }
