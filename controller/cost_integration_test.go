@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,7 +299,7 @@ func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
 
 	const chID = 4242
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5})
+	require.NoError(t, appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5}, costVersionNoteChannelUpdate))
 
 	versions, err := model.GetChannelCostVersions(chID)
 	if err != nil {
@@ -313,7 +314,7 @@ func TestAppendCostVersion_FirstVersionCoversHistory(t *testing.T) {
 	}
 
 	// 第二次改价才用 now：历史区间归首版，新价从改动时刻起生效。
-	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.0})
+	require.NoError(t, appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.0}, costVersionNoteChannelUpdate))
 	versions, _ = model.GetChannelCostVersions(chID) // 降序，[0] 为最新
 	if len(versions) != 2 {
 		t.Fatalf("versions after repricing = %d, want 2", len(versions))
@@ -340,7 +341,7 @@ func TestAppendCostVersion_ComparesAgainstVersionInEffectNotFuture(t *testing.T)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 
 	// 基线 2.5（自古以来生效中）
-	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5})
+	require.NoError(t, appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 2.5}, costVersionNoteChannelUpdate))
 
 	// 排期一条明天才生效的 3.0
 	future := &model.ChannelCostVersion{
@@ -352,7 +353,7 @@ func TestAppendCostVersion_ComparesAgainstVersionInEffectNotFuture(t *testing.T)
 	}
 
 	// 把渠道当前价改成 3.0：相对「此刻生效中」的 2.5 是改价，必须追一条版本
-	appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 3.0})
+	require.NoError(t, appendCostVersionIfChanged(c, chID, &dto.ChannelSettings{CostMode: "ratio", CostRatio: 3.0}, costVersionNoteChannelUpdate))
 
 	versions, err := model.GetChannelCostVersions(chID)
 	if err != nil {
@@ -437,4 +438,152 @@ func TestCostByChannels_ShowsPriceInEffectNow(t *testing.T) {
 	assert.InDelta(t, 6.8, row.CostExchangeRate, 1e-9)
 	// 区间内两条日志都在新价之前，仍按初始倍率 2.5 计成本。
 	assert.InDelta(t, 0.01, row.CostCny, 1e-6)
+}
+
+// seedPricedChannel 建一个带成本设置的渠道，并按 versions 写入价格记录（ChannelId
+// 由这里填）。返回渠道 ID。
+func seedPricedChannel(t *testing.T, setting string, versions ...*model.ChannelCostVersion) int {
+	t.Helper()
+	channel := model.Channel{Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Name: "priced", Models: "gpt-4o", Group: "default", Key: "sk-test", Setting: &setting}
+	require.NoError(t, channel.Insert())
+	for _, v := range versions {
+		v.ChannelId = channel.Id
+		require.NoError(t, model.CreateChannelCostVersion(v))
+	}
+	return channel.Id
+}
+
+func loadChannelSetting(t *testing.T, channelId int) map[string]any {
+	t.Helper()
+	channel, err := model.GetChannelById(channelId, false)
+	require.NoError(t, err)
+	require.NotNil(t, channel.Setting)
+	setting := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(*channel.Setting, &setting))
+	return setting
+}
+
+// 修改价格记录必须把零值也写进去：初始价从倍率 3.1 改成折扣 0.31 后，cost_ratio 要
+// 变成 0。GORM 按结构体 Updates 会跳过零值，留下旧倍率。
+func TestUpdateChannelCostVersion_WritesZeroValues(t *testing.T) {
+	costIntegrationDB(t)
+	initial := &model.ChannelCostVersion{EffectiveFrom: 0, CostMode: "ratio", CostRatio: 3.1, Note: "wrong"}
+	seedPricedChannel(t, `{"cost_ratio":3.1}`, initial)
+
+	update := &model.ChannelCostVersion{Id: initial.Id, EffectiveFrom: 0,
+		CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8}
+	before, err := model.UpdateChannelCostVersion(update)
+	require.NoError(t, err)
+	assert.InDelta(t, 3.1, before.CostRatio, 1e-9)
+	assert.Equal(t, initial.ChannelId, update.ChannelId)
+
+	versions, err := model.GetChannelCostVersions(initial.ChannelId)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	assert.Equal(t, "discount", versions[0].CostMode)
+	assert.Zero(t, versions[0].CostRatio)
+	assert.InDelta(t, 0.31, versions[0].CostDiscount, 1e-9)
+	assert.InDelta(t, 6.8, versions[0].ExchangeRate, 1e-9)
+	assert.Empty(t, versions[0].Note)
+}
+
+// 初始价没有生效时间，带日期的记录也不能变成初始价；改时间不能撞上同渠道的另一条。
+func TestUpdateChannelCostVersion_EffectiveTimeRules(t *testing.T) {
+	costIntegrationDB(t)
+	initial := &model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1}
+	june := &model.ChannelCostVersion{EffectiveFrom: 1717200000, CostRatio: 2.5}
+	july := &model.ChannelCostVersion{EffectiveFrom: 1719800000, CostRatio: 2.4}
+	seedPricedChannel(t, `{"cost_ratio":2.4}`, initial, june, july)
+
+	_, err := model.UpdateChannelCostVersion(&model.ChannelCostVersion{Id: initial.Id, EffectiveFrom: 1717000000, CostRatio: 3.1})
+	assert.ErrorIs(t, err, model.ErrInitialVersionTime)
+	_, err = model.UpdateChannelCostVersion(&model.ChannelCostVersion{Id: june.Id, EffectiveFrom: 0, CostRatio: 2.5})
+	assert.ErrorIs(t, err, model.ErrInitialVersionTime)
+	_, err = model.UpdateChannelCostVersion(&model.ChannelCostVersion{Id: july.Id, EffectiveFrom: june.EffectiveFrom, CostRatio: 2.4})
+	assert.ErrorIs(t, err, model.ErrVersionTimeTaken)
+	_, err = model.UpdateChannelCostVersion(&model.ChannelCostVersion{Id: july.Id + 100, EffectiveFrom: 1719900000, CostRatio: 2.4})
+	assert.ErrorIs(t, err, model.ErrVersionNotFound)
+
+	// 带日期的记录可以改到一个空着的时间点。
+	_, err = model.UpdateChannelCostVersion(&model.ChannelCostVersion{Id: july.Id, EffectiveFrom: 1719900000, CostRatio: 2.4})
+	require.NoError(t, err)
+}
+
+// 渠道设置里的成本价要跟着此刻生效的价走，其它设置原样保留；倍率模式下不留结算汇率。
+func TestSyncChannelCostSetting_WritesPriceInEffect(t *testing.T) {
+	costIntegrationDB(t)
+	past := time.Now().Add(-time.Hour).Unix()
+	channelId := seedPricedChannel(t,
+		`{"proxy":"http://proxy.local","cost_mode":"discount","cost_discount":0.5,"cost_exchange_rate":7}`,
+		&model.ChannelCostVersion{EffectiveFrom: 0, CostMode: "discount", CostDiscount: 0.5, ExchangeRate: 7},
+		&model.ChannelCostVersion{EffectiveFrom: past, CostMode: "ratio", CostRatio: 2.5})
+
+	require.NoError(t, model.SyncChannelCostSetting(channelId, time.Now().Unix()))
+	setting := loadChannelSetting(t, channelId)
+	assert.Equal(t, "http://proxy.local", setting["proxy"])
+	assert.Equal(t, "ratio", setting["cost_mode"])
+	assert.InDelta(t, 2.5, setting["cost_ratio"], 1e-9)
+	assert.NotContains(t, setting, "cost_exchange_rate")
+
+	require.NoError(t, model.CreateChannelCostVersion(&model.ChannelCostVersion{ChannelId: channelId,
+		EffectiveFrom: past + 1, CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8}))
+	require.NoError(t, model.SyncChannelCostSetting(channelId, time.Now().Unix()))
+	setting = loadChannelSetting(t, channelId)
+	assert.Equal(t, "discount", setting["cost_mode"])
+	assert.InDelta(t, 0.31, setting["cost_discount"], 1e-9)
+	assert.InDelta(t, 6.8, setting["cost_exchange_rate"], 1e-9)
+}
+
+// 回归：渠道设置里的成本价和此刻生效的版本不一致时（比如有一条到点生效的记录），
+// 只改了名字的保存不能按设置里的旧价追加记录。修复前会追加一条从现在起按 3.1 计价
+// 的记录，成本悄悄回到旧价。
+func TestUpdateChannel_UnrelatedSaveKeepsPriceVersions(t *testing.T) {
+	costIntegrationDB(t)
+	require.NoError(t, authz.Init(model.DB))
+	channelId := seedPricedChannel(t, `{"cost_ratio":3.1}`,
+		&model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1},
+		&model.ChannelCostVersion{EffectiveFrom: time.Now().Add(-time.Hour).Unix(),
+			CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8})
+
+	body := fmt.Sprintf(`{"id":%d,"name":"renamed","setting":%q}`, channelId, `{"cost_ratio":3.1}`)
+	rec := putUpdateChannel(t, 1, common.RoleRootUser, body)
+	require.Contains(t, rec.Body.String(), `"success":true`)
+
+	assert.Len(t, mustVersions(t, channelId), 2, "an unrelated save must not append a version")
+}
+
+func costPricePutContext(channelID int, body string) (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("PUT", "/api/cost/channels/"+strconv.Itoa(channelID)+"/price", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channelID)}}
+	c.Set("id", 1)
+	return c, rec
+}
+
+// 设置当前价和此刻生效的价比较：相同不追加；不同才追加一条从现在起的记录，并同步
+// 渠道设置——即使渠道设置里恰好还是要设的这个旧值。
+func TestSetChannelCostPrice_AppendsOnlyWhenPriceInEffectDiffers(t *testing.T) {
+	costIntegrationDB(t)
+	channelId := seedPricedChannel(t, `{"cost_ratio":3.1}`,
+		&model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1},
+		&model.ChannelCostVersion{EffectiveFrom: time.Now().Add(-time.Hour).Unix(),
+			CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8})
+
+	c, rec := costPricePutContext(channelId, `{"cost_mode":"discount","cost_discount":0.31,"exchange_rate":6.8}`)
+	SetChannelCostPrice(c)
+	require.True(t, decodeCostVersionResponse(t, rec).Success)
+	assert.Len(t, mustVersions(t, channelId), 2, "the same price as the one in effect appends nothing")
+
+	c, rec = costPricePutContext(channelId, `{"cost_mode":"ratio","cost_ratio":3.1}`)
+	SetChannelCostPrice(c)
+	require.True(t, decodeCostVersionResponse(t, rec).Success)
+	versions := mustVersions(t, channelId) // 降序，[0] 为最新
+	require.Len(t, versions, 3)
+	assert.InDelta(t, 3.1, versions[0].CostRatio, 1e-9)
+	assert.Equal(t, costVersionNoteCostPage, versions[0].Note)
+	assert.Equal(t, "ratio", loadChannelSetting(t, channelId)["cost_mode"])
 }

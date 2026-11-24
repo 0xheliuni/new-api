@@ -67,6 +67,11 @@ var auditContentTemplates = map[string]string{
 	"channel.upstream_apply":     "Applied upstream model changes to channel (ID: ${id})",
 	"channel.upstream_apply_all": "Applied upstream model changes to ${count} channels",
 
+	"cost.version_create": "Added a price record for channel #${channel_id}",
+	"cost.version_update": "Edited a price record for channel #${channel_id}",
+	"cost.version_delete": "Deleted a price record for channel #${channel_id}",
+	"cost.price_set":      "Set the current price for channel #${channel_id}",
+
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 

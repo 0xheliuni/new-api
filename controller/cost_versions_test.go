@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // costVersionPostContext 组装一次 POST /api/cost/channels/:id/versions 的调用现场。
@@ -147,7 +149,7 @@ func TestCreateChannelCostVersion_DiscountRefusesNonPositiveRate(t *testing.T) {
 		if resp.Success {
 			t.Fatalf("create succeeded for %s, want refusal", body)
 		}
-		if !strings.Contains(resp.Message, "positive exchange rate") {
+		if !strings.Contains(resp.Message, "settlement exchange rate") {
 			t.Fatalf("message = %q, want it to name the missing exchange rate", resp.Message)
 		}
 	}
@@ -284,7 +286,7 @@ func TestCreateChannelCostVersion_RejectsOverlongNote(t *testing.T) {
 	if resp.Success {
 		t.Fatal("256-char note was accepted; the DB would decide the outcome instead")
 	}
-	if !strings.Contains(resp.Message, "note") {
+	if !strings.Contains(resp.Message, "Note") {
 		t.Fatalf("message = %q, want it to name the offending field", resp.Message)
 	}
 
@@ -328,4 +330,101 @@ func TestCreateChannelCostVersion_InvalidatesCostCubeCache(t *testing.T) {
 			t.Fatalf("cache entry %q survived a version write; reports would show the old price for up to 60s", k)
 		}
 	}
+}
+
+// costVersionPutContext 组装一次 PUT /api/cost/versions/:vid 的调用现场。
+func costVersionPutContext(versionID int, body string) (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("PUT", "/api/cost/versions/"+strconv.Itoa(versionID), strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "vid", Value: strconv.Itoa(versionID)}}
+	c.Set("id", 1)
+	return c, rec
+}
+
+// 初始价删掉后要能重新设置：effective_from=0 只在渠道还没有初始价时接受。
+func TestCreateChannelCostVersion_InitialPrice(t *testing.T) {
+	costIntegrationDB(t)
+	const chID = 5106
+	seedCostVersionChannel(t, chID)
+	body := `{"effective_from":0,"cost_mode":"discount","cost_discount":0.31,"exchange_rate":6.8}`
+
+	c, rec := costVersionPostContext(chID, body)
+	CreateChannelCostVersion(c)
+	resp := decodeCostVersionResponse(t, rec)
+	require.True(t, resp.Success, resp.Message)
+	assert.Zero(t, resp.Data.EffectiveFrom)
+
+	c, rec = costVersionPostContext(chID, body)
+	CreateChannelCostVersion(c)
+	resp = decodeCostVersionResponse(t, rec)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "This channel already has an initial price. Edit it instead.", resp.Message)
+
+	c, rec = costVersionPostContext(chID, `{"effective_from":-1,"cost_ratio":2.5}`)
+	CreateChannelCostVersion(c)
+	assert.False(t, decodeCostVersionResponse(t, rec).Success)
+	assert.Len(t, mustVersions(t, chID), 1)
+}
+
+// 修改历史记录时，折扣模式必须带结算汇率，不能像新增那样退回站点汇率：那会悄悄
+// 改掉这条记录冻结的汇率。
+func TestUpdateChannelCostVersionHandler_RequiresDiscountRate(t *testing.T) {
+	costIntegrationDB(t)
+	withUSDExchangeRate(t, 1)
+	initial := &model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1}
+	seedPricedChannel(t, `{"cost_ratio":3.1}`, initial)
+
+	c, rec := costVersionPutContext(initial.Id, `{"effective_from":0,"cost_mode":"discount","cost_discount":0.31}`)
+	UpdateChannelCostVersion(c)
+	resp := decodeCostVersionResponse(t, rec)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Settlement exchange rate must be greater than 0.", resp.Message)
+	assert.InDelta(t, 3.1, mustVersions(t, initial.ChannelId)[0].CostRatio, 1e-9)
+}
+
+// 改了此刻生效的那条记录后，渠道设置里的成本价要跟着改，渠道编辑页才显示实际的价。
+func TestUpdateChannelCostVersionHandler_SyncsChannelSetting(t *testing.T) {
+	costIntegrationDB(t)
+	initial := &model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1}
+	channelId := seedPricedChannel(t, `{"cost_ratio":3.1,"proxy":"http://proxy.local"}`, initial)
+
+	c, rec := costVersionPutContext(initial.Id,
+		`{"effective_from":0,"cost_mode":"discount","cost_discount":0.31,"exchange_rate":6.8,"note":"fixed"}`)
+	UpdateChannelCostVersion(c)
+	resp := decodeCostVersionResponse(t, rec)
+	require.True(t, resp.Success, resp.Message)
+	assert.Equal(t, channelId, resp.Data.ChannelId)
+
+	setting := loadChannelSetting(t, channelId)
+	assert.Equal(t, "discount", setting["cost_mode"])
+	assert.InDelta(t, 0.31, setting["cost_discount"], 1e-9)
+	assert.InDelta(t, 6.8, setting["cost_exchange_rate"], 1e-9)
+	assert.Equal(t, "http://proxy.local", setting["proxy"])
+}
+
+// 删掉最新那条记录后，渠道设置要回到前一条的价；否则下次保存渠道会把删掉的价又写回来。
+func TestDeleteChannelCostVersionHandler_SyncsChannelSetting(t *testing.T) {
+	costIntegrationDB(t)
+	latest := &model.ChannelCostVersion{EffectiveFrom: time.Now().Add(-time.Hour).Unix(),
+		CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8}
+	channelId := seedPricedChannel(t,
+		`{"cost_mode":"discount","cost_discount":0.31,"cost_exchange_rate":6.8}`,
+		&model.ChannelCostVersion{EffectiveFrom: 0, CostRatio: 3.1}, latest)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("DELETE", "/api/cost/versions/"+strconv.Itoa(latest.Id), nil)
+	c.Params = gin.Params{{Key: "vid", Value: strconv.Itoa(latest.Id)}}
+	c.Set("id", 1)
+	DeleteChannelCostVersion(c)
+	require.True(t, decodeCostVersionResponse(t, rec).Success)
+
+	setting := loadChannelSetting(t, channelId)
+	assert.Equal(t, "ratio", setting["cost_mode"])
+	assert.InDelta(t, 3.1, setting["cost_ratio"], 1e-9)
+	assert.NotContains(t, setting, "cost_exchange_rate")
 }

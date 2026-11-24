@@ -278,6 +278,8 @@ func SetApiRouter(router *gin.Engine) {
 			costRoute.GET("/channels", controller.GetCostByChannels)
 			costRoute.GET("/channels/:id/versions", controller.GetChannelCostVersions)
 			costRoute.POST("/channels/:id/versions", controller.CreateChannelCostVersion)
+			costRoute.PUT("/channels/:id/price", controller.SetChannelCostPrice)
+			costRoute.PUT("/versions/:vid", controller.UpdateChannelCostVersion)
 			costRoute.DELETE("/versions/:vid", controller.DeleteChannelCostVersion)
 		}
 		taskPluginRoute := apiRouter.Group("/plugin/task")

@@ -4,18 +4,18 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ChannelCostVersion 渠道成本计价历史版本。
 // EffectiveFrom 秒级 Unix 时间戳（闭区间起点）；0 = 初始版本（自古以来）。
 // 版本区间 = [EffectiveFrom, 下一版本.EffectiveFrom)。
-// 版本行不可变：改价追加新行，误填 DELETE 后重加。
+// 改价追加新行；填错的价可以修改（UpdateChannelCostVersion），改动留在审计日志里。
 type ChannelCostVersion struct {
 	Id            int   `json:"id"             gorm:"primaryKey"`
 	ChannelId     int   `json:"channel_id"     gorm:"index:idx_channel_effective,priority:1;not null"`
@@ -123,17 +123,14 @@ var ErrLastVersion = errors.New("cannot delete the last version of a channel")
 // channel_id 的全部版本行加行锁，把「数」和「删」真正串起来：第二个事务阻塞到第一个
 // 提交后重读，看到 count=1 并正确拒绝。
 //
-// SQLite 不支持 FOR UPDATE，按 Rule 2 分支跳过：它的写事务本身互斥，第二个删除要么
-// 排在第一个之后（重读到 count=1，同样被拒），要么直接拿到 SQLITE_BUSY——失败得很响，
-// 不会静默删空。
+// SQLite 不支持 FOR UPDATE，lockForUpdate 在那里不加锁：它的写事务本身互斥，第二个
+// 删除要么排在第一个之后（重读到 count=1，同样被拒），要么直接拿到 SQLITE_BUSY——
+// 失败得很响，不会静默删空。
 //
 // 加锁的这次 SELECT 同时充当目标行查找与计数。
 func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
-		q := tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", channelId)
-		if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
+		q := lockForUpdate(tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", channelId))
 		var rows []ChannelCostVersion
 		if err := q.Select("id", "effective_from").Find(&rows).Error; err != nil {
 			return err
@@ -155,6 +152,118 @@ func DeleteChannelCostVersionIfNotLast(channelId, versionId int) error {
 		}
 		return tx.Where("id = ?", versionId).Delete(&ChannelCostVersion{}).Error
 	})
+}
+
+// ErrVersionNotFound 要修改的版本不存在（可能已被删除）。
+var ErrVersionNotFound = errors.New("price version not found")
+
+// ErrInitialVersionTime 初始版本与带日期的版本不能互相转换：初始版本的生效时间恒为
+// 0，带日期的版本也不能改成 0（重新设置初始价走新增）。
+var ErrInitialVersionTime = errors.New("initial and dated price versions cannot be converted into each other")
+
+// ErrVersionTimeTaken 同一渠道已有相同生效时间的版本。
+var ErrVersionTimeTaken = errors.New("a price version with this effective time already exists")
+
+// UpdateChannelCostVersion 按 v.Id 修改一条版本的生效时间与计价字段，返回修改前的
+// 版本；成功后 v 补齐 ChannelId、CreatedAt、CreatedBy。
+//
+// 版本原本不可修改，填错的价只能删了重建，初始价删掉后还补不回来。现在允许修改，
+// 改动记录交给审计日志。
+//
+// 与删除相同，事务内锁住该渠道的全部版本行，把「检查时间是否已被占用」和「写入」
+// 串起来，避免两个并发修改把同一渠道的两条版本改到同一时刻。
+func UpdateChannelCostVersion(v *ChannelCostVersion) (ChannelCostVersion, error) {
+	var before ChannelCostVersion
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ?", v.Id).Limit(1).Find(&before).Error; err != nil {
+			return err
+		}
+		if before.Id == 0 {
+			return ErrVersionNotFound
+		}
+		var rows []ChannelCostVersion
+		if err := lockForUpdate(tx.Model(&ChannelCostVersion{}).Where("channel_id = ?", before.ChannelId)).
+			Select("id", "effective_from").Find(&rows).Error; err != nil {
+			return err
+		}
+		// 加锁前读到的行可能刚被删掉，或刚被别的修改换了时间，以锁内读到的为准。
+		found := false
+		for _, row := range rows {
+			if row.Id == v.Id {
+				found = true
+				before.EffectiveFrom = row.EffectiveFrom
+			}
+		}
+		if !found {
+			return ErrVersionNotFound
+		}
+		if (before.EffectiveFrom == 0) != (v.EffectiveFrom == 0) {
+			return ErrInitialVersionTime
+		}
+		for _, row := range rows {
+			if row.Id != v.Id && row.EffectiveFrom == v.EffectiveFrom {
+				return ErrVersionTimeTaken
+			}
+		}
+		// Select 指定列：结构体 Updates 默认跳过零值，改成折扣模式后 cost_ratio=0、
+		// 清空备注这类修改会被悄悄丢掉。
+		return tx.Model(&ChannelCostVersion{Id: v.Id}).
+			Select("effective_from", "cost_mode", "cost_ratio", "cost_discount", "exchange_rate", "note").
+			Updates(v).Error
+	})
+	if err != nil {
+		return ChannelCostVersion{}, err
+	}
+	v.ChannelId = before.ChannelId
+	v.CreatedAt = before.CreatedAt
+	v.CreatedBy = before.CreatedBy
+	return before, nil
+}
+
+// SyncChannelCostSetting 把渠道在 now 时刻生效的版本写回 channels.setting 的
+// cost_mode/cost_ratio/cost_discount/cost_exchange_rate，其它键原样保留。
+//
+// 渠道编辑页显示的成本价就是 setting 里的这一份。版本增删改之后不同步的话，编辑页
+// 显示的就不是实际生效的价。渠道没有任何版本时不动。
+//
+// 只写当前模式用到的字段：另一模式的旧值留着，管理员切回去时还能看到上次的数；
+// 倍率模式不用结算汇率，删掉它。
+func SyncChannelCostSetting(channelId int, now int64) error {
+	var versions []ChannelCostVersion
+	if err := DB.Where("channel_id = ?", channelId).Order("effective_from asc").Find(&versions).Error; err != nil {
+		return err
+	}
+	inEffect, ok := VersionMap{channelId: versions}.VersionAt(channelId, now)
+	if !ok {
+		return nil
+	}
+	var channel Channel
+	if err := DB.Select("id", "setting").Where("id = ?", channelId).Limit(1).Find(&channel).Error; err != nil {
+		return err
+	}
+	if channel.Id == 0 {
+		return nil
+	}
+	setting := map[string]any{}
+	if channel.Setting != nil && strings.TrimSpace(*channel.Setting) != "" {
+		if err := common.UnmarshalJsonStr(*channel.Setting, &setting); err != nil {
+			return err
+		}
+	}
+	if inEffect.CostMode == "discount" {
+		setting["cost_mode"] = "discount"
+		setting["cost_discount"] = inEffect.CostDiscount
+		setting["cost_exchange_rate"] = inEffect.ExchangeRate
+	} else {
+		setting["cost_mode"] = "ratio"
+		setting["cost_ratio"] = inEffect.CostRatio
+		delete(setting, "cost_exchange_rate")
+	}
+	data, err := common.Marshal(setting)
+	if err != nil {
+		return err
+	}
+	return DB.Model(&Channel{}).Where("id = ?", channelId).Update("setting", string(data)).Error
 }
 
 // VersionExists 检查同渠道同 effective_from 是否已有版本，用于 409 冲突检测。

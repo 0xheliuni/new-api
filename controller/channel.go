@@ -1283,10 +1283,20 @@ func UpdateChannel(c *gin.Context) {
 	// 的价"，渠道没存进去就不该有对应版本。
 	// 必须解进 hostdto：relaykit 的 ChannelSettings 没有成本字段，经它转一手会丢掉
 	// cost_mode/cost_ratio/cost_discount，版本就不会追加。
+	// 只有成本字段相对原设置真的改了才追加：渠道设置可能和此刻生效的版本不一致（补录了
+	// 更晚的记录、删了最新的记录、或有一条到点生效的记录），无关的保存若也拿它去比，
+	// 就会按设置里的旧价追加记录，把成本悄悄改回旧价。
 	if channel.Setting != nil {
-		var costSetting hostdto.ChannelSettings
-		if err := common.UnmarshalJsonStr(*channel.Setting, &costSetting); err == nil {
-			appendCostVersionIfChanged(c, channel.Id, &costSetting)
+		var costSetting, originCost hostdto.ChannelSettings
+		if originChannel.Setting != nil && *originChannel.Setting != "" {
+			_ = common.UnmarshalJsonStr(*originChannel.Setting, &originCost)
+		}
+		originPrice := model.ChannelCostVersion{CostMode: originCost.CostMode, CostRatio: originCost.CostRatio,
+			CostDiscount: originCost.CostDiscount, ExchangeRate: originCost.CostExchangeRate}
+		if err := common.UnmarshalJsonStr(*channel.Setting, &costSetting); err == nil && costVersionChanged(originPrice, &costSetting) {
+			if err := appendCostVersionIfChanged(c, channel.Id, &costSetting, costVersionNoteChannelUpdate); err != nil {
+				common.SysError(common.LogText("append cost version failed: channel_id=%d, error=%v", channel.Id, err))
+			}
 		}
 	}
 	if proxyChanged {

@@ -32,9 +32,14 @@ func TestCostVersionChanged(t *testing.T) {
 		// 只改结算汇率也是改价：同一个折扣按另一个汇率结算，成本就不一样。
 		{"discount-rate-changed", model.ChannelCostVersion{CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 1},
 			dto.ChannelSettings{CostMode: "discount", CostDiscount: 0.31, CostExchangeRate: 6.8}, true},
-		// 设置里没带汇率（旧客户端只提交折扣）时不能据此判定改价，否则每次保存都追一版。
+		// 设置里不带汇率（旧客户端只提交折扣）时不能据此判定改价，否则每次保存都追一版。
 		{"discount-rate-absent", model.ChannelCostVersion{CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8},
 			dto.ChannelSettings{CostMode: "discount", CostDiscount: 0.31}, false},
+		// 只比当前模式用到的字段：折扣模式下设置里残留的旧倍率不算改价。
+		{"discount-ignores-leftover-ratio", model.ChannelCostVersion{CostMode: "discount", CostDiscount: 0.31, ExchangeRate: 6.8},
+			dto.ChannelSettings{CostMode: "discount", CostRatio: 3.1, CostDiscount: 0.31, CostExchangeRate: 6.8}, false},
+		{"ratio-ignores-leftover-discount", model.ChannelCostVersion{CostMode: "ratio", CostRatio: 3.1},
+			dto.ChannelSettings{CostMode: "ratio", CostRatio: 3.1, CostDiscount: 0.31}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
