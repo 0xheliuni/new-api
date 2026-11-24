@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,7 +58,8 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
-	autoGroups, err := token.GetAutoGroups()
+	maskedToken.NormalizeLegacyGroups()
+	autoGroups, err := maskedToken.GetAutoGroups()
 	if err != nil {
 		common.SysError(common.LogText("failed to parse auto groups for token %d: %v", token.Id, err))
 		autoGroups = nil
@@ -126,6 +126,49 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 		return false
 	}
 	return true
+}
+
+// applyTokenGroupBinding validates the requested group binding against the
+// user's current permissions and stores it on target. A token follows the
+// user's group (empty), uses one group, inherits the global Auto order
+// ("auto"), or routes through its own ordered group list ("auto" with
+// auto_groups). An ordered list does not need the Auto pseudo-group because
+// every listed group is checked. The legacy comma-separated group that older
+// clients send is accepted as an ordered list.
+func applyTokenGroupBinding(c *gin.Context, target *model.Token, request *tokenRequest) bool {
+	requested := request.Token
+	autoGroups := request.AutoGroups
+	if requested.NormalizeLegacyGroups() && requested.Group == "auto" {
+		groups, _ := requested.GetAutoGroups()
+		autoGroups = tokenAutoGroupsInput{Set: true, Groups: groups}
+	}
+	target.Group = requested.Group
+	if target.Group != "auto" {
+		target.CrossGroupRetry = false
+		_ = target.SetAutoGroups(nil)
+	} else {
+		target.CrossGroupRetry = requested.CrossGroupRetry
+		if autoGroups.Set && !setTokenAutoGroups(c, target, autoGroups.Groups) {
+			return false
+		}
+	}
+	// Following the user group needs no check; the groups of an ordered list
+	// were checked by setTokenAutoGroups and are filtered again per request.
+	if target.Group == "" || (target.Group == "auto" && target.AutoGroups != "") {
+		return true
+	}
+
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if (target.Group == "auto" && service.GroupInUserUsableGroups(userGroup, "auto")) ||
+		service.IsUserSelectableGroup(userGroup, target.Group) {
+		return true
+	}
+	common.ApiErrorT(c, "Group {{group}} is unavailable or unauthorized", map[string]any{"group": target.Group})
+	return false
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -313,13 +356,8 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
-	if token.Group == "auto" {
-		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
-			return
-		}
-	} else {
-		token.CrossGroupRetry = false
-		_ = token.SetAutoGroups(nil)
+	if !applyTokenGroupBinding(c, &token, &request) {
+		return
 	}
 	key, err := common.GenerateKey()
 	if err != nil {
@@ -412,13 +450,6 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if statusOnly == "" {
-		userGroup, _ := model.GetUserGroup(userId, false)
-		if err := validateTokenGroups(userGroup, token.GetGroups()); err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-	}
 	params["name"] = cleanToken.Name
 	previous := *cleanToken
 	if token.Status == common.TokenStatusEnabled {
@@ -442,15 +473,11 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.Group = token.Group
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
-			cleanToken.CrossGroupRetry = false
-			_ = cleanToken.SetAutoGroups(nil)
-		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
-				return
-			}
+		// A stored legacy list becomes an ordered list first, so a request
+		// that omits auto_groups keeps it instead of inheriting global Auto.
+		cleanToken.NormalizeLegacyGroups()
+		if !applyTokenGroupBinding(c, cleanToken, &request) {
+			return
 		}
 	}
 	err = cleanToken.Update()
@@ -554,26 +581,4 @@ func GetTokenKeysBatch(c *gin.Context) {
 	params["returned_ids"] = returnedIDs
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
-}
-
-// validateTokenGroupsWithUsable 校验分组列表合法性（纯逻辑，便于单测）：
-//  1. auto 不能与其它分组同时选择；
-//  2. 每个分组都必须在用户可用分组内。
-func validateTokenGroupsWithUsable(usable map[string]string, groups []string) error {
-	for _, g := range groups {
-		if g == "auto" && len(groups) > 1 {
-			return fmt.Errorf("auto 分组不能与其他分组同时选择")
-		}
-	}
-	for _, g := range groups {
-		if _, ok := usable[g]; !ok {
-			return fmt.Errorf("无权访问 %s 分组", g)
-		}
-	}
-	return nil
-}
-
-// validateTokenGroups 取用户可用分组后校验 token 的分组列表。
-func validateTokenGroups(userGroup string, groups []string) error {
-	return validateTokenGroupsWithUsable(service.GetUserUsableGroups(userGroup), groups)
 }

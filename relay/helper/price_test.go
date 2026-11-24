@@ -795,3 +795,40 @@ func TestModelPriceHelperRefusesUnpricedSvgAuthor(t *testing.T) {
 		})
 	}
 }
+
+// A token with an ordered group list is billed at the ratio of the group that
+// served the request, which channel selection records as the Auto group.
+func TestHandleGroupRatioBillsTheGroupThatServedAnOrderedGroupList(t *testing.T) {
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	originalGroupGroupRatios := ratio_setting.GroupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(originalGroupGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"claude":1.5,"gpt":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"default":{"gpt":1.8}}`))
+
+	cases := []struct {
+		name       string
+		servedBy   string
+		groupRatio float64
+		special    bool
+	}{
+		{name: "first group", servedBy: "claude", groupRatio: 1.5},
+		{name: "later group with a user group special ratio", servedBy: "gpt", groupRatio: 1.8, special: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("auto_group", tc.servedBy)
+			info := &relaycommon.RelayInfo{UserGroup: "default", UsingGroup: "auto", TokenGroup: "auto"}
+
+			ratioInfo := HandleGroupRatio(ctx, info)
+
+			assert.Equal(t, tc.servedBy, info.UsingGroup)
+			assert.InDelta(t, tc.groupRatio, ratioInfo.GroupRatio, 1e-9)
+			assert.Equal(t, tc.special, ratioInfo.HasSpecialRatio)
+		})
+	}
+}

@@ -62,9 +62,10 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
@@ -72,6 +73,7 @@ import {
   translateServerText,
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   createApiKey,
@@ -80,7 +82,10 @@ import {
   getTokenAutoGroups,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { useApiKeyModelOptions } from '../hooks/use-api-key-model-options'
 import {
+  API_KEY_GROUP_MODES,
+  type ApiKeyGroupMode,
   getApiKeyFormSchema,
   type ApiKeyFormValues,
   getApiKeyFormDefaultValues,
@@ -117,14 +122,7 @@ export function ApiKeysMutateDrawer({
     null
   )
   const defaultUseAutoGroup = status?.default_use_auto_group === true
-
-  // Fetch models
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
-    enabled: open,
-    staleTime: 0,
-  })
+  const userGroup = useAuthStore((s) => s.auth.user?.group) ?? ''
 
   // Fetch groups
   const {
@@ -161,7 +159,6 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
     () =>
       Object.entries(groupsData?.data || {}).map(([key, info]) => ({
@@ -173,9 +170,13 @@ export function ApiKeysMutateDrawer({
     [groupsData, t]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
-  const availableAutoGroupNames = useMemo(
-    () => groups.filter((group) => group.value !== 'auto').map((g) => g.value),
+  const singleGroupOptions = useMemo(
+    () => groups.filter((group) => group.value !== 'auto'),
     [groups]
+  )
+  const availableAutoGroupNames = useMemo(
+    () => singleGroupOptions.map((g) => g.value),
+    [singleGroupOptions]
   )
   const globalAutoGroups = useMemo(() => {
     const available = new Set(availableAutoGroupNames)
@@ -264,25 +265,50 @@ export function ApiKeysMutateDrawer({
   const formTarget =
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
+  const groupMode = form.watch('group_mode')
   const selectedGroup = form.watch('group')
+  const selectedAutoGroups = form.watch('auto_groups')
+  const selectedModels = form.watch('model_limits')
 
-  // Correct groups after groups load: filter out invalid groups, fall back if all invalid
+  // A single group that is no longer available is cleared rather than
+  // replaced, so saving asks for an explicit choice.
   useEffect(() => {
-    if (groups.length === 0) return
-    const currentGroup = selectedGroup
-    if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
-      const fallback =
-        groups.find((g) => g.value === 'default')?.value ??
-        groups[0]?.value ??
-        ''
-      form.setValue('group', fallback)
-      if (currentGroup === 'auto') {
-        form.setValue('auto_groups', [])
-        form.setValue('auto_groups_mode', 'inherit')
-        form.setValue('cross_group_retry', false)
-      }
+    if (singleGroupOptions.length === 0 || groupMode !== 'single') return
+    if (
+      selectedGroup &&
+      !singleGroupOptions.some((option) => option.value === selectedGroup)
+    ) {
+      form.setValue('group', '')
     }
-  }, [groups, form, selectedGroup])
+  }, [singleGroupOptions, form, groupMode, selectedGroup])
+
+  const routingGroups = useMemo(() => {
+    switch (groupMode) {
+      case 'user':
+        return userGroup ? [userGroup] : []
+      case 'single':
+        return selectedGroup ? [selectedGroup] : []
+      case 'multiple':
+        return selectedAutoGroups
+      case 'auto':
+        return globalAutoGroups
+    }
+  }, [groupMode, userGroup, selectedGroup, selectedAutoGroups, globalAutoGroups])
+  const modelOptions = useApiKeyModelOptions({
+    enabled: open,
+    groups: routingGroups,
+    selected: selectedModels,
+  })
+
+  const changeGroupMode = (mode: ApiKeyGroupMode) => {
+    const previous = form.getValues('group_mode')
+    form.setValue('group_mode', mode, { shouldDirty: true })
+    const routesAcrossGroups = mode === 'multiple' || mode === 'auto'
+    const routedAcrossGroups = previous === 'multiple' || previous === 'auto'
+    if (routesAcrossGroups && !routedAcrossGroups) {
+      form.setValue('cross_group_retry', true, { shouldDirty: true })
+    }
+  }
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
@@ -364,9 +390,26 @@ export function ApiKeysMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
-  const autoGroupsMode = form.watch('auto_groups_mode')
-  const isAutoGroup = selectedGroup === 'auto'
-  const isMultiGroup = isAutoGroup && autoGroupsMode === 'custom'
+  const routesAcrossGroups = groupMode === 'multiple' || groupMode === 'auto'
+  const groupModeLabels: Record<ApiKeyGroupMode, string> = {
+    user: t('Follow user group'),
+    single: t('Single group'),
+    multiple: t('Multiple groups'),
+    auto: t('Auto'),
+  }
+  const groupModeDescriptions: Record<ApiKeyGroupMode, string> = {
+    user: t('Uses the group of your account.'),
+    single: t('Uses one group.'),
+    multiple: t(
+      'Tries the groups in order and uses the first one that serves the model. Billing uses the group that served the request.'
+    ),
+    auto: t('Follows the global Auto order set by the administrator.'),
+  }
+  // Auto stays visible for a key that already uses it, so its state is shown
+  // even after the administrator stops offering the Auto group.
+  const visibleGroupModes = API_KEY_GROUP_MODES.filter(
+    (mode) => mode !== 'auto' || backendHasAuto || groupMode === 'auto'
+  )
   const unlimitedQuota = form.watch('unlimited_quota')
 
   return (
@@ -423,58 +466,96 @@ export function ApiKeysMutateDrawer({
 
               <FormField
                 control={form.control}
-                name='group'
+                name='group_mode'
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={(group) => {
-                          field.onChange(group)
-                          if (group === 'auto') {
-                            form.setValue('cross_group_retry', true, {
-                              shouldDirty: true,
-                            })
-                            return
-                          }
-                          form.setValue('cross_group_retry', false, {
-                            shouldDirty: true,
-                          })
+                      <ToggleGroup
+                        value={[field.value]}
+                        onValueChange={(values) => {
+                          const next = API_KEY_GROUP_MODES.find(
+                            (mode) => mode === values[0]
+                          )
+                          if (next) changeGroupMode(next)
                         }}
-                        placeholder={t('Select a group')}
-                      />
+                        variant='outline'
+                        size='sm'
+                        spacing={1}
+                        aria-label={t('Group')}
+                        className='grid w-full grid-cols-2 sm:grid-cols-4'
+                      >
+                        {visibleGroupModes.map((mode) => (
+                          <ToggleGroupItem
+                            key={mode}
+                            value={mode}
+                            className='w-full'
+                          >
+                            {groupModeLabels[mode]}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
                     </FormControl>
-                    <FormMessage />
+                    <FormDescription>
+                      {groupModeDescriptions[field.value]}
+                    </FormDescription>
                   </FormItem>
                 )}
               />
 
-              {isAutoGroup && (
+              {groupMode === 'single' && (
+                <FormField
+                  control={form.control}
+                  name='group'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Single group')}</FormLabel>
+                      <FormControl>
+                        <ApiKeyGroupCombobox
+                          options={singleGroupOptions}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder={t('Select a group')}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {routesAcrossGroups && (
                 <FormField
                   control={form.control}
                   name='auto_groups'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Auto group order')}</FormLabel>
-                      <FormDescription>
-                        {t(
-                          'Choose and order the groups this API key will try.'
-                        )}
-                      </FormDescription>
+                      <FormLabel>
+                        {groupMode === 'multiple'
+                          ? t('Group order')
+                          : t('Auto group order')}
+                      </FormLabel>
+                      {groupMode === 'multiple' && (
+                        <FormDescription>
+                          {t(
+                            'Choose and order the groups this API key will try.'
+                          )}
+                        </FormDescription>
+                      )}
                       <FormControl>
                         <AutoGroupOrderEditor
                           value={field.value}
-                          mode={autoGroupsMode}
-                          options={groups}
+                          mode={groupMode === 'multiple' ? 'custom' : 'inherit'}
+                          listOnly={groupMode === 'multiple'}
+                          options={singleGroupOptions}
                           globalOptions={globalAutoGroupOptions}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {
-                            form.setValue('auto_groups_mode', value.mode, {
-                              shouldDirty: true,
-                              shouldValidate: false,
-                            })
+                            form.setValue(
+                              'group_mode',
+                              value.mode === 'custom' ? 'multiple' : 'auto',
+                              { shouldDirty: true }
+                            )
                             form.setValue(
                               'auto_groups',
                               value.groups.slice(0, maxAutoGroups),
@@ -492,7 +573,7 @@ export function ApiKeysMutateDrawer({
                 />
               )}
 
-              {selectedGroup === 'auto' && (
+              {routesAcrossGroups && (
                 <FormField
                   control={form.control}
                   name='cross_group_retry'
@@ -518,13 +599,6 @@ export function ApiKeysMutateDrawer({
                     </FormItem>
                   )}
                 />
-              )}
-              {isMultiGroup && (
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Multiple groups selected: cross-group retry is enabled automatically.'
-                  )}
-                </p>
               )}
 
               <FormField
@@ -715,10 +789,7 @@ export function ApiKeysMutateDrawer({
                           <FormLabel>{t('Model Limits')}</FormLabel>
                           <FormControl>
                             <MultiSelect
-                              options={models.map((m) => ({
-                                label: m,
-                                value: m,
-                              }))}
+                              options={modelOptions}
                               selected={field.value}
                               onChange={field.onChange}
                               placeholder={t(
@@ -728,6 +799,8 @@ export function ApiKeysMutateDrawer({
                           </FormControl>
                           <FormDescription>
                             {t('Limit which models can be used with this key')}
+                            {routingGroups.length > 0 &&
+                              ` ${t('Only models served by the selected groups are listed.')}`}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

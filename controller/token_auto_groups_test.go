@@ -24,7 +24,7 @@ func configureTokenAutoGroupsTest(t *testing.T, maxCount string, autoGroups stri
 	originalRatios := ratio_setting.GroupRatio2JSONString()
 	require.NoError(t, setting.UpdateMaxTokenAutoGroups(maxCount))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(autoGroups))
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP","auto":"Auto"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1}`))
 	t.Cleanup(func() {
 		require.NoError(t, setting.UpdateMaxTokenAutoGroups(stringInt(originalMax)))
@@ -231,4 +231,97 @@ func TestGetTokenAutoGroupsReturnsFullFilteredGlobalOrderAndLimit(t *testing.T) 
 	require.NoError(t, common.Unmarshal(response.Data, &data))
 	assert.Equal(t, []string{"vip", "default"}, data.Groups)
 	assert.Equal(t, 1, data.MaxCount)
+}
+
+func TestAddTokenGroupBindingPermissions(t *testing.T) {
+	tests := []struct {
+		name          string
+		usableGroups  string
+		group         string
+		autoGroups    []string
+		success       bool
+		storedGroup   string
+		storedAuto    string
+		storedRetries bool
+	}{
+		{name: "legacy comma list becomes an ordered list", usableGroups: `{"default":"Default","vip":"VIP"}`, group: " vip , default ", success: true, storedGroup: "auto", storedAuto: `["vip","default"]`, storedRetries: true},
+		{name: "ordered list does not need the auto permission", usableGroups: `{"default":"Default","vip":"VIP"}`, group: "auto", autoGroups: []string{"vip", "default"}, success: true, storedGroup: "auto", storedAuto: `["vip","default"]`, storedRetries: true},
+		{name: "inheriting global auto needs the auto permission", usableGroups: `{"default":"Default","vip":"VIP"}`, group: "auto"},
+		{name: "legacy list with an unauthorized group is refused", usableGroups: `{"default":"Default","vip":"VIP"}`, group: "vip,svip"},
+		{name: "unauthorized single group is refused", usableGroups: `{"default":"Default"}`, group: "vip"},
+		{name: "following the user group needs no permission", usableGroups: `{"default":"Default"}`, group: "", success: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(test.usableGroups))
+			user := setupTokenAutoGroupsControllerTest(t)
+			request := baseAutoTokenRequest("binding")
+			request["group"] = test.group
+			if test.autoGroups != nil {
+				request["auto_groups"] = test.autoGroups
+			}
+
+			ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
+			AddToken(ctx)
+
+			response := decodeAPIResponse(t, recorder)
+			require.Equal(t, test.success, response.Success, response.Message)
+			var tokens []model.Token
+			require.NoError(t, model.DB.Find(&tokens).Error)
+			if !test.success {
+				assert.Empty(t, tokens)
+				return
+			}
+			require.Len(t, tokens, 1)
+			assert.Equal(t, test.storedGroup, tokens[0].Group)
+			if test.storedAuto == "" {
+				assert.Empty(t, tokens[0].AutoGroups)
+			} else {
+				assert.JSONEq(t, test.storedAuto, tokens[0].AutoGroups)
+			}
+			assert.Equal(t, test.storedRetries, tokens[0].CrossGroupRetry)
+		})
+	}
+}
+
+func TestLegacyGroupListTokenReadsAndUpdatesAsOrderedList(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	// Without the auto permission the stored list must still be kept.
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	user := setupTokenAutoGroupsControllerTest(t)
+	token := seedToken(t, model.DB, user.Id, "legacy-list", "legacy-list-key")
+	token.Group = "vip,default"
+	require.NoError(t, model.DB.Save(token).Error)
+
+	getCtx, getRecorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodGet, "/api/token/"+stringInt(token.Id), nil, user.Id)
+	getCtx.Params = append(getCtx.Params, gin.Param{Key: "id", Value: stringInt(token.Id)})
+	GetToken(getCtx)
+	getResponse := decodeAPIResponse(t, getRecorder)
+	require.True(t, getResponse.Success, getResponse.Message)
+	var data struct {
+		Group           string   `json:"group"`
+		AutoGroups      []string `json:"auto_groups"`
+		CrossGroupRetry bool     `json:"cross_group_retry"`
+	}
+	require.NoError(t, common.Unmarshal(getResponse.Data, &data))
+	assert.Equal(t, "auto", data.Group)
+	assert.Equal(t, []string{"vip", "default"}, data.AutoGroups)
+	assert.True(t, data.CrossGroupRetry)
+
+	// An older client edits the token it read back: it sends group "auto"
+	// without auto_groups, which keeps the list instead of inheriting.
+	request := baseAutoTokenRequest("legacy-list-renamed")
+	request["id"] = token.Id
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	UpdateToken(ctx)
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+
+	var updated model.Token
+	require.NoError(t, model.DB.First(&updated, token.Id).Error)
+	assert.Equal(t, "auto", updated.Group)
+	assert.JSONEq(t, `["vip","default"]`, updated.AutoGroups)
+	assert.True(t, updated.CrossGroupRetry)
 }

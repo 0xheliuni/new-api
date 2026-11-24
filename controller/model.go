@@ -204,40 +204,9 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 		}, nil
 	}
 
-	// Multi-group token: ContextKeyTokenAutoGroups holds []string when len >= 2.
-	if tokenGroups, ok := c.Get(string(constant.ContextKeyTokenAutoGroups)); ok {
-		if tgs, ok2 := tokenGroups.([]string); ok2 && len(tgs) >= 2 {
-			return modelListGroups{
-				userGroup:   userGroup,
-				tokenGroup:  tokenGroup,
-				ownerGroups: tgs,
-			}, nil
-		}
-	}
-	// Fallback: parse comma-separated tokenGroup string (e.g. "claude,gpt").
-	if tokenGroup != "" {
-		parts := strings.Split(tokenGroup, ",")
-		cleaned := parts[:0]
-		for _, p := range parts {
-			if t := strings.TrimSpace(p); t != "" {
-				cleaned = append(cleaned, t)
-			}
-		}
-		if len(cleaned) >= 2 {
-			return modelListGroups{
-				userGroup:   userGroup,
-				tokenGroup:  tokenGroup,
-				ownerGroups: cleaned,
-			}, nil
-		}
-	}
-
 	group := userGroup
 	if tokenGroup != "" {
-		group = strings.TrimSpace(strings.SplitN(tokenGroup, ",", 2)[0])
-		if group == "" {
-			group = userGroup
-		}
+		group = tokenGroup
 	}
 	return modelListGroups{
 		userGroup:   userGroup,

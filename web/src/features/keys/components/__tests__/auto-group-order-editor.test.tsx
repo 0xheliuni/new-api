@@ -139,6 +139,30 @@ function CustomEmptyHarness() {
   )
 }
 
+function ListOnlyHarness() {
+  const [groups, setGroups] = useState<string[]>([])
+  const [mode, setMode] = useState<'inherit' | 'custom'>('custom')
+
+  return (
+    <I18nextProvider i18n={i18n}>
+      <AutoGroupOrderEditor
+        value={groups}
+        mode={mode}
+        listOnly
+        options={globalOptions}
+        globalOptions={globalOptions}
+        maxCount={3}
+        onChange={(value) => {
+          setGroups(value.groups)
+          setMode(value.mode)
+        }}
+      />
+      <output data-testid='order'>{groups.join(',')}</output>
+      <output data-testid='mode'>{mode}</output>
+    </I18nextProvider>
+  )
+}
+
 function findButton(container: HTMLElement, label: string): HTMLButtonElement {
   return within(container).getByRole('button', { name: label })
 }
@@ -360,6 +384,33 @@ describe('Auto group order editor', () => {
     expect(within(container).getByTestId('mode')).toHaveTextContent('custom')
     expect(container).toHaveTextContent(
       'No valid custom Auto groups remain. Add a group or restore global Auto.'
+    )
+  })
+
+  test('a list-only editor builds an ordered group list without offering global Auto', () => {
+    const { container } = render(<ListOnlyHarness />)
+
+    expect(
+      within(container).getByRole('group', { name: 'Group order' })
+    ).toBeInTheDocument()
+    expect(
+      within(container).queryByRole('button', { name: 'Restore global Auto' })
+    ).toBe(null)
+    expect(container).toHaveTextContent(
+      'No groups selected yet. Add the groups this key may use.'
+    )
+    const addButton = within(container).getByRole('combobox')
+    expect(addButton).toHaveTextContent('Add group')
+
+    fireEvent.click(addButton)
+    fireEvent.click(getCommandItem('Team'))
+    fireEvent.click(addButton)
+    fireEvent.click(getCommandItem('VIP'))
+
+    expect(within(container).getByTestId('order')).toHaveTextContent('team,vip')
+    expect(within(container).getByTestId('mode')).toHaveTextContent('custom')
+    expect(container.querySelector('[data-slot="global-auto-order"]')).toBe(
+      null
     )
   })
 })

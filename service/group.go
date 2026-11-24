@@ -107,6 +107,17 @@ func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
 	return FilterUserTokenAutoGroups(userGroup, groups)
 }
 
+// RoutingGroupLabel names the group a request routes through in client-facing
+// errors. An Auto token lists the ordered groups it may use, for example
+// "auto(vip->default)", so the caller can see which groups were tried.
+func RoutingGroupLabel(c *gin.Context, usingGroup string) string {
+	if usingGroup != "auto" {
+		return usingGroup
+	}
+	groups := GetRequestAutoGroups(c, common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	return "auto(" + strings.Join(groups, "->") + ")"
+}
+
 // GetGroupsEnabledModels 按 groups 顺序获取各分组启用的模型并去重
 func GetGroupsEnabledModels(groups []string) []string {
 	seen := make(map[string]struct{})

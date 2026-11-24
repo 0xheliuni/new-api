@@ -34,6 +34,8 @@ import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
 type ApiKeyGroupCellProps = {
   crossGroupRetry: boolean
   group: string
+  /** The key's own ordered group list, stored as the `auto` group. */
+  autoGroups?: string[] | null
   ratio?: GroupRatio
   shouldReduceMotion: boolean
 }
@@ -43,6 +45,22 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   const group = props.group?.trim() || ''
+  const orderedGroups = group === 'auto' ? (props.autoGroups ?? []) : []
+  if (orderedGroups.length > 0) {
+    const chain = orderedGroups.join(' → ')
+    return (
+      <TruncatedCell
+        className={isMobile ? 'w-full' : 'max-w-50'}
+        tabIndex={0}
+        tooltipContent={`${t('Multiple groups')}: ${chain}`}
+        tooltipClassName='break-all'
+      >
+        <span className='text-xs font-medium' data-api-key-group-cell='multiple'>
+          {chain}
+        </span>
+      </TruncatedCell>
+    )
+  }
   if (group !== 'auto') {
     const ratio =
       group && typeof props.ratio === 'number' ? props.ratio : undefined

@@ -169,9 +169,19 @@ const EditTokenModal = (props) => {
       } else {
         data.model_limits = [];
       }
-      if (typeof data.group === 'string') {
+      // 多分组令牌存为 auto 分组 + auto_groups 有序列表，回显为多选的各个分组。
+      if (
+        data.group === 'auto' &&
+        Array.isArray(data.auto_groups) &&
+        data.auto_groups.length > 0
+      ) {
+        data.group = data.auto_groups;
+      } else if (typeof data.group === 'string') {
         data.group = data.group
-          ? data.group.split(',').map((g) => g.trim()).filter(Boolean)
+          ? data.group
+              .split(',')
+              .map((g) => g.trim())
+              .filter(Boolean)
           : [];
       }
       data.remain_amount = Number(
@@ -227,12 +237,17 @@ const EditTokenModal = (props) => {
       : values.group
         ? [values.group]
         : [];
-    const normalizedGroup = {
-      group: groupArr.join(','),
-      cross_group_retry: groupArr.includes('auto')
-        ? !!values.cross_group_retry
-        : groupArr.length >= 2,
-    };
+    // 选择多个分组时保存为 auto 分组 + 有序的 auto_groups 列表（不需要 auto
+    // 分组权限），并自动按顺序跨分组重试；单个分组或 auto 本身清空列表。
+    const isGroupList = groupArr.length >= 2 && !groupArr.includes('auto');
+    const normalizedGroup = isGroupList
+      ? { group: 'auto', auto_groups: groupArr, cross_group_retry: true }
+      : {
+          group: groupArr[0] || '',
+          auto_groups: [],
+          cross_group_retry:
+            groupArr[0] === 'auto' ? !!values.cross_group_retry : false,
+        };
     if (isEdit) {
       let { tokenCount: _tc, ...localInputs } = values;
       localInputs.remain_quota = localInputs.unlimited_quota

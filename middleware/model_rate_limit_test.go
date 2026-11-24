@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,4 +102,53 @@ func TestModelMemoryRateLimitReservesConcurrentSuccessAdmission(t *testing.T) {
 	<-finished
 	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
 	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+}
+
+func TestResolveModelRequestRateLimitUsesStrictestLimitOfTokenGroups(t *testing.T) {
+	originalTotal, originalSuccess := setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+	originalGroups := setting.ModelRequestRateLimitGroup2JSONString()
+	originalUsable := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = originalTotal, originalSuccess
+		require.NoError(t, setting.UpdateModelRequestRateLimitGroupByJSONString(originalGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
+	setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = 100, 50
+	require.NoError(t, setting.UpdateModelRequestRateLimitGroupByJSONString(`{"vip":[0,20],"default":[30,0],"auto":[7,3]}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP","svip":"SVIP"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2,"svip":3}`))
+
+	cases := []struct {
+		name        string
+		tokenGroup  string
+		tokenGroups []string
+		total       int
+		success     int
+	}{
+		{name: "user group", tokenGroup: "", total: 30, success: 0},
+		{name: "single group", tokenGroup: "vip", total: 0, success: 20},
+		{name: "group without its own limits", tokenGroup: "svip", total: 100, success: 50},
+		{name: "inherited global auto keeps the limits of auto", tokenGroup: "auto", total: 7, success: 3},
+		{name: "ordered list takes the strictest of each limit", tokenGroup: "auto", tokenGroups: []string{"vip", "default"}, total: 30, success: 20},
+		{name: "list member without its own limits uses the global ones", tokenGroup: "auto", tokenGroups: []string{"svip", "vip"}, total: 100, success: 20},
+		{name: "revoked list member is ignored", tokenGroup: "auto", tokenGroups: []string{"revoked", "vip"}, total: 0, success: 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+			common.SetContextKey(c, constant.ContextKeyTokenGroup, tc.tokenGroup)
+			if tc.tokenGroups != nil {
+				common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, tc.tokenGroups)
+			}
+
+			total, success := resolveModelRequestRateLimit(c)
+
+			assert.Equal(t, tc.total, total)
+			assert.Equal(t, tc.success, success)
+		})
+	}
 }

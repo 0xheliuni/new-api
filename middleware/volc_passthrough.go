@@ -115,22 +115,19 @@ func resolveVolcPassthroughChannel(c *gin.Context, path string) (*model.Channel,
 // candidateGroups 返回本次请求可用于选渠道的分组,按优先顺序。
 //
 // usingGroup 可能是字面分组名,也可能是 auto —— auto 不是真实分组,
-// 直接拿去查渠道永远查不到。多分组令牌同理:首个分组没有透传渠道时
-// 应继续尝试后续分组,与模型路径的跨分组重试行为保持一致。
+// 直接拿去查渠道永远查不到。auto 令牌(含自带有序分组列表的多分组令牌)
+// 按 GetRequestAutoGroups 展开,与模型路径的跨分组选择保持一致。
 func candidateGroups(c *gin.Context) []string {
 	using := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	if using == "auto" {
 		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		if groups := service.GetUserAutoGroup(userGroup); len(groups) > 0 {
+		if groups := service.GetRequestAutoGroups(c, userGroup); len(groups) > 0 {
 			return groups
 		}
 		if userGroup != "" {
 			return []string{userGroup}
 		}
 		return nil
-	}
-	if groups, ok := common.GetContextKeyType[[]string](c, constant.ContextKeyTokenAutoGroups); ok && len(groups) > 0 {
-		return groups
 	}
 	if using != "" {
 		return []string{using}

@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -183,21 +184,7 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 
 		// 计算限流参数
 		duration := rateLimitDurationSeconds(setting.ModelRequestRateLimitDurationMinutes)
-		totalMaxCount := setting.ModelRequestRateLimitCount
-		successMaxCount := setting.ModelRequestRateLimitSuccessCount
-
-		// 获取分组
-		group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
-		if group == "" {
-			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-		}
-
-		//获取分组的限流配置
-		groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group)
-		if found {
-			totalMaxCount = groupTotalCount
-			successMaxCount = groupSuccessCount
-		}
+		totalMaxCount, successMaxCount := resolveModelRequestRateLimit(c)
 
 		// 根据存储类型选择并执行限流处理器
 		if common.RedisEnabled {
@@ -206,6 +193,50 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		}
 	}
+}
+
+// resolveModelRequestRateLimit returns the request limits of the group the
+// token routes through; a group without its own limits uses the global ones.
+// A token with its own ordered group list may route through any of its
+// groups, so the strictest limit among them applies. A token that inherits
+// the global Auto order keeps the limits configured for "auto". A limit of 0
+// means unlimited.
+func resolveModelRequestRateLimit(c *gin.Context) (totalMaxCount, successMaxCount int) {
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if group == "" {
+		group = userGroup
+	}
+	groups := []string{group}
+	if _, ownList := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups); ownList && group == "auto" {
+		if listed := service.GetRequestAutoGroups(c, userGroup); len(listed) > 0 {
+			groups = listed
+		}
+	}
+	for i, g := range groups {
+		total, success := setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+		if groupTotal, groupSuccess, found := setting.GetGroupRateLimit(g); found {
+			total, success = groupTotal, groupSuccess
+		}
+		if i == 0 {
+			totalMaxCount, successMaxCount = total, success
+			continue
+		}
+		totalMaxCount = stricterRateLimit(totalMaxCount, total)
+		successMaxCount = stricterRateLimit(successMaxCount, success)
+	}
+	return totalMaxCount, successMaxCount
+}
+
+// stricterRateLimit picks the lower of two request limits, where 0 is unlimited.
+func stricterRateLimit(a, b int) int {
+	if a == 0 {
+		return b
+	}
+	if b == 0 {
+		return a
+	}
+	return min(a, b)
 }
 
 func rateLimitDurationSeconds(durationMinutes int) int64 {

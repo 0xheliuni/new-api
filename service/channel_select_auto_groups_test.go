@@ -127,3 +127,65 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }
+
+func newTokenGroupListSelectContext(crossGroupRetry bool) *gin.Context {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, crossGroupRetry)
+	return ctx
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsRevokedGroupInTokenGroupList(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "token-group-list-revoked-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2201, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2202, "default", modelName)
+	model.InitChannelCache()
+	// The token was saved with vip first; the administrator later revoked vip.
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	ctx := newTokenGroupListSelectContext(true)
+
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "auto",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 2202, channel.Id)
+	assert.Equal(t, "default", selectedGroup)
+}
+
+func TestCacheGetRandomSatisfiedChannelKeepsGroupWhenCrossGroupRetryDisabled(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "token-group-list-no-retry-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2301, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2302, "default", modelName)
+	model.InitChannelCache()
+	ctx := newTokenGroupListSelectContext(false)
+
+	retry := 0
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "auto",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	first, firstGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	param.IncreaseRetry()
+	second, secondGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+
+	assert.Equal(t, []int{2301, 2301}, []int{first.Id, second.Id})
+	assert.Equal(t, []string{"vip", "vip"}, []string{firstGroup, secondGroup})
+}

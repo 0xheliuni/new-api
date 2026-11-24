@@ -20,6 +20,9 @@ For commercial licensing, please contact support@quantumnous.com
 // Form Utilities
 // ============================================================================
 export {
+  API_KEY_GROUP_MODES,
+  type ApiKeyGroupMode,
+  getApiKeyGroupMode,
   getApiKeyFormSchema,
   type ApiKeyFormValues,
   API_KEY_FORM_DEFAULT_VALUES,

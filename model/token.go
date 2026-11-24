@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -60,17 +61,44 @@ func (token *Token) Clean() {
 	token.Key = ""
 }
 
-// GetGroups 解析 token.Group（逗号分隔）为有序、去空格、去空项的分组名列表。
-// 空字符串返回空切片；单分组/auto 返回单元素切片，保证向后兼容。
-func (token *Token) GetGroups() []string {
+// NormalizeLegacyGroups rewrites, in memory, a token stored in the legacy
+// multi-group format, where Group held a comma-separated list such as
+// "claude,gpt". Two or more groups become an ordered Auto group list with
+// cross-group retry, which is how those tokens always routed; a single group
+// becomes that plain group. Empty entries, duplicates and the Auto
+// pseudo-group are dropped. Tokens without a comma are left untouched. The
+// stored row is converted the next time the token is saved.
+func (token *Token) NormalizeLegacyGroups() bool {
+	if !strings.Contains(token.Group, ",") {
+		return false
+	}
 	groups := make([]string, 0)
-	for _, g := range strings.Split(token.Group, ",") {
-		g = strings.TrimSpace(g)
-		if g != "" {
-			groups = append(groups, g)
+	hasAuto := false
+	for group := range strings.SplitSeq(token.Group, ",") {
+		group = strings.TrimSpace(group)
+		if group == "auto" {
+			hasAuto = true
+			continue
+		}
+		if group != "" && !slices.Contains(groups, group) {
+			groups = append(groups, group)
 		}
 	}
-	return groups
+	switch {
+	case len(groups) >= 2:
+		token.Group = "auto"
+		token.CrossGroupRetry = true
+		_ = token.SetAutoGroups(groups)
+	case len(groups) == 1:
+		token.Group = groups[0]
+		token.CrossGroupRetry = false
+		token.AutoGroups = ""
+	case hasAuto:
+		token.Group = "auto"
+	default:
+		token.Group = ""
+	}
+	return true
 }
 
 func MaskTokenKey(key string) string {

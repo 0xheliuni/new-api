@@ -7,8 +7,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractVolcTaskID(t *testing.T) {
@@ -45,15 +49,23 @@ func TestCandidateGroupsLiteralGroup(t *testing.T) {
 	}
 }
 
-// 多分组令牌：首个分组没有透传渠道时要能继续尝试后续分组。
-func TestCandidateGroupsMultiGroupToken(t *testing.T) {
+// 多分组令牌是自带有序分组列表的 auto 令牌：按令牌自己的列表展开，
+// 首个分组没有透传渠道时继续尝试后续分组，并像模型路径一样跳过已收回的分组。
+func TestCandidateGroupsUseTokenGroupList(t *testing.T) {
+	originalUsable := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
 	c := newGroupContext(t)
-	common.SetContextKey(c, constant.ContextKeyUsingGroup, "vip")
-	common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
-	got := candidateGroups(c)
-	if len(got) != 2 || got[0] != "vip" || got[1] != "default" {
-		t.Fatalf("got %v, want [vip default]", got)
-	}
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, "auto")
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"revoked", "vip", "default"})
+
+	assert.Equal(t, []string{"vip", "default"}, candidateGroups(c))
 }
 
 // auto 不是真实分组名，拿它直接查渠道永远查不到，必须展开。

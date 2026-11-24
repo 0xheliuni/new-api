@@ -25,12 +25,38 @@ import { DEFAULT_GROUP } from '../constants'
 import type { ApiKey, ApiKeyFormData } from '../types'
 
 // ============================================================================
+// Group Modes
+// ============================================================================
+
+/**
+ * How a key picks its group: the owner's group, one group, its own ordered
+ * group list, or the global Auto order. An ordered list is stored as the
+ * `auto` group with `auto_groups` and does not need the Auto group itself.
+ */
+export const API_KEY_GROUP_MODES = [
+  'user',
+  'single',
+  'multiple',
+  'auto',
+] as const
+
+export type ApiKeyGroupMode = (typeof API_KEY_GROUP_MODES)[number]
+
+export function getApiKeyGroupMode(
+  apiKey: Pick<ApiKey, 'group' | 'auto_groups'>
+): ApiKeyGroupMode {
+  const group = apiKey.group?.trim() || ''
+  if (group === '') return 'user'
+  if (group !== 'auto') return 'single'
+  return (apiKey.auto_groups ?? []).length > 0 ? 'multiple' : 'auto'
+}
+
+// ============================================================================
 // Form Schema
 // ============================================================================
 
-export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
-  const autoGroupLimit =
-    Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
+export function getApiKeyFormSchema(t: TFunction, maxGroups = 5) {
+  const groupLimit = Number.isInteger(maxGroups) && maxGroups > 0 ? maxGroups : 5
 
   return z
     .object({
@@ -40,33 +66,36 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       unlimited_quota: z.boolean(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
+      group_mode: z.enum(API_KEY_GROUP_MODES),
       group: z.string().optional(),
-      auto_groups_mode: z.enum(['inherit', 'custom']),
       auto_groups: z.array(z.string()),
       cross_group_retry: z.boolean().optional(),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
-      if (data.group === 'auto') {
-        if (
-          data.auto_groups_mode === 'custom' &&
-          data.auto_groups.length === 0
-        ) {
+      if (data.group_mode === 'single' && !data.group) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['group'],
+          message: t('Select a group'),
+        })
+      }
+
+      if (data.group_mode === 'multiple') {
+        if (data.auto_groups.length === 0) {
           ctx.addIssue({
             code: 'custom',
             path: ['auto_groups'],
-            message: t(
-              'Select at least one Auto group or restore global Auto.'
-            ),
+            message: t('Select at least one group'),
           })
         }
 
-        if (data.auto_groups.length > autoGroupLimit) {
+        if (data.auto_groups.length > groupLimit) {
           ctx.addIssue({
             code: 'custom',
             path: ['auto_groups'],
-            message: t('Select at most {{max}} Auto groups', {
-              max: autoGroupLimit,
+            message: t('Select at most {{max}} groups', {
+              max: groupLimit,
             }),
           })
         }
@@ -75,7 +104,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
           ctx.addIssue({
             code: 'custom',
             path: ['auto_groups'],
-            message: t('Auto groups must not contain duplicates'),
+            message: t('Groups must not contain duplicates'),
           })
         }
       }
@@ -110,8 +139,8 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   unlimited_quota: true,
   model_limits: [],
   allow_ips: '',
+  group_mode: 'user',
   group: DEFAULT_GROUP,
-  auto_groups_mode: 'inherit',
   auto_groups: [],
   cross_group_retry: true,
   tokenCount: 1,
@@ -122,10 +151,8 @@ export function getApiKeyFormDefaultValues(
 ): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
-    auto_groups_mode: 'inherit',
+    group_mode: defaultUseAutoGroup ? 'auto' : 'user',
     auto_groups: [],
-    cross_group_retry: defaultUseAutoGroup,
   }
 }
 
@@ -139,6 +166,15 @@ export function getApiKeyFormDefaultValues(
 export function transformFormDataToPayload(
   data: ApiKeyFormValues
 ): ApiKeyFormData {
+  const routesAcrossGroups =
+    data.group_mode === 'multiple' || data.group_mode === 'auto'
+  let group = ''
+  if (routesAcrossGroups) {
+    group = 'auto'
+  } else if (data.group_mode === 'single') {
+    group = data.group || ''
+  }
+
   return {
     name: data.name,
     remain_quota: data.unlimited_quota
@@ -151,12 +187,9 @@ export function transformFormDataToPayload(
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
-    group: data.group || '',
-    auto_groups:
-      data.group === 'auto' && data.auto_groups_mode === 'custom'
-        ? data.auto_groups
-        : [],
-    cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    group,
+    auto_groups: data.group_mode === 'multiple' ? data.auto_groups : [],
+    cross_group_retry: routesAcrossGroups ? !!data.cross_group_retry : false,
   }
 }
 
@@ -165,15 +198,14 @@ export function transformFormDataToPayload(
  */
 export function transformApiKeyToFormDefaults(
   apiKey: ApiKey,
-  availableAutoGroups: string[] = [],
-  maxAutoGroups = 5
+  availableGroups: string[] = [],
+  maxGroups = 5
 ): ApiKeyFormValues {
-  const availableSet = new Set(availableAutoGroups)
-  const storedAutoGroups = apiKey.auto_groups ?? []
-  const autoGroups = storedAutoGroups
+  const groupMode = getApiKeyGroupMode(apiKey)
+  const availableSet = new Set(availableGroups)
+  const autoGroups = (apiKey.auto_groups ?? [])
     .filter((group) => availableSet.has(group))
-    .slice(0, Math.max(0, maxAutoGroups))
-  const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
+    .slice(0, Math.max(0, maxGroups))
 
   return {
     name: apiKey.name,
@@ -189,8 +221,8 @@ export function transformApiKeyToFormDefaults(
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
-    group: apiKey.group || DEFAULT_GROUP,
-    auto_groups_mode: autoGroupsMode,
+    group_mode: groupMode,
+    group: groupMode === 'single' ? apiKey.group || '' : DEFAULT_GROUP,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,
     tokenCount: 1,

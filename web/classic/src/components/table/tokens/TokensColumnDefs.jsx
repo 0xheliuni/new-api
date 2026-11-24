@@ -89,6 +89,23 @@ const renderStatus = (text, record, t) => {
 
 // Render group column
 const renderGroupColumn = (text, record, t, groupRatios = {}) => {
+  // 多分组令牌：auto 分组 + 有序的 auto_groups 列表，按路由顺序展示。
+  const orderedGroups =
+    text === 'auto' && Array.isArray(record?.auto_groups)
+      ? record.auto_groups
+      : [];
+  if (orderedGroups.length > 0) {
+    return (
+      <Tooltip
+        content={t('按顺序尝试各分组，使用第一个提供该模型的分组')}
+        position='top'
+      >
+        <Tag color='white' shape='circle'>
+          {orderedGroups.join(' → ')}
+        </Tag>
+      </Tooltip>
+    );
+  }
   if (text === 'auto') {
     return (
       <Tooltip

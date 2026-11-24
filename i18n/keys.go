@@ -17,6 +17,7 @@ const (
 	MsgAuthTokenIPNotAllowed      = "auth.token_ip_not_allowed"
 	MsgAuthTokenGroupForbidden    = "auth.token_group_forbidden"
 	MsgAuthTokenGroupDeprecated   = "auth.token_group_deprecated"
+	MsgAuthTokenGroupsUnavailable = "auth.token_groups_unavailable"
 	MsgAuthChannelSelectForbidden = "auth.channel_select_forbidden"
 
 	MsgRateLimitReached      = "rate_limit.reached"
@@ -49,11 +50,11 @@ const (
 	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
 
 	// Prod-specific keys used in controller/service layers
-	MsgInvalidParams            = "common.invalid_params"
-	MsgFeatureDisabled          = "common.feature_disabled"
+	MsgInvalidParams               = "common.invalid_params"
+	MsgFeatureDisabled             = "common.feature_disabled"
 	MsgAutoCreateUsernameCollision = "user.auto_create_username_collision"
-	MsgUserExists               = "user.exists"
-	MsgUserInputInvalid         = "user.input_invalid"
+	MsgUserExists                  = "user.exists"
+	MsgUserInputInvalid            = "user.input_invalid"
 	MsgUserCannotCreateHigherLevel = "user.cannot_create_higher_level"
 )
 

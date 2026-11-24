@@ -605,27 +605,31 @@ func TokenAuth() func(c *gin.Context) {
 
 		userCache.WriteContext(c)
 
+		token.NormalizeLegacyGroups()
 		userGroup := userCache.Group
-		tokenGroups := token.GetGroups()
-		usableGroups := service.GetUserUsableGroups(userGroup)
-		// 逐个校验 token 绑定的每个分组都在用户可用分组内，且未被弃用
-		for _, g := range tokenGroups {
-			if _, ok := usableGroups[g]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": g}))
-				return
+		if token.Group != "" {
+			customGroups, customErr := token.GetAutoGroups()
+			if token.Group == "auto" && (customErr != nil || len(customGroups) > 0) {
+				// An ordered group list routes through the Auto machinery but
+				// does not need the Auto pseudo-group itself: each listed group
+				// is checked against the current permissions, here and again
+				// when a channel is selected. The request is refused only when
+				// none of them is usable any more.
+				if len(service.FilterUserTokenAutoGroups(userGroup, customGroups)) == 0 {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupsUnavailable))
+					return
+				}
+			} else {
+				if !service.GroupInUserUsableGroups(userGroup, token.Group) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": token.Group}))
+					return
+				}
+				if !ratio_setting.ContainsGroupRatio(token.Group) && token.Group != "auto" {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupDeprecated, map[string]any{"Group": token.Group}))
+					return
+				}
 			}
-			if !ratio_setting.ContainsGroupRatio(g) && g != "auto" {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupDeprecated, map[string]any{"Group": g}))
-				return
-			}
-		}
-		if len(tokenGroups) >= 2 {
-			// 多分组令牌：写入有序列表，初始 using group 取首个分组
-			common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, tokenGroups)
-			userGroup = tokenGroups[0]
-		} else if len(tokenGroups) == 1 {
-			// 单分组（含 auto）：等价原行为，覆盖 userGroup
-			userGroup = tokenGroups[0]
+			userGroup = token.Group
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 

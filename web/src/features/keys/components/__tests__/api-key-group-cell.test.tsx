@@ -43,6 +43,7 @@ await i18n.use(initReactI18next).init({
 
 function CellHarness(props: {
   group: string
+  autoGroups?: string[] | null
   ratio?: number | string
   crossGroupRetry?: boolean
   shouldReduceMotion?: boolean
@@ -52,6 +53,7 @@ function CellHarness(props: {
       <TooltipProvider>
         <ApiKeyGroupCell
           group={props.group}
+          autoGroups={props.autoGroups}
           ratio={props.ratio}
           crossGroupRetry={props.crossGroupRetry ?? false}
           shouldReduceMotion={props.shouldReduceMotion ?? false}
@@ -62,6 +64,21 @@ function CellHarness(props: {
 }
 
 describe('API key group table cell', () => {
+  test('shows an ordered group list as its routing chain with the full chain on focus', async () => {
+    render(
+      <CellHarness group='auto' autoGroups={['claude', 'gpt']} crossGroupRetry />
+    )
+
+    expect(screen.getByText('claude → gpt')).toBeInTheDocument()
+    expect(screen.queryByText('Cross-group')).not.toBeInTheDocument()
+    await userEvent.tab()
+    expect(
+      await screen.findByText('Multiple groups: claude → gpt', {
+        selector: '[data-slot="tooltip-content"]',
+      })
+    ).toBeVisible()
+  })
+
   test('keeps the group and compact localized multiplier together with one subtle flowing edge', () => {
     const { container } = render(
       <CellHarness group='auto' ratio='自动' crossGroupRetry />
