@@ -407,50 +407,31 @@ const CostTables = ({
     activeRatioValue !== undefined &&
     activeRatioValue !== '' &&
     !Number.isNaN(Number(activeRatioValue)) &&
-    Number(activeRatioValue) >= 0 &&
+    Number(activeRatioValue) > 0 &&
     (ratioModal.mode !== 'discount' || Number(ratioModal.rateValue) > 0);
 
+  // 设置从现在起的价：后端和此刻生效的价比较，不同才新增一条从现在起的价格记录，
+  // 并同步渠道设置。要更正以前的价，改下方的价格记录。
   const submitRatio = async () => {
     if (!isValidRatio) return;
     setSubmitting(true);
     try {
-      const channelRes = await API.get(`/api/channel/${ratioModal.channelId}`);
-      const { success, message, data } = channelRes.data;
-      if (!success) {
-        showError(message);
-        return;
-      }
-
-      let settingObj = {};
-      if (data.setting) {
-        try {
-          const parsed = JSON.parse(data.setting);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            settingObj = parsed;
-          }
-        } catch (e) {
-          settingObj = {};
-        }
-      }
-      settingObj.cost_mode = ratioModal.mode;
-      settingObj.cost_ratio = Number(ratioModal.ratioValue) || 0;
-      settingObj.cost_discount = Number(ratioModal.discountValue) || 0;
-      if (ratioModal.mode === 'discount') {
-        settingObj.cost_exchange_rate = Number(ratioModal.rateValue);
-      } else {
-        delete settingObj.cost_exchange_rate;
-      }
-
-      const updateRes = await API.put('/api/channel/', {
-        id: ratioModal.channelId,
-        setting: JSON.stringify(settingObj),
-      });
-      if (updateRes.data.success) {
+      const discount = ratioModal.mode === 'discount';
+      const res = await API.put(
+        `/api/cost/channels/${ratioModal.channelId}/price`,
+        {
+          cost_mode: ratioModal.mode,
+          cost_ratio: discount ? 0 : Number(ratioModal.ratioValue),
+          cost_discount: discount ? Number(ratioModal.discountValue) : 0,
+          exchange_rate: discount ? Number(ratioModal.rateValue) : 0,
+        },
+      );
+      if (res.data.success) {
         showSuccess(t('操作成功完成！'));
         setRatioModal((s) => ({ ...s, visible: false }));
         onRatioUpdated && onRatioUpdated();
       } else {
-        showError(updateRes.data.message);
+        showError(res.data.message);
       }
     } finally {
       setSubmitting(false);
@@ -840,7 +821,7 @@ const CostTables = ({
         <div className='pt-2 pb-1'>
           <Text type='tertiary' size='small'>
             {!isValidRatio
-              ? t('请输入不小于 0 的倍率')
+              ? t('请输入大于 0 的数值')
               : ratioModal.mode === 'discount'
                 ? t('折扣 {{d}} × 汇率 {{rate}} → 刊例 $1 记成本 ¥{{cny}}', {
                     d: ratioModal.discountValue,
@@ -859,7 +840,9 @@ const CostTables = ({
 
         <div className='pb-2'>
           <Text type='tertiary' size='small'>
-            {t('保存后记录为一个新的计价版本，历史区间仍按当时的价核算。')}
+            {t(
+              '只影响保存之后的日志；要更正以前的价格，请修改下方的价格记录。',
+            )}
           </Text>
         </div>
 
