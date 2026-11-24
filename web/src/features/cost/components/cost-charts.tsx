@@ -17,22 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { VChart } from '@visactor/react-vchart'
-import { LineChart, BarChart3 } from 'lucide-react'
-import { useCallback, useMemo } from 'react'
+import { BarChart3, LineChart } from 'lucide-react'
+import { type ReactNode, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
-import {
-  cycleThemeChartColors,
-  foldChannelStack,
-  formatBucketLabel,
-  formatBucketTooltip,
-  getThemeBackgroundColor,
-  sampleBucketTicks,
-  useCostCurrency,
-} from '../lib'
+import { buildCostStackSpec, buildCostTrendSpec } from '../chart-specs'
+import { getThemeBackgroundColor, useCostCurrency } from '../lib'
 import type { CostGranularity, CostOverview } from '../types'
 
 interface CostChartsProps {
@@ -40,33 +34,39 @@ interface CostChartsProps {
   loading?: boolean
 }
 
-/** Shared shell so both charts get identical header/height/empty-state treatment. */
-function ChartCard({
-  icon,
-  title,
-  isEmpty,
-  emptyText,
-  children,
-}: {
-  icon: React.ReactNode
+/**
+ * Card shell matching the dashboard's chart cards (Model Call Analytics, Quota
+ * Distribution): icon badge, title and total in the header, then the chart.
+ */
+function ChartCard(props: {
+  icon: ReactNode
+  tone: IconBadgeTone
   title: string
+  summary: string
   isEmpty: boolean
   emptyText: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <div className='overflow-hidden rounded-lg border'>
-      <div className='flex items-center gap-2 border-b px-3 py-2 sm:px-5 sm:py-3'>
-        {icon}
-        <div className='text-sm font-semibold'>{title}</div>
+      <div className='flex w-full items-center gap-2 border-b px-3 py-2 sm:px-5 sm:py-3'>
+        <IconBadge tone={props.tone} size='sm'>
+          {props.icon}
+        </IconBadge>
+        <div className='text-sm font-semibold'>{props.title}</div>
+        {props.summary && (
+          <span className='text-muted-foreground text-xs tabular-nums'>
+            {props.summary}
+          </span>
+        )}
       </div>
-      <div className='h-[280px] p-1.5 sm:h-80 sm:p-2'>
-        {isEmpty ? (
+      <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
+        {props.isEmpty ? (
           <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>
-            {emptyText}
+            {props.emptyText}
           </div>
         ) : (
-          children
+          props.children
         )}
       </div>
     </div>
@@ -82,6 +82,7 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
   const costLabel = t('Upstream Cost')
   const profitLabel = t('Profit')
   const otherLabel = t('Other')
+  const totalLabel = t('Total:')
 
   const granularity: CostGranularity = overview?.granularity ?? 'day'
   // Trend/stack points carry CNY only (revenue_cny = revenue_usd × query rate,
@@ -93,183 +94,50 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
     [currency, queryRate]
   )
 
-  const trendSpec = useMemo(() => {
-    const values: Array<{ date: string; series: string; value: number }> = []
-    for (const point of overview?.trend ?? []) {
-      values.push({
-        date: point.date,
-        series: revenueLabel,
-        value: toDisplay(point.revenue_cny),
-      })
-      values.push({
-        date: point.date,
-        series: costLabel,
-        value: toDisplay(point.cost_cny),
-      })
-      values.push({
-        date: point.date,
-        series: profitLabel,
-        value: toDisplay(point.profit_cny),
-      })
-    }
-    const domain = [revenueLabel, costLabel, profitLabel]
-    const range = cycleThemeChartColors(domain.length)
-    const buckets = (overview?.trend ?? []).map((p) => p.date)
-    const ticks = sampleBucketTicks(buckets)
+  const trendSpec = useMemo(
+    () =>
+      buildCostTrendSpec({
+        points: overview?.trend ?? [],
+        granularity,
+        labels: { revenue: revenueLabel, cost: costLabel, profit: profitLabel },
+        toDisplay,
+        formatMoney: currency.format,
+      }),
+    [
+      overview?.trend,
+      granularity,
+      revenueLabel,
+      costLabel,
+      profitLabel,
+      toDisplay,
+      currency,
+    ]
+  )
 
-    return {
-      type: 'line',
-      data: [{ id: 'costTrend', values }],
-      xField: 'date',
-      yField: 'value',
-      seriesField: 'series',
-      legends: { visible: true },
-      color: { type: 'ordinal', domain, range },
-      line: { style: { lineWidth: 2 } },
-      point: { visible: false },
-      crosshair: { xField: { visible: true } },
-      axes: [
-        {
-          orient: 'bottom',
-          label: {
-            formatMethod: (value: unknown) => {
-              const bucket = String(value)
-              // Hour ranges carry up to ~49 buckets; blanking the labels
-              // between ticks keeps the axis readable without dropping points.
-              return ticks.has(bucket)
-                ? formatBucketLabel(bucket, granularity)
-                : ''
-            },
-          },
-        },
-        {
-          orient: 'left',
-          label: {
-            formatMethod: (value: unknown) =>
-              currency.format(Number(value) || 0),
-          },
-        },
-      ],
-      tooltip: {
-        dimension: {
-          title: {
-            value: (datum: Record<string, unknown>) =>
-              formatBucketTooltip(String(datum?.date), granularity),
-          },
-          // Without an explicit content pattern VChart falls back to the raw
-          // measure value, which renders full float precision.
-          content: [
-            {
-              key: (datum: Record<string, unknown>) => String(datum?.series),
-              value: (datum: Record<string, unknown>) =>
-                currency.format(Number(datum?.value) || 0),
-            },
-          ],
-        },
-        mark: {
-          title: {
-            value: (datum: Record<string, unknown>) =>
-              formatBucketTooltip(String(datum?.date), granularity),
-          },
-          content: [
-            {
-              key: (datum: Record<string, unknown>) => String(datum?.series),
-              value: (datum: Record<string, unknown>) =>
-                currency.format(Number(datum?.value) || 0),
-            },
-          ],
-        },
-      },
-      background: { fill: 'transparent' },
-      animation: true,
-    }
-  }, [
-    overview?.trend,
-    revenueLabel,
-    costLabel,
-    profitLabel,
-    granularity,
-    currency,
-    toDisplay,
-  ])
-
-  const stackSpec = useMemo(() => {
-    const folded = foldChannelStack(overview?.cost_stack ?? [], otherLabel, 8)
-    const range = cycleThemeChartColors(folded.domain.length)
-    const gapStroke = getThemeBackgroundColor()
-    const buckets = [...new Set(folded.data.map((d) => d.date))].sort()
-    const ticks = sampleBucketTicks(buckets)
-    // Same one-conversion rule as the trend chart.
-    const values = folded.data.map((d) => ({
-      ...d,
-      cost_display: toDisplay(d.cost_cny),
-    }))
-
-    return {
-      type: 'bar',
-      data: [{ id: 'costStack', values }],
-      xField: 'date',
-      yField: 'cost_display',
-      seriesField: 'channel',
-      stack: true,
-      legends: { visible: true },
-      color: { type: 'ordinal', domain: folded.domain, range },
-      bar: {
-        style: { stroke: gapStroke, lineWidth: 2 },
-        state: { hover: { stroke: gapStroke, lineWidth: 2 } },
-      },
-      axes: [
-        {
-          orient: 'bottom',
-          label: {
-            formatMethod: (value: unknown) => {
-              const bucket = String(value)
-              return ticks.has(bucket)
-                ? formatBucketLabel(bucket, granularity)
-                : ''
-            },
-          },
-        },
-        {
-          orient: 'left',
-          label: {
-            formatMethod: (value: unknown) =>
-              currency.format(Number(value) || 0),
-          },
-        },
-      ],
-      tooltip: {
-        mark: {
-          title: {
-            value: (datum: Record<string, unknown>) =>
-              formatBucketTooltip(String(datum?.date), granularity),
-          },
-          content: [
-            {
-              key: (datum: Record<string, unknown>) => String(datum?.channel),
-              value: (datum: Record<string, unknown>) =>
-                currency.format(Number(datum?.cost_display) || 0),
-            },
-          ],
-        },
-        dimension: {
-          title: {
-            value: (datum: Record<string, unknown>) =>
-              formatBucketTooltip(String(datum?.date), granularity),
-          },
-          content: [
-            {
-              key: (datum: Record<string, unknown>) => String(datum?.channel),
-              value: (datum: Record<string, unknown>) =>
-                currency.format(Number(datum?.cost_display) || 0),
-            },
-          ],
-        },
-      },
-      background: { fill: 'transparent' },
-      animation: true,
-    }
-  }, [overview?.cost_stack, otherLabel, granularity, currency, toDisplay])
+  // Read on every render: the themed background changes with the theme, and
+  // the stack spec below rebuilds when it does.
+  const gapStroke = getThemeBackgroundColor()
+  const stackSpec = useMemo(
+    () =>
+      buildCostStackSpec({
+        points: overview?.cost_stack ?? [],
+        granularity,
+        otherLabel,
+        totalLabel,
+        gapStroke,
+        toDisplay,
+        formatMoney: currency.format,
+      }),
+    [
+      overview?.cost_stack,
+      granularity,
+      otherLabel,
+      totalLabel,
+      gapStroke,
+      toDisplay,
+      currency,
+    ]
+  )
 
   const chartKey = [
     resolvedTheme,
@@ -284,16 +152,19 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
   const trendEmpty = chartsReady && !(overview?.trend?.length ?? 0)
   const stackEmpty = chartsReady && !(overview?.cost_stack?.length ?? 0)
   const emptyText = t('No data available')
-
-  // The unit belongs in the title: with a single-currency axis there is no
-  // other place a reader can confirm which currency the numbers are in.
-  const unitSuffix = ` (${currency.symbol})`
+  const totals = !loading && overview ? overview.totals : undefined
 
   return (
-    <div className='grid gap-4 lg:grid-cols-2'>
+    <div className='flex flex-col gap-4'>
       <ChartCard
-        icon={<LineChart className='text-muted-foreground/60 size-4' />}
-        title={t('Revenue / Cost / Profit Trend') + unitSuffix}
+        icon={<LineChart />}
+        tone='chart-4'
+        title={t('Revenue / Cost / Profit Trend')}
+        summary={
+          totals
+            ? `${t('Total profit:')} ${currency.format(toDisplay(totals.profit_cny))}`
+            : ''
+        }
         isEmpty={trendEmpty}
         emptyText={emptyText}
       >
@@ -311,8 +182,14 @@ export function CostCharts({ overview, loading }: CostChartsProps) {
       </ChartCard>
 
       <ChartCard
-        icon={<BarChart3 className='text-muted-foreground/60 size-4' />}
-        title={t('Cost by Channel') + unitSuffix}
+        icon={<BarChart3 />}
+        tone='chart-2'
+        title={t('Cost by Channel')}
+        summary={
+          totals
+            ? `${totalLabel} ${currency.format(toDisplay(totals.cost_cny))}`
+            : ''
+        }
         isEmpty={stackEmpty}
         emptyText={emptyText}
       >

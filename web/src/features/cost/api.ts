@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, type ApiRequestConfig } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
+
 import type {
+  ChannelCostPriceInput,
   ChannelCostVersion,
   ChannelCostVersionInput,
   CostDimension,
@@ -68,7 +71,7 @@ export async function getChannelCostVersions(
   // Rejecting rather than falling back to []: an empty list renders as "this
   // channel has no price history", which is a different fact from "the history
   // could not be loaded".
-  if (!res.data?.success) throw new Error(res.data?.message)
+  if (!res.data?.success) throw createServerError(res.data)
   return res.data.data ?? []
 }
 
@@ -85,8 +88,34 @@ export async function createChannelCostVersion(
     body,
     costVersionActionConfig()
   )
-  if (!res.data?.success) throw new Error(res.data?.message)
+  if (!res.data?.success) throw createServerError(res.data)
   return res.data.data
+}
+
+export async function updateChannelCostVersion(
+  versionId: number,
+  body: ChannelCostVersionInput
+): Promise<ChannelCostVersion> {
+  const res = await api.put(
+    `/api/cost/versions/${versionId}`,
+    body,
+    costVersionActionConfig()
+  )
+  if (!res.data?.success) throw createServerError(res.data)
+  return res.data.data
+}
+
+/** Sets the price that applies from now on; unchanged prices record nothing. */
+export async function setChannelCostPrice(
+  channelId: number,
+  body: ChannelCostPriceInput
+): Promise<void> {
+  const res = await api.put(
+    `/api/cost/channels/${channelId}/price`,
+    body,
+    costVersionActionConfig()
+  )
+  if (!res.data?.success) throw createServerError(res.data)
 }
 
 export async function deleteChannelCostVersion(
@@ -96,5 +125,5 @@ export async function deleteChannelCostVersion(
     `/api/cost/versions/${versionId}`,
     costVersionActionConfig()
   )
-  if (!res.data?.success) throw new Error(res.data?.message)
+  if (!res.data?.success) throw createServerError(res.data)
 }

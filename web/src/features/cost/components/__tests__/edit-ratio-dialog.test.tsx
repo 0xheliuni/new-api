@@ -51,16 +51,10 @@ const laterVersion: ChannelCostVersion = {
   note: '',
 }
 
-function mockApiGet(channelSetting: string, versions: ChannelCostVersion[]) {
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
-    data: {
-      success: true,
-      data:
-        url === '/api/channel/7'
-          ? { id: 7, setting: channelSetting }
-          : versions,
-    },
-  }))
+function mockVersions(versions: ChannelCostVersion[]) {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: versions },
+  })
 }
 
 function renderDialog(props: Partial<ComponentProps<typeof EditRatioDialog>>) {
@@ -80,20 +74,25 @@ function renderDialog(props: Partial<ComponentProps<typeof EditRatioDialog>>) {
   )
 }
 
+async function openDialog() {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Edit Cost Ratio' }))
+  return user
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 describe('edit cost ratio dialog', () => {
-  test('saving a discount price sends the settlement exchange rate entered beside it', async () => {
-    mockApiGet('{"cost_ratio":3.1}', [initialVersion])
+  test('saving the current price sends it to the cost price api with its settlement rate', async () => {
+    mockVersions([initialVersion])
     const put = vi.spyOn(api, 'put').mockResolvedValue({
       data: { success: true },
     })
-    const user = userEvent.setup()
     renderDialog({ currentMode: 'discount', currentDiscount: 0.31 })
 
-    await user.click(screen.getByRole('button', { name: 'Edit Cost Ratio' }))
+    const user = await openDialog()
     const rateInput = screen.getByLabelText('Settlement exchange rate')
     expect(rateInput).toHaveValue(6.8)
     await user.clear(rateInput)
@@ -101,29 +100,120 @@ describe('edit cost ratio dialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
-    const body = put.mock.calls[0][1] as { id: number; setting: string }
-    expect(body.id).toBe(7)
-    expect(JSON.parse(body.setting)).toMatchObject({
-      cost_mode: 'discount',
-      cost_discount: 0.31,
-      cost_exchange_rate: 7,
-    })
+    expect(put).toHaveBeenCalledWith(
+      '/api/cost/channels/7/price',
+      {
+        cost_mode: 'discount',
+        cost_ratio: 0,
+        cost_discount: 0.31,
+        exchange_rate: 7,
+      },
+      expect.anything()
+    )
   })
 
-  test('deleting the initial price calls the version delete api', async () => {
-    mockApiGet('{"cost_ratio":3.1}', [laterVersion, initialVersion])
+  test('editing the initial price sends the corrected values to the version api', async () => {
+    mockVersions([initialVersion])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: initialVersion },
+    })
+    renderDialog({ currentRatio: 3.1 })
+
+    const user = await openDialog()
+    const row = (await screen.findByText('Initial')).closest(
+      'li'
+    ) as HTMLElement
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    const form = screen.getByRole('group', { name: 'Edit price record' })
+    const value = within(form).getByRole('spinbutton', {
+      name: 'Cost Ratio (CNY per USD)',
+    })
+    await user.clear(value)
+    await user.type(value, '2.9')
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/cost/versions/11',
+        {
+          effective_from: 0,
+          cost_mode: 'ratio',
+          cost_ratio: 2.9,
+          cost_discount: 0,
+          exchange_rate: 0,
+          note: 'migrated from channel settings',
+        },
+        expect.anything()
+      )
+    )
+  })
+
+  test('the initial option is unavailable when adding to a channel that has an initial price', async () => {
+    mockVersions([laterVersion, initialVersion])
+    renderDialog({ currentMode: 'discount', currentDiscount: 0.31 })
+
+    const user = await openDialog()
+    await user.click(
+      await screen.findByRole('button', { name: 'Add historical price' })
+    )
+
+    expect(screen.getByRole('button', { name: 'Initial' })).toBeDisabled()
+    expect(
+      screen.getByText(
+        'This channel already has an initial price. Edit it in the list instead.'
+      )
+    ).toBeVisible()
+  })
+
+  test('setting the initial price on a channel without one creates a record with no effective time', async () => {
+    mockVersions([laterVersion])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { success: true, data: initialVersion },
+    })
+    renderDialog({ currentMode: 'discount', currentDiscount: 0.31 })
+
+    const user = await openDialog()
+    await user.click(
+      await screen.findByRole('button', { name: 'Set initial price' })
+    )
+    await user.type(
+      screen.getByRole('spinbutton', { name: 'Cost Ratio (CNY per USD)' }),
+      '3.1'
+    )
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/cost/channels/7/versions',
+        {
+          effective_from: 0,
+          cost_mode: 'ratio',
+          cost_ratio: 3.1,
+          cost_discount: 0,
+          exchange_rate: 0,
+          note: '',
+        },
+        expect.anything()
+      )
+    )
+  })
+
+  test('deleting a price record asks for confirmation before calling the api', async () => {
+    mockVersions([laterVersion, initialVersion])
     const remove = vi.spyOn(api, 'delete').mockResolvedValue({
       data: { success: true },
     })
-    const user = userEvent.setup()
     renderDialog({ currentMode: 'discount', currentDiscount: 0.31 })
 
-    await user.click(screen.getByRole('button', { name: 'Edit Cost Ratio' }))
-    const initialRow = (await screen.findByText('Initial')).closest('li')
-    expect(initialRow).not.toBeNull()
-    await user.click(
-      within(initialRow as HTMLElement).getByRole('button', { name: 'Delete' })
-    )
+    const user = await openDialog()
+    const row = (await screen.findByText('Initial')).closest(
+      'li'
+    ) as HTMLElement
+    await user.click(within(row).getByRole('button', { name: 'Delete' }))
+    expect(remove).not.toHaveBeenCalled()
+
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
 
     await waitFor(() =>
       expect(remove).toHaveBeenCalledWith(

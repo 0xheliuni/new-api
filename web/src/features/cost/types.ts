@@ -167,10 +167,10 @@ export interface CostQueryParams {
 }
 
 /**
- * One immutable price version of a channel (model.ChannelCostVersion mirror).
+ * One price version of a channel (model.ChannelCostVersion mirror).
  * A version covers [effective_from, next version's effective_from); 0 is the
- * seeded "since forever" row, which the API refuses to create or delete.
- * `exchange_rate` is frozen at write time so historical cost never drifts.
+ * initial price, which covers every log before the earliest dated version.
+ * `exchange_rate` is frozen with the version so historical cost never drifts.
  */
 export interface ChannelCostVersion {
   id: number
@@ -185,8 +185,14 @@ export interface ChannelCostVersion {
   created_by: number
 }
 
-/** POST body for a new version; the server fills the rest. */
+/** POST/PUT body for a version; the server fills the rest. */
 export type ChannelCostVersionInput = Omit<
   ChannelCostVersion,
   'id' | 'channel_id' | 'created_at' | 'created_by'
+>
+
+/** Body for setting the price that applies from now on. */
+export type ChannelCostPriceInput = Omit<
+  ChannelCostVersionInput,
+  'effective_from' | 'note'
 >

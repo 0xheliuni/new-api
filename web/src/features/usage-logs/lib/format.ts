@@ -528,6 +528,11 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'performance.clear_disk_cache': 'Cleared disk cache',
   'performance.gc': 'Triggered garbage collection',
   'performance.clear_logs': 'Cleared log files',
+  // Cost accounting price records
+  'cost.version_create': 'Added a price record for channel #{{channel_id}}',
+  'cost.version_update': 'Edited a price record for channel #{{channel_id}}',
+  'cost.version_delete': 'Deleted a price record for channel #{{channel_id}}',
+  'cost.price_set': 'Set the current price for channel #{{channel_id}}',
   // Channel
   'channel.create': 'Created channel {{name}} (type {{type}}, count {{count}})',
   'channel.update': 'Updated channel {{name}} (ID: {{id}})',

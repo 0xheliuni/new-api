@@ -32,6 +32,9 @@ beforeAll(async () => {
   await i18next.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
+    // Same as src/i18n/config.ts: keys such as 'Total:' contain a colon, which
+    // i18next would otherwise read as a namespace separator and render as ''.
+    nsSeparator: false,
     resources: {
       en: {
         translation: {},
